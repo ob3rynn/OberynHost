@@ -7,6 +7,7 @@ node_modules/
 
 # Backend (keep private for now)
 backend/server.js
+*.db
 
 # Logs
 logs

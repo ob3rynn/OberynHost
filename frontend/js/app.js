@@ -1,40 +1,22 @@
-// SERVER DATA SOURCE (will become backend later)
-function getServerInventory() {
-    const data = [];
-
-    // 20x 2GB
-    for (let i = 0; i < 20; i++) {
-        data.push({
-            id: i + 1,
-            type: "2GB",
-            price: 9.98,
-            status: "available"
-        });
-    }
-
-    // 2x 4GB
-    for (let i = 0; i < 2; i++) {
-        data.push({
-            id: 21 + i,
-            type: "4GB",
-            price: 31.98,
-            status: "available"
-        });
-    }
-
-    return data;
-}
-
-// GLOBAL STATE
 let servers = [];
 
 // INIT
-function init() {
-    servers = getServerInventory();
+async function init() {
+    await fetchServers();
     renderServers();
 }
 
-// RENDER FUNCTION
+// FETCH
+async function fetchServers() {
+    try {
+        const res = await fetch("http://localhost:3000/api/servers");
+        servers = await res.json();
+    } catch (err) {
+        alert("Failed to load servers");
+    }
+}
+
+// RENDER
 function renderServers() {
     const grid = document.getElementById("server-grid");
     grid.innerHTML = "";
@@ -56,7 +38,7 @@ function renderServers() {
     });
 }
 
-// SELECT SERVER
+// SELECT
 function selectServer(server) {
     const panel = document.getElementById("server-detail");
     panel.classList.remove("hidden");
@@ -68,45 +50,70 @@ function selectServer(server) {
         <input id="server-name" type="text" placeholder="Server Name">
         <input id="email" type="text" placeholder="Email">
 
-        <button onclick="startCheckout(${server.id})">
+        <button id="purchase-btn">
             Purchase - $${server.price}/mo
         </button>
+
+        <p id="status-msg"></p>
     `;
+
+    document.getElementById("purchase-btn").onclick = () => {
+        startCheckout(server.id);
+    };
 }
 
-// CHECKOUT ENTRY
-function startCheckout(serverId) {
+// CHECKOUT
+async function startCheckout(serverId) {
     const name = document.getElementById("server-name").value.trim();
     const email = document.getElementById("email").value.trim();
+    const button = document.getElementById("purchase-btn");
+    const status = document.getElementById("status-msg");
 
     if (!name || !email) {
-        alert("Please fill out all fields");
+        status.innerText = "Please fill out all fields";
         return;
     }
 
-    const server = servers.find(s => s.id === serverId);
+    button.disabled = true;
+    button.innerText = "Processing...";
 
-    const payload = {
-        serverId: server.id,
-        type: server.type,
-        price: server.price,
-        name: name,
-        email: email
-    };
+    try {
+        const res = await fetch("http://localhost:3000/api/purchase", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                serverId,
+                name,
+                email
+            })
+        });
 
-    completePurchase(payload);
+        const data = await res.json();
+
+        if (!res.ok) {
+            status.innerText = data.error || "Purchase failed";
+            button.disabled = false;
+            button.innerText = "Try Again";
+            return;
+        }
+
+        status.innerText = "Purchase successful";
+
+        await fetchServers();
+        renderServers();
+
+        setTimeout(() => {
+            document.getElementById("server-detail").classList.add("hidden");
+        }, 1000);
+
+    } catch (err) {
+        status.innerText = "Network error";
+        button.disabled = false;
+        button.innerText = "Try Again";
+    }
 }
 
-// FINALIZE (temporary)
-function completePurchase(data) {
-    const server = servers.find(s => s.id === data.serverId);
-
-    server.status = "sold";
-
-    renderServers();
-
-    document.getElementById("server-detail").classList.add("hidden");
-}
-
-// START APP
+// START
 init();
