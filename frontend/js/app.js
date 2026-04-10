@@ -1,117 +1,77 @@
-let servers = [];
+let plans = [];
 
 // INIT
 async function init() {
-    await fetchServers();
-    renderServers();
+    await fetchPlans();
+    renderPlans();
 }
 
 // FETCH
-async function fetchServers() {
-    try {
-        const res = await fetch("http://localhost:3000/api/servers");
-        servers = await res.json();
-    } catch (err) {
-        alert("Failed to load servers");
-    }
+async function fetchPlans() {
+    const res = await fetch("/api/plans");
+    plans = await res.json();
 }
 
 // RENDER
-function renderServers() {
-    const grid = document.getElementById("server-grid");
-    grid.innerHTML = "";
+function renderPlans() {
+    const container = document.getElementById("plans");
+    container.innerHTML = "";
 
-    servers.forEach(server => {
-        if (server.status !== "available") return;
-
+    plans.forEach(plan => {
         const card = document.createElement("div");
-        card.className = "server-card";
+        card.className = "card";
+
+        const featuresHTML = plan.features
+            .map(f => `<li>✔ ${f}</li>`)
+            .join("");
 
         card.innerHTML = `
-            <h3>${server.type} Server</h3>
-            <p>$${server.price}/mo</p>
+            <h2>${plan.type} Server</h2>
+            <p><strong>$${plan.price}/month</strong></p>
+
+            <ul>
+                ${featuresHTML}
+            </ul>
+
+            <p>${plan.available} available</p>
+
+            <button ${plan.available === 0 ? "disabled" : ""}>
+                ${plan.available === 0 ? "Sold Out" : "Get Server"}
+            </button>
         `;
 
-        card.onclick = () => selectServer(server);
+        const button = card.querySelector("button");
 
-        grid.appendChild(card);
+        if (plan.available > 0) {
+            button.onclick = () => startCheckout(plan.type);
+        }
+
+        container.appendChild(card);
     });
 }
 
-// SELECT
-function selectServer(server) {
-    const panel = document.getElementById("server-detail");
-    panel.classList.remove("hidden");
-
-    panel.innerHTML = `
-        <h2>${server.type} Server</h2>
-        <p>Optimized configuration. No setup required.</p>
-
-        <input id="server-name" type="text" placeholder="Server Name">
-        <input id="email" type="text" placeholder="Email">
-
-        <button id="purchase-btn">
-            Purchase - $${server.price}/mo
-        </button>
-
-        <p id="status-msg"></p>
-    `;
-
-    document.getElementById("purchase-btn").onclick = () => {
-        startCheckout(server.id);
-    };
-}
-
 // CHECKOUT
-async function startCheckout(serverId) {
-    const name = document.getElementById("server-name").value.trim();
-    const email = document.getElementById("email").value.trim();
-    const button = document.getElementById("purchase-btn");
-    const status = document.getElementById("status-msg");
-
-    if (!name || !email) {
-        status.innerText = "Please fill out all fields";
-        return;
-    }
-
-    button.disabled = true;
-    button.innerText = "Processing...";
-
+async function startCheckout(planType) {
     try {
-        const res = await fetch("http://localhost:3000/api/purchase", {
+        const res = await fetch("/api/create-checkout", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                serverId,
-                name,
-                email
-            })
+            body: JSON.stringify({ planType })
         });
 
         const data = await res.json();
 
         if (!res.ok) {
-            status.innerText = data.error || "Purchase failed";
-            button.disabled = false;
-            button.innerText = "Try Again";
+            alert(data.error);
             return;
         }
 
-        status.innerText = "Purchase successful";
+        window.location.href = data.url;
 
-        await fetchServers();
-        renderServers();
-
-        setTimeout(() => {
-            document.getElementById("server-detail").classList.add("hidden");
-        }, 1000);
-
-    } catch (err) {
-        status.innerText = "Network error";
-        button.disabled = false;
-        button.innerText = "Try Again";
+    } catch {
+        alert("Network error");
     }
 }
 

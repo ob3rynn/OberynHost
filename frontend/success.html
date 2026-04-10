@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Success</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header>
+    <h2>Oberynn Hosting</h2>
+</header>
+
+<section style="text-align:center; margin-top:50px;">
+    <h1>Payment Successful</h1>
+    <p>Enter your server name below:</p>
+
+    <input id="serverName" placeholder="My Server" />
+    <br><br>
+    <button onclick="complete()">Complete Setup</button>
+
+    <p id="status"></p>
+</section>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const sessionId = params.get("session_id");
+
+async function complete() {
+    const name = document.getElementById("serverName").value;
+
+    const res = await fetch("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            sessionId,
+            serverName: name
+        })
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+        document.getElementById("status").innerText = "Setup complete!";
+    } else {
+        document.getElementById("status").innerText = "Error completing setup.";
+    }
+}
+</script>
+
+</body>
+</html>

@@ -147,3 +147,8 @@ input {
     margin: 10px auto;
     padding: 8px;
 }
+
+.card button:disabled {
+    background: #555;
+    cursor: not-allowed;
+}

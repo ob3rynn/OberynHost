@@ -4,112 +4,193 @@
     <title>Admin Panel</title>
     <style>
         body {
-            font-family: Arial;
-            background: #111;
-            color: #fff;
-            padding: 20px;
+            background: #0b0b0b;
+            color: white;
+            font-family: Arial, sans-serif;
+            padding: 40px;
         }
 
-        .purchase {
-            border: 1px solid #444;
-            padding: 15px;
-            margin-bottom: 10px;
+        .card {
+            background: #111;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
         }
+
+        .pending { border-left: 5px solid #f0ad4e; }
+        .completed { border-left: 5px solid #4CAF50; opacity: 0.7; }
+        .unpaid { border-left: 5px solid #d9534f; }
 
         button {
-            background: green;
-            color: white;
+            margin-top: 10px;
+            padding: 10px;
+            background: #4CAF50;
             border: none;
-            padding: 8px 12px;
+            color: white;
             cursor: pointer;
         }
 
-        .completed {
-            opacity: 0.5;
+        button.disabled {
+            background: #d9534f;
+            cursor: not-allowed;
         }
+
+        #login {
+            max-width: 400px;
+            margin: 100px auto;
+            text-align: center;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            background: #111;
+            border: 1px solid #333;
+            color: white;
+        }
+
+        #adminPanel { display: none; }
+        #error { color: #d9534f; }
     </style>
 </head>
 <body>
 
-<h1>Admin Panel</h1>
+<div id="login">
+    <h1>Admin Login</h1>
+    <input type="password" id="keyInput" placeholder="Enter admin key">
+    <button onclick="login()">Enter</button>
+    <div id="error"></div>
+</div>
 
-<div id="purchases"></div>
+<div id="adminPanel">
+    <h1>Admin Panel</h1>
+    <button onclick="logout()" style="background:#d9534f;">Logout</button>
+    <div id="list"></div>
+</div>
 
 <script>
-let ADMIN_KEY = "";
+function getKey() { return localStorage.getItem("admin_key"); }
+function setKey(k) { localStorage.setItem("admin_key", k); }
+function clearKey() { localStorage.removeItem("admin_key"); }
 
-// PROMPT FOR KEY
-function authenticate() {
-    const input = prompt("Enter admin key:");
+async function authFetch(url, options = {}) {
+    const key = getKey();
+    if (!key) return null;
 
-    if (!input) {
-        document.body.innerHTML = "<h2>Access Denied</h2>";
-        return;
-    }
+    options.headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${key}`
+    };
 
-    ADMIN_KEY = input;
-}
-
-// LOAD PURCHASES
-async function loadPurchases() {
-    const res = await fetch("http://localhost:3000/api/purchases", {
-        headers: {
-            Authorization: ADMIN_KEY
-        }
-    });
+    const res = await fetch(url, options);
 
     if (res.status === 403) {
-        document.body.innerHTML = "<h2>Unauthorized</h2>";
-        return;
+        clearKey();
+        showLogin("Invalid key");
+        return null;
     }
 
+    return res;
+}
+
+function showLogin(msg="") {
+    document.getElementById("login").style.display = "block";
+    document.getElementById("adminPanel").style.display = "none";
+    document.getElementById("error").innerText = msg;
+    document.getElementById("keyInput").value = "";
+}
+
+function showAdmin() {
+    document.getElementById("login").style.display = "none";
+    document.getElementById("adminPanel").style.display = "block";
+}
+
+async function login() {
+    const key = document.getElementById("keyInput").value.trim();
+    if (!key) return;
+
+    setKey(key);
+
+    const res = await authFetch("/api/purchases");
+    if (!res) return;
+
+    showAdmin();
+    load();
+}
+
+function logout() {
+    clearKey();
+    showLogin();
+}
+
+async function load() {
+    const res = await authFetch("/api/purchases");
+    if (!res) return;
+
     const data = await res.json();
+    const list = document.getElementById("list");
+    list.innerHTML = "";
 
-    const container = document.getElementById("purchases");
-    container.innerHTML = "";
-
-    data.forEach(p => {
+    for (const p of data) {
         const div = document.createElement("div");
-        div.className = "purchase";
 
-        if (p.status === "completed") {
-            div.classList.add("completed");
-        }
+        let paid = false;
+
+        try {
+            const r = await fetch("/api/session/" + p.stripeSessionId);
+            const s = await r.json();
+            if (s.email) paid = true;
+        } catch {}
+
+        div.className = !paid ? "card unpaid"
+            : p.status === "completed" ? "card completed"
+            : "card pending";
+
+        const price = p.serverId <= 20 ? 9.98 : 31.98;
 
         div.innerHTML = `
-            <p><strong>ID:</strong> ${p.id}</p>
-            <p><strong>Server:</strong> ${p.serverId}</p>
-            <p><strong>Email:</strong> ${p.email}</p>
-            <p><strong>Name:</strong> ${p.serverName}</p>
-            <p><strong>Status:</strong> ${p.status}</p>
-            ${
-                p.status === "pending"
-                ? `<button onclick="complete(${p.id})">Mark Complete</button>`
-                : ""
-            }
+            <div>ID: ${p.id}</div>
+            <div>Slot: ${p.serverId}</div>
+            <div>Email: ${p.email || "—"}</div>
+            <div>Name: ${p.serverName || "—"}</div>
+            <div>Payment: ${paid ? "$"+price : "Not paid"}</div>
+            <div>Status: ${p.status}</div>
         `;
 
-        container.appendChild(div);
-    });
+        const btn = document.createElement("button");
+
+        if (!paid) {
+            btn.innerText = "Unpaid";
+            btn.disabled = true;
+            btn.className = "disabled";
+        } else if (p.status !== "completed") {
+            btn.innerText = "Mark Complete";
+            btn.onclick = async () => {
+                await authFetch("/api/complete", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ purchaseId: p.id })
+                });
+                load();
+            };
+        }
+
+        div.appendChild(btn);
+        list.appendChild(div);
+    }
 }
 
-// COMPLETE
-async function complete(id) {
-    await fetch("http://localhost:3000/api/complete", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: ADMIN_KEY
-        },
-        body: JSON.stringify({ purchaseId: id })
-    });
+(async () => {
+    const key = getKey();
+    if (!key) return showLogin();
 
-    loadPurchases();
-}
+    const res = await authFetch("/api/purchases");
+    if (!res) return;
 
-// INIT
-authenticate();
-loadPurchases();
+    showAdmin();
+    load();
+})();
 </script>
 
 </body>
