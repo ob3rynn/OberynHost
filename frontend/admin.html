@@ -8,30 +8,174 @@
             color: white;
             font-family: Arial, sans-serif;
             padding: 40px;
+            margin: 0;
+        }
+
+        h1, h2, h3, p {
+            margin-top: 0;
         }
 
         .card {
             background: #111;
             padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 8px;
+            border-radius: 10px;
+            border-left: 5px solid #333;
         }
 
-        .pending { border-left: 5px solid #f0ad4e; }
-        .completed { border-left: 5px solid #4CAF50; opacity: 0.7; }
-        .unpaid { border-left: 5px solid #d9534f; }
+        .pending { border-left-color: #f0ad4e; }
+        .paid { border-left-color: #5bc0de; }
+        .completed { border-left-color: #4CAF50; opacity: 0.82; }
+        .unpaid { border-left-color: #d9534f; }
+
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+        }
+
+        .muted {
+            color: #b5b5b5;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+
+        .summary-card {
+            background: #111;
+            border-radius: 10px;
+            padding: 16px;
+            border: 1px solid #1e1e1e;
+        }
+
+        .summary-label {
+            color: #9e9e9e;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .summary-value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .sections {
+            display: grid;
+            gap: 24px;
+        }
+
+        .section {
+            background: #0f0f0f;
+            border: 1px solid #1c1c1c;
+            border-radius: 12px;
+            padding: 18px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .section-subtitle {
+            color: #a9a9a9;
+            font-size: 14px;
+        }
+
+        .orders {
+            display: grid;
+            gap: 14px;
+        }
+
+        .empty {
+            color: #8f8f8f;
+            padding: 6px 0;
+        }
+
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .order-title {
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .status-pill.pending { background: rgba(240, 173, 78, 0.16); color: #ffd28f; }
+        .status-pill.paid { background: rgba(91, 192, 222, 0.16); color: #99e8ff; }
+        .status-pill.completed { background: rgba(76, 175, 80, 0.16); color: #92f096; }
+        .status-pill.unpaid { background: rgba(217, 83, 79, 0.16); color: #ff9f9c; }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .meta-block {
+            background: #151515;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .meta-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #8d8d8d;
+            margin-bottom: 6px;
+        }
+
+        .meta-value {
+            font-size: 18px;
+            word-break: break-word;
+        }
+
+        .detail-line {
+            color: #b9b9b9;
+            font-size: 14px;
+            margin-bottom: 14px;
+        }
 
         button {
-            margin-top: 10px;
-            padding: 10px;
+            margin-top: 8px;
+            padding: 10px 16px;
             background: #4CAF50;
             border: none;
+            border-radius: 8px;
             color: white;
             cursor: pointer;
+            font-size: 15px;
         }
 
         button.disabled {
-            background: #d9534f;
+            background: #4a2b2b;
+            color: #e3b7b7;
             cursor: not-allowed;
         }
 
@@ -47,7 +191,9 @@
             margin-top: 10px;
             background: #111;
             border: 1px solid #333;
+            border-radius: 8px;
             color: white;
+            box-sizing: border-box;
         }
 
         #adminPanel { display: none; }
@@ -64,30 +210,83 @@
 </div>
 
 <div id="adminPanel">
-    <h1>Admin Panel</h1>
-    <button onclick="logout()" style="background:#d9534f;">Logout</button>
-    <div id="list"></div>
+    <div class="toolbar">
+        <div>
+            <h1>Admin Panel</h1>
+            <p class="muted">Manual fulfillment queue for verified hosting purchases.</p>
+        </div>
+        <button onclick="logout()" style="background:#8b2f2f;">Logout</button>
+    </div>
+
+    <div id="summary" class="summary-grid"></div>
+    <div id="list" class="sections"></div>
 </div>
 
 <script>
-function getKey() { return localStorage.getItem("admin_key"); }
-function setKey(k) { localStorage.setItem("admin_key", k); }
-function clearKey() { localStorage.removeItem("admin_key"); }
+const SECTION_CONFIG = [
+    {
+        key: "paid",
+        title: "Ready To Fulfill",
+        subtitle: "Stripe has verified payment. These are ready for manual completion.",
+        empty: "No paid purchases are waiting right now."
+    },
+    {
+        key: "checkout_pending",
+        title: "Awaiting Payment",
+        subtitle: "Checkout sessions exist, but Stripe has not confirmed payment yet.",
+        empty: "No purchases are currently waiting on payment."
+    },
+    {
+        key: "completed",
+        title: "Completed",
+        subtitle: "These purchases were manually fulfilled already.",
+        empty: "Nothing has been completed yet."
+    },
+    {
+        key: "expired",
+        title: "Expired Or Cancelled",
+        subtitle: "These checkouts did not become valid paid purchases.",
+        empty: "No expired or cancelled purchases."
+    }
+];
+
+function formatTimestamp(ts) {
+    if (!ts) return "Unknown";
+
+    try {
+        return new Date(ts).toLocaleString();
+    } catch {
+        return "Unknown";
+    }
+}
+
+function getPrice(serverId) {
+    return serverId <= 20 ? 9.98 : 31.98;
+}
+
+function getStatusView(status) {
+    switch (status) {
+        case "paid":
+            return { tone: "paid", label: "Ready To Fulfill", payment: "Verified" };
+        case "completed":
+            return { tone: "completed", label: "Completed", payment: "Fulfilled" };
+        case "expired":
+        case "cancelled":
+            return { tone: "unpaid", label: "Expired", payment: "Not Verified" };
+        case "checkout_pending":
+        default:
+            return { tone: "pending", label: "Awaiting Payment", payment: "Pending" };
+    }
+}
 
 async function authFetch(url, options = {}) {
-    const key = getKey();
-    if (!key) return null;
+    const res = await fetch(url, {
+        credentials: "same-origin",
+        ...options
+    });
 
-    options.headers = {
-        ...(options.headers || {}),
-        Authorization: `Bearer ${key}`
-    };
-
-    const res = await fetch(url, options);
-
-    if (res.status === 403) {
-        clearKey();
-        showLogin("Invalid key");
+    if (res.status === 401) {
+        showLogin("Session expired. Sign in again.");
         return null;
     }
 
@@ -104,23 +303,198 @@ function showLogin(msg="") {
 function showAdmin() {
     document.getElementById("login").style.display = "none";
     document.getElementById("adminPanel").style.display = "block";
+    document.getElementById("error").innerText = "";
+}
+
+function createElement(tag, className, text) {
+    const element = document.createElement(tag);
+
+    if (className) {
+        element.className = className;
+    }
+
+    if (text !== undefined) {
+        element.textContent = text;
+    }
+
+    return element;
+}
+
+function createMetaBlock(label, value) {
+    const block = createElement("div", "meta-block");
+    block.appendChild(createElement("div", "meta-label", label));
+    block.appendChild(createElement("div", "meta-value", value));
+    return block;
+}
+
+function createDetailLine(label, value) {
+    const line = createElement("div", "detail-line");
+    line.textContent = `${label}: ${value || "-"}`;
+    return line;
+}
+
+function renderSummary(data) {
+    const counts = {
+        total: data.length,
+        paid: data.filter(p => p.status === "paid").length,
+        pending: data.filter(p => p.status === "checkout_pending").length,
+        completed: data.filter(p => p.status === "completed").length,
+        expired: data.filter(p => p.status === "expired" || p.status === "cancelled").length
+    };
+
+    const summary = document.getElementById("summary");
+    summary.innerHTML = `
+        <div class="summary-card">
+            <div class="summary-label">Total Purchases</div>
+            <div class="summary-value">${counts.total}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Ready To Fulfill</div>
+            <div class="summary-value">${counts.paid}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Awaiting Payment</div>
+            <div class="summary-value">${counts.pending}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Completed</div>
+            <div class="summary-value">${counts.completed}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Expired / Cancelled</div>
+            <div class="summary-value">${counts.expired}</div>
+        </div>
+    `;
+}
+
+function renderPurchaseCard(p) {
+    const price = getPrice(p.serverId);
+    const status = getStatusView(p.status);
+    const div = document.createElement("div");
+    div.className = `card ${status.tone}`;
+    const header = createElement("div", "order-header");
+    header.appendChild(createElement("div", "order-title", `Order #${p.id}`));
+    header.appendChild(createElement("span", `status-pill ${status.tone}`, status.label));
+    div.appendChild(header);
+
+    const metaGrid = createElement("div", "meta-grid");
+    metaGrid.appendChild(createMetaBlock("Slot", String(p.serverId ?? "-")));
+    metaGrid.appendChild(createMetaBlock("Plan Price", `$${price.toFixed(2)}`));
+    metaGrid.appendChild(createMetaBlock("Payment State", status.payment));
+    metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(p.createdAt)));
+    div.appendChild(metaGrid);
+
+    div.appendChild(createDetailLine("Email", p.email));
+    div.appendChild(createDetailLine("Server Name", p.serverName));
+    div.appendChild(createDetailLine("Stripe Session", p.stripeSessionId));
+
+    const btn = document.createElement("button");
+
+    if (p.status === "paid") {
+        btn.innerText = "Mark Complete";
+        btn.onclick = async () => {
+            const res = await authFetch("/api/complete", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ purchaseId: p.id })
+            });
+
+            if (!res) return;
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                alert(data.error || "Could not complete purchase.");
+                return;
+            }
+
+            load();
+        };
+    } else {
+        btn.innerText = p.status === "completed" ? "Completed"
+            : p.status === "expired" || p.status === "cancelled" ? "Expired"
+            : "Awaiting Payment";
+        btn.disabled = true;
+        btn.className = "disabled";
+    }
+
+    div.appendChild(btn);
+    return div;
+}
+
+function renderSections(data) {
+    const list = document.getElementById("list");
+    list.innerHTML = "";
+
+    const grouped = {
+        paid: data.filter(p => p.status === "paid"),
+        checkout_pending: data.filter(p => p.status === "checkout_pending"),
+        completed: data.filter(p => p.status === "completed"),
+        expired: data.filter(p => p.status === "expired" || p.status === "cancelled")
+    };
+
+    for (const sectionConfig of SECTION_CONFIG) {
+        const section = document.createElement("section");
+        section.className = "section";
+
+        const items = grouped[sectionConfig.key] || [];
+        const orders = items.map(renderPurchaseCard);
+
+        section.innerHTML = `
+            <div class="section-header">
+                <div>
+                    <h2>${sectionConfig.title}</h2>
+                    <div class="section-subtitle">${sectionConfig.subtitle}</div>
+                </div>
+                <div class="muted">${items.length} order${items.length === 1 ? "" : "s"}</div>
+            </div>
+        `;
+
+        const container = document.createElement("div");
+        container.className = "orders";
+
+        if (orders.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty";
+            empty.innerText = sectionConfig.empty;
+            container.appendChild(empty);
+        } else {
+            orders.forEach(order => container.appendChild(order));
+        }
+
+        section.appendChild(container);
+        list.appendChild(section);
+    }
 }
 
 async function login() {
     const key = document.getElementById("keyInput").value.trim();
     if (!key) return;
 
-    setKey(key);
+    const res = await fetch("/api/admin/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ key })
+    });
 
-    const res = await authFetch("/api/purchases");
-    if (!res) return;
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showLogin(data.error || "Invalid key");
+        return;
+    }
 
+    document.getElementById("keyInput").value = "";
     showAdmin();
-    load();
+    await load();
 }
 
-function logout() {
-    clearKey();
+async function logout() {
+    await fetch("/api/admin/logout", {
+        method: "POST",
+        credentials: "same-origin"
+    });
     showLogin();
 }
 
@@ -128,63 +502,18 @@ async function load() {
     const res = await authFetch("/api/purchases");
     if (!res) return;
 
-    const data = await res.json();
-    const list = document.getElementById("list");
-    list.innerHTML = "";
-
-    for (const p of data) {
-        const div = document.createElement("div");
-
-        let paid = false;
-
-        try {
-            const r = await fetch("/api/session/" + p.stripeSessionId);
-            const s = await r.json();
-            if (s.email) paid = true;
-        } catch {}
-
-        div.className = !paid ? "card unpaid"
-            : p.status === "completed" ? "card completed"
-            : "card pending";
-
-        const price = p.serverId <= 20 ? 9.98 : 31.98;
-
-        div.innerHTML = `
-            <div>ID: ${p.id}</div>
-            <div>Slot: ${p.serverId}</div>
-            <div>Email: ${p.email || "—"}</div>
-            <div>Name: ${p.serverName || "—"}</div>
-            <div>Payment: ${paid ? "$"+price : "Not paid"}</div>
-            <div>Status: ${p.status}</div>
-        `;
-
-        const btn = document.createElement("button");
-
-        if (!paid) {
-            btn.innerText = "Unpaid";
-            btn.disabled = true;
-            btn.className = "disabled";
-        } else if (p.status !== "completed") {
-            btn.innerText = "Mark Complete";
-            btn.onclick = async () => {
-                await authFetch("/api/complete", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({ purchaseId: p.id })
-                });
-                load();
-            };
-        }
-
-        div.appendChild(btn);
-        list.appendChild(div);
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showLogin(data.error || "Could not load admin data.");
+        return;
     }
+
+    const data = await res.json();
+    renderSummary(data);
+    renderSections(data);
 }
 
 (async () => {
-    const key = getKey();
-    if (!key) return showLogin();
-
     const res = await authFetch("/api/purchases");
     if (!res) return;
 

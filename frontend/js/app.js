@@ -20,27 +20,34 @@ function renderPlans() {
     plans.forEach(plan => {
         const card = document.createElement("div");
         card.className = "card";
+        const title = document.createElement("h2");
+        title.textContent = `${plan.type} Server`;
+        card.appendChild(title);
 
-        const featuresHTML = plan.features
-            .map(f => `<li>✔ ${f}</li>`)
-            .join("");
+        const price = document.createElement("p");
+        const strong = document.createElement("strong");
+        strong.textContent = `$${plan.price}/month`;
+        price.appendChild(strong);
+        card.appendChild(price);
 
-        card.innerHTML = `
-            <h2>${plan.type} Server</h2>
-            <p><strong>$${plan.price}/month</strong></p>
+        const list = document.createElement("ul");
 
-            <ul>
-                ${featuresHTML}
-            </ul>
+        plan.features.forEach(feature => {
+            const item = document.createElement("li");
+            item.textContent = `✔ ${feature}`;
+            list.appendChild(item);
+        });
 
-            <p>${plan.available} available</p>
+        card.appendChild(list);
 
-            <button ${plan.available === 0 ? "disabled" : ""}>
-                ${plan.available === 0 ? "Sold Out" : "Get Server"}
-            </button>
-        `;
+        const availability = document.createElement("p");
+        availability.textContent = `${plan.available} available`;
+        card.appendChild(availability);
 
-        const button = card.querySelector("button");
+        const button = document.createElement("button");
+        button.textContent = plan.available === 0 ? "Sold Out" : "Get Server";
+        button.disabled = plan.available === 0;
+        card.appendChild(button);
 
         if (plan.available > 0) {
             button.onclick = () => startCheckout(plan.type);

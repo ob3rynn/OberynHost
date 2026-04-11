@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+if [[ -z "${staged_files}" ]]; then
+    exit 0
+fi
+
+forbidden_pattern='(^|/)\.env($|\.)|(^|/).*\.db($|$)|(^|/).*\.db-journal$|(^|/).*\.sqlite($|$)|(^|/).*\.sqlite3$|(^|/).*\.sqlite-shm$|(^|/).*\.sqlite-wal$|(^|/).*\.pem$|(^|/).*\.key$|(^|/).*\.crt$|(^|/).*\.p12$|(^|/).*\.pfx$|(^|/)node_modules/|(^|/)backend/node_modules.windows-backup/'
+allowed_env_pattern='(^|/)\.env\.(example|sample)$'
+
+while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+
+    if [[ "${file}" =~ ${forbidden_pattern} ]] && [[ ! "${file}" =~ ${allowed_env_pattern} ]]; then
+        echo "Blocked commit: staged file '${file}' looks private or machine-specific."
+        echo "Keep secrets, databases, and dependency folders out of Git."
+        exit 1
+    fi
+
+    if git show ":${file}" | grep -nE '^(<<<<<<<|=======|>>>>>>>)' >/dev/null; then
+        echo "Blocked commit: merge conflict markers found in '${file}'."
+        exit 1
+    fi
+done <<< "${staged_files}"
+
+git diff --cached --check

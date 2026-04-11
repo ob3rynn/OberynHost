@@ -11,23 +11,107 @@
     <h2>Oberynn Hosting</h2>
 </header>
 
-<section style="text-align:center; margin-top:50px;">
-    <h1>Payment Successful</h1>
-    <p>Enter your server name below:</p>
+<section style="text-align:center; margin-top:50px; padding: 0 20px;">
+    <h1>Finish Your Setup</h1>
+    <p id="lead">We are checking your purchase status.</p>
 
-    <input id="serverName" placeholder="My Server" />
+    <input id="serverName" placeholder="My Server" disabled />
     <br><br>
-    <button onclick="complete()">Complete Setup</button>
+    <button id="completeBtn" onclick="complete()" disabled>Complete Setup</button>
 
     <p id="status"></p>
 </section>
 
 <script>
-const params = new URLSearchParams(window.location.search);
-const sessionId = params.get("session_id");
+const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+const setupToken = hashParams.get("setup_token");
+const serverNameInput = document.getElementById("serverName");
+const completeBtn = document.getElementById("completeBtn");
+const lead = document.getElementById("lead");
+const statusEl = document.getElementById("status");
+
+let canSubmit = false;
+let pollTimer = null;
+
+function setReadyState(ready) {
+    canSubmit = ready;
+    serverNameInput.disabled = !ready;
+    completeBtn.disabled = !ready;
+}
+
+function stopPolling() {
+    if (!pollTimer) return;
+    clearTimeout(pollTimer);
+    pollTimer = null;
+}
+
+async function refreshSetupStatus() {
+    if (!setupToken) {
+        lead.innerText = "This setup link is missing its setup token.";
+        statusEl.innerText = "Setup cannot continue without a valid setup link.";
+        setReadyState(false);
+        return;
+    }
+
+    try {
+        const res = await fetch("/api/setup-status", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ setupToken })
+        });
+        const data = await res.json();
+
+        lead.innerText = data.message || "We are checking your purchase status.";
+
+        if (!res.ok) {
+            statusEl.innerText = data.message || "This setup link is not valid.";
+            setReadyState(false);
+            stopPolling();
+            return;
+        }
+
+        if (data.serverName && !serverNameInput.value) {
+            serverNameInput.value = data.serverName;
+        }
+
+        setReadyState(Boolean(data.ready));
+
+        if (data.ready) {
+            statusEl.innerText = "Payment verified. Choose a server name and submit it.";
+            stopPolling();
+            return;
+        }
+
+        if (data.status === "checkout_pending") {
+            statusEl.innerText = "Waiting for Stripe to confirm payment. This page will retry automatically.";
+            stopPolling();
+            pollTimer = setTimeout(refreshSetupStatus, 5000);
+            return;
+        }
+
+        statusEl.innerText = data.message || "Setup is not available for this order.";
+        stopPolling();
+    } catch {
+        statusEl.innerText = "Could not check setup status. Retrying shortly.";
+        setReadyState(false);
+        stopPolling();
+        pollTimer = setTimeout(refreshSetupStatus, 5000);
+    }
+}
 
 async function complete() {
-    const name = document.getElementById("serverName").value;
+    if (!canSubmit) return;
+
+    const name = serverNameInput.value.trim();
+
+    if (!name) {
+        statusEl.innerText = "Please enter a server name first.";
+        return;
+    }
+
+    completeBtn.disabled = true;
 
     const res = await fetch("/api/complete-setup", {
         method: "POST",
@@ -35,7 +119,7 @@ async function complete() {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            sessionId,
+            setupToken,
             serverName: name
         })
     });
@@ -43,11 +127,17 @@ async function complete() {
     const data = await res.json();
 
     if (data.success) {
-        document.getElementById("status").innerText = "Setup complete!";
+        lead.innerText = "Server name saved.";
+        statusEl.innerText = "Setup complete!";
+        setReadyState(false);
+        stopPolling();
     } else {
-        document.getElementById("status").innerText = "Error completing setup.";
+        statusEl.innerText = data.error || "Error completing setup.";
+        completeBtn.disabled = false;
     }
 }
+
+refreshSetupStatus();
 </script>
 
 </body>
