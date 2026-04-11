@@ -22,6 +22,9 @@ const config = {
     adminSessionCookieName: parsedBaseUrl && parsedBaseUrl.protocol === "https:"
         ? "__Host-admin_session"
         : "admin_session",
+    setupSessionCookieName: parsedBaseUrl && parsedBaseUrl.protocol === "https:"
+        ? "__Host-setup_session"
+        : "setup_session",
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
     setupTokenTtlMs: 1000 * 60 * 60 * 24 * 7

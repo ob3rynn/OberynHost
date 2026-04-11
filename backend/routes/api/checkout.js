@@ -8,6 +8,7 @@ const { cancelPurchaseAndRelease } = require("../../services/purchases");
 const { VALID_PLAN_TYPES } = require("../../config/plans");
 const { SERVER_STATUS, PURCHASE_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
+const { serializeCookie } = require("../../utils/cookies");
 const { generateOpaqueToken } = require("../../utils/tokens");
 
 const stripe = new Stripe(config.stripeSecretKey);
@@ -81,7 +82,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
     }
 
     try {
-        const successUrl = `${config.baseUrl}/success#setup_token=${encodeURIComponent(setupToken)}`;
+        const successUrl = `${config.baseUrl}/success`;
         const cancelUrl = `${config.baseUrl}/pricing`;
 
         const session = await stripe.checkout.sessions.create({
@@ -117,6 +118,14 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
             throw new Error("Failed to link checkout session to purchase");
         }
 
+        res.setHeader("Set-Cookie", serializeCookie(config.setupSessionCookieName, setupToken, {
+            httpOnly: true,
+            maxAgeMs: config.setupTokenTtlMs,
+            path: "/",
+            priority: "High",
+            sameSite: "Lax",
+            secure: config.secureCookies
+        }));
         res.json({ url: session.url });
     } catch (err) {
         console.error("Checkout creation failed:", err);

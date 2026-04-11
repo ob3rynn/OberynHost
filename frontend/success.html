@@ -23,8 +23,6 @@
 </section>
 
 <script>
-const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-const setupToken = hashParams.get("setup_token");
 const serverNameInput = document.getElementById("serverName");
 const completeBtn = document.getElementById("completeBtn");
 const lead = document.getElementById("lead");
@@ -46,20 +44,13 @@ function stopPolling() {
 }
 
 async function refreshSetupStatus() {
-    if (!setupToken) {
-        lead.innerText = "This setup link is missing its setup token.";
-        statusEl.innerText = "Setup cannot continue without a valid setup link.";
-        setReadyState(false);
-        return;
-    }
-
     try {
         const res = await fetch("/api/setup-status", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({ setupToken })
+            body: JSON.stringify({})
         });
         const data = await res.json();
 
@@ -119,7 +110,6 @@ async function complete() {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            setupToken,
             serverName: name
         })
     });

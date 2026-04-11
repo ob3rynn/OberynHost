@@ -3,6 +3,7 @@ const config = require("../../config");
 const { PURCHASE_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { getQuery, runQuery } = require("../../db/queries");
+const { parseCookies } = require("../../utils/cookies");
 const { isOpaqueToken } = require("../../utils/tokens");
 
 const router = express.Router();
@@ -18,17 +19,27 @@ const setupCompleteLimiter = createRateLimiter({
 });
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,48}[A-Za-z0-9]$/;
 
-router.post("/setup-status", setupStatusLimiter, async (req, res) => {
-    const setupToken = typeof req.body?.setupToken === "string"
+function getSetupToken(req) {
+    const cookies = parseCookies(req.headers.cookie);
+    const cookieToken = typeof cookies[config.setupSessionCookieName] === "string"
+        ? cookies[config.setupSessionCookieName].trim()
+        : "";
+    const bodyToken = typeof req.body?.setupToken === "string"
         ? req.body.setupToken.trim()
         : "";
+
+    return cookieToken || bodyToken;
+}
+
+router.post("/setup-status", setupStatusLimiter, async (req, res) => {
+    const setupToken = getSetupToken(req);
 
     if (!isOpaqueToken(setupToken)) {
         return res.status(400).json({
             ready: false,
             editable: false,
             status: "invalid",
-            message: "This setup link is invalid."
+            message: "We couldn't find an active setup session for this browser."
         });
     }
 
@@ -92,9 +103,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
 });
 
 router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
-    const setupToken = typeof req.body?.setupToken === "string"
-        ? req.body.setupToken.trim()
-        : "";
+    const setupToken = getSetupToken(req);
     const serverName = typeof req.body?.serverName === "string"
         ? req.body.serverName.trim()
         : "";
