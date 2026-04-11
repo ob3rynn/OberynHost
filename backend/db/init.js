@@ -84,6 +84,18 @@ const ready = (async () => {
             )
         `);
 
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS adminAuditLog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchaseId INTEGER,
+                actionType TEXT,
+                note TEXT,
+                detailsJson TEXT,
+                userAgent TEXT,
+                createdAt INTEGER
+            )
+        `);
+
         const columns = await getAllRows("PRAGMA table_info(purchases)");
         const columnNames = new Set(columns.map(column => column.name));
 
@@ -105,6 +117,11 @@ const ready = (async () => {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_setup_token
             ON purchases(setupToken)
             WHERE setupToken IS NOT NULL
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_admin_audit_purchase_created
+            ON adminAuditLog(purchaseId, createdAt DESC)
         `);
 
         await runStatement("UPDATE servers SET status = ? WHERE status = 'reserved'", [

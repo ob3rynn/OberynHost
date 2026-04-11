@@ -3,9 +3,29 @@
 <head>
     <title>Admin Panel</title>
     <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0b0b;
+            --panel: #111;
+            --panel-raised: #151515;
+            --panel-soft: #191919;
+            --border: #242424;
+            --text: #ffffff;
+            --muted: #b5b5b5;
+            --muted-strong: #d0d0d0;
+            --warning: #f0ad4e;
+            --warning-soft: rgba(240, 173, 78, 0.16);
+            --info: #5bc0de;
+            --info-soft: rgba(91, 192, 222, 0.16);
+            --success: #4CAF50;
+            --success-soft: rgba(76, 175, 80, 0.16);
+            --danger: #d9534f;
+            --danger-soft: rgba(217, 83, 79, 0.16);
+        }
+
         body {
-            background: #0b0b0b;
-            color: white;
+            background: var(--bg);
+            color: var(--text);
             font-family: Arial, sans-serif;
             padding: 40px;
             margin: 0;
@@ -16,28 +36,84 @@
         }
 
         .card {
-            background: #111;
+            background: var(--panel);
             padding: 20px;
-            border-radius: 10px;
+            border-radius: 12px;
             border-left: 5px solid #333;
         }
 
-        .pending { border-left-color: #f0ad4e; }
-        .paid { border-left-color: #5bc0de; }
-        .completed { border-left-color: #4CAF50; opacity: 0.82; }
-        .unpaid { border-left-color: #d9534f; }
+        .pending { border-left-color: var(--warning); }
+        .paid { border-left-color: var(--info); }
+        .completed { border-left-color: var(--success); opacity: 0.88; }
+        .unpaid { border-left-color: var(--danger); }
 
         .toolbar {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
             gap: 16px;
             margin-bottom: 28px;
             flex-wrap: wrap;
         }
 
+        .toolbar-controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .toggle-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 999px;
+            background: var(--panel-soft);
+            border: 1px solid var(--border);
+            color: var(--muted-strong);
+            font-size: 14px;
+        }
+
+        .toggle-chip input {
+            width: auto;
+            margin: 0;
+            accent-color: var(--info);
+        }
+
         .muted {
-            color: #b5b5b5;
+            color: var(--muted);
+        }
+
+        .banner {
+            display: none;
+            margin-bottom: 18px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--panel-soft);
+        }
+
+        .banner.visible {
+            display: block;
+        }
+
+        .banner.success {
+            border-color: rgba(76, 175, 80, 0.32);
+            background: rgba(76, 175, 80, 0.12);
+            color: #a4f0a8;
+        }
+
+        .banner.error {
+            border-color: rgba(217, 83, 79, 0.35);
+            background: rgba(217, 83, 79, 0.12);
+            color: #ffafac;
+        }
+
+        .banner.info {
+            border-color: rgba(91, 192, 222, 0.35);
+            background: rgba(91, 192, 222, 0.12);
+            color: #b7f1ff;
         }
 
         .summary-grid {
@@ -48,10 +124,10 @@
         }
 
         .summary-card {
-            background: #111;
+            background: var(--panel);
             border-radius: 10px;
             padding: 16px;
-            border: 1px solid #1e1e1e;
+            border: 1px solid var(--border);
         }
 
         .summary-label {
@@ -110,12 +186,20 @@
             flex-wrap: wrap;
         }
 
+        .order-title-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
         .order-title {
             font-size: 24px;
             font-weight: 700;
         }
 
-        .status-pill {
+        .status-pill,
+        .issue-pill {
             display: inline-block;
             padding: 6px 10px;
             border-radius: 999px;
@@ -125,10 +209,15 @@
             letter-spacing: 0.04em;
         }
 
-        .status-pill.pending { background: rgba(240, 173, 78, 0.16); color: #ffd28f; }
-        .status-pill.paid { background: rgba(91, 192, 222, 0.16); color: #99e8ff; }
-        .status-pill.completed { background: rgba(76, 175, 80, 0.16); color: #92f096; }
-        .status-pill.unpaid { background: rgba(217, 83, 79, 0.16); color: #ff9f9c; }
+        .status-pill.pending { background: var(--warning-soft); color: #ffd28f; }
+        .status-pill.paid { background: var(--info-soft); color: #99e8ff; }
+        .status-pill.completed { background: var(--success-soft); color: #92f096; }
+        .status-pill.unpaid { background: var(--danger-soft); color: #ff9f9c; }
+
+        .issue-pill {
+            background: rgba(255, 255, 255, 0.07);
+            color: #f6d8a1;
+        }
 
         .meta-grid {
             display: grid;
@@ -138,7 +227,7 @@
         }
 
         .meta-block {
-            background: #151515;
+            background: var(--panel-raised);
             border-radius: 8px;
             padding: 12px;
         }
@@ -159,33 +248,118 @@
         .detail-line {
             color: #b9b9b9;
             font-size: 14px;
-            margin-bottom: 14px;
+            margin-bottom: 8px;
+            word-break: break-word;
+        }
+
+        .detail-line strong {
+            color: #e5e5e5;
+        }
+
+        .diagnostics {
+            margin: 18px 0;
+            padding: 14px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .diagnostics.ok {
+            border-color: rgba(76, 175, 80, 0.25);
+            background: rgba(76, 175, 80, 0.08);
+        }
+
+        .diagnostics h3 {
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .diagnostics ul {
+            margin: 0;
+            padding-left: 18px;
+            color: var(--muted-strong);
+        }
+
+        .diagnostics li + li {
+            margin-top: 6px;
+        }
+
+        .action-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
         }
 
         button {
-            margin-top: 8px;
             padding: 10px 16px;
-            background: #4CAF50;
             border: none;
             border-radius: 8px;
             color: white;
             cursor: pointer;
             font-size: 15px;
+            transition: opacity 0.15s ease;
         }
 
+        button:hover:not(:disabled) {
+            opacity: 0.92;
+        }
+
+        button.primary { background: var(--success); }
+        button.secondary { background: #27576a; }
+        button.warning { background: #8b6424; }
+        button.danger { background: #8b2f2f; }
+        button.neutral { background: #353535; }
+
+        button:disabled,
         button.disabled {
             background: #4a2b2b;
             color: #e3b7b7;
             cursor: not-allowed;
         }
 
-        #login {
-            max-width: 400px;
-            margin: 100px auto;
-            text-align: center;
+        details.advanced {
+            margin-top: 18px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 16px;
         }
 
-        input {
+        details.advanced summary {
+            cursor: pointer;
+            color: #d2d2d2;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .advanced.hidden {
+            display: none;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .control-block {
+            background: var(--panel-raised);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 12px;
+        }
+
+        .control-label {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #9b9b9b;
+            margin-bottom: 6px;
+        }
+
+        input,
+        select {
             width: 100%;
             padding: 10px;
             margin-top: 10px;
@@ -196,8 +370,100 @@
             box-sizing: border-box;
         }
 
+        .control-block input,
+        .control-block select {
+            margin-top: 0;
+        }
+
+        .helper-text {
+            font-size: 12px;
+            color: #9f9f9f;
+            margin-top: 8px;
+            line-height: 1.45;
+        }
+
+        .note-block {
+            margin-top: 14px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+        }
+
+        .note-label {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #9b9b9b;
+            margin-bottom: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 78px;
+            padding: 10px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: white;
+            box-sizing: border-box;
+            resize: vertical;
+            font: inherit;
+        }
+
+        .advanced-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .audit-log {
+            margin-top: 16px;
+            padding: 14px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .audit-log h3 {
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .audit-entry {
+            padding: 10px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .audit-entry:first-child {
+            border-top: none;
+            padding-top: 0;
+        }
+
+        .audit-entry-meta {
+            font-size: 12px;
+            color: #a6a6a6;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .audit-entry-note {
+            color: #e2e2e2;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        #login {
+            max-width: 400px;
+            margin: 100px auto;
+            text-align: center;
+        }
+
         #adminPanel { display: none; }
-        #error { color: #d9534f; }
+        #error { color: var(--danger); }
     </style>
 </head>
 <body>
@@ -205,7 +471,7 @@
 <div id="login">
     <h1>Admin Login</h1>
     <input type="password" id="keyInput" placeholder="Enter admin key">
-    <button onclick="login()">Enter</button>
+    <button class="primary" onclick="login()">Enter</button>
     <div id="error"></div>
 </div>
 
@@ -213,11 +479,22 @@
     <div class="toolbar">
         <div>
             <h1>Admin Panel</h1>
-            <p class="muted">Manual fulfillment queue for verified hosting purchases.</p>
+            <p class="muted">Live diagnostics, Stripe re-checks, and manual override controls for purchase recovery.</p>
         </div>
-        <button onclick="logout()" style="background:#8b2f2f;">Logout</button>
+        <div class="toolbar-controls">
+            <label class="toggle-chip">
+                <input type="checkbox" id="autoRefreshToggle">
+                Auto refresh
+            </label>
+            <label class="toggle-chip">
+                <input type="checkbox" id="overrideToggle">
+                Manual override mode
+            </label>
+            <button class="danger" onclick="logout()">Logout</button>
+        </div>
     </div>
 
+    <div id="banner" class="banner"></div>
     <div id="summary" class="summary-grid"></div>
     <div id="list" class="sections"></div>
 </div>
@@ -250,6 +527,14 @@ const SECTION_CONFIG = [
     }
 ];
 
+const PURCHASE_STATUSES = ["checkout_pending", "paid", "completed", "expired", "cancelled"];
+const SERVER_STATUSES = ["available", "held", "allocated"];
+const state = {
+    manualOverride: localStorage.getItem("admin.overrideMode") === "true",
+    autoRefresh: localStorage.getItem("admin.autoRefresh") !== "false",
+    refreshTimer: null
+};
+
 function formatTimestamp(ts) {
     if (!ts) return "Unknown";
 
@@ -260,8 +545,12 @@ function formatTimestamp(ts) {
     }
 }
 
-function getPrice(serverId) {
-    return serverId <= 20 ? 9.98 : 31.98;
+function getPrice(purchase) {
+    if (Number.isFinite(Number(purchase.serverPrice))) {
+        return Number(purchase.serverPrice);
+    }
+
+    return purchase.serverId <= 20 ? 9.98 : 31.98;
 }
 
 function getStatusView(status) {
@@ -286,6 +575,7 @@ async function authFetch(url, options = {}) {
     });
 
     if (res.status === 401) {
+        stopAutoRefresh();
         showLogin("Session expired. Sign in again.");
         return null;
     }
@@ -293,7 +583,32 @@ async function authFetch(url, options = {}) {
     return res;
 }
 
-function showLogin(msg="") {
+async function requestJson(url, options = {}) {
+    const res = await authFetch(url, options);
+    if (!res) return null;
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+        throw new Error(data.error || "Request failed");
+    }
+
+    return data;
+}
+
+function showBanner(message, tone = "info") {
+    const banner = document.getElementById("banner");
+    banner.textContent = message;
+    banner.className = `banner visible ${tone}`;
+}
+
+function clearBanner() {
+    const banner = document.getElementById("banner");
+    banner.textContent = "";
+    banner.className = "banner";
+}
+
+function showLogin(msg = "") {
     document.getElementById("login").style.display = "block";
     document.getElementById("adminPanel").style.display = "none";
     document.getElementById("error").innerText = msg;
@@ -304,6 +619,8 @@ function showAdmin() {
     document.getElementById("login").style.display = "none";
     document.getElementById("adminPanel").style.display = "block";
     document.getElementById("error").innerText = "";
+    document.getElementById("autoRefreshToggle").checked = state.autoRefresh;
+    document.getElementById("overrideToggle").checked = state.manualOverride;
 }
 
 function createElement(tag, className, text) {
@@ -329,8 +646,20 @@ function createMetaBlock(label, value) {
 
 function createDetailLine(label, value) {
     const line = createElement("div", "detail-line");
-    line.textContent = `${label}: ${value || "-"}`;
+    const strong = document.createElement("strong");
+    strong.textContent = `${label}: `;
+    line.appendChild(strong);
+    line.appendChild(document.createTextNode(value || "-"));
     return line;
+}
+
+function createActionButton(label, tone, onClick, disabled = false) {
+    const button = document.createElement("button");
+    button.className = tone;
+    button.textContent = label;
+    button.disabled = disabled;
+    button.onclick = onClick;
+    return button;
 }
 
 function renderSummary(data) {
@@ -339,7 +668,8 @@ function renderSummary(data) {
         paid: data.filter(p => p.status === "paid").length,
         pending: data.filter(p => p.status === "checkout_pending").length,
         completed: data.filter(p => p.status === "completed").length,
-        expired: data.filter(p => p.status === "expired" || p.status === "cancelled").length
+        expired: data.filter(p => p.status === "expired" || p.status === "cancelled").length,
+        issues: data.filter(p => (p.diagnostics?.issueCount || 0) > 0).length
     };
 
     const summary = document.getElementById("summary");
@@ -364,60 +694,451 @@ function renderSummary(data) {
             <div class="summary-label">Expired / Cancelled</div>
             <div class="summary-value">${counts.expired}</div>
         </div>
+        <div class="summary-card">
+            <div class="summary-label">Needs Attention</div>
+            <div class="summary-value">${counts.issues}</div>
+        </div>
     `;
 }
 
-function renderPurchaseCard(p) {
-    const price = getPrice(p.serverId);
-    const status = getStatusView(p.status);
+async function withCardAction(action, successMessage) {
+    clearBanner();
+
+    try {
+        const result = await action();
+
+        if (successMessage) {
+            showBanner(successMessage, "success");
+        }
+
+        await load();
+        return result;
+    } catch (err) {
+        showBanner(err.message || "Action failed.", "error");
+        throw err;
+    }
+}
+
+function getOperatorNote(input) {
+    return (input?.value || "").trim();
+}
+
+function buildConfirmPhrase(purchaseId) {
+    return `ORDER-${purchaseId}`;
+}
+
+function confirmDangerousAction(purchaseId, actionLabel) {
+    const phrase = buildConfirmPhrase(purchaseId);
+    const value = window.prompt(
+        `${actionLabel} is a manual override.\nType ${phrase} to continue.`,
+        ""
+    );
+
+    return value === phrase;
+}
+
+function renderAuditLog(purchase) {
+    const container = createElement("div", "audit-log");
+    container.appendChild(createElement("h3", "", "Recent Audit Trail"));
+
+    if (!Array.isArray(purchase.auditLog) || purchase.auditLog.length === 0) {
+        container.appendChild(createElement(
+            "div",
+            "helper-text",
+            "No admin actions have been recorded for this purchase yet."
+        ));
+        return container;
+    }
+
+    purchase.auditLog.forEach(entry => {
+        const item = createElement("div", "audit-entry");
+        item.appendChild(createElement(
+            "div",
+            "audit-entry-meta",
+            `${entry.actionType.replace(/_/g, " ")} • ${formatTimestamp(entry.createdAt)}`
+        ));
+
+        const detailParts = [];
+
+        if (entry.note) {
+            detailParts.push(entry.note);
+        }
+
+        if (entry.details?.action) {
+            detailParts.push(`Result: ${entry.details.action}`);
+        }
+
+        if (entry.details?.stripePaymentStatus) {
+            detailParts.push(`Stripe payment: ${entry.details.stripePaymentStatus}`);
+        }
+
+        item.appendChild(createElement(
+            "div",
+            "audit-entry-note",
+            detailParts.join(" | ") || "No operator note."
+        ));
+        container.appendChild(item);
+    });
+
+    return container;
+}
+
+async function completePurchase(id, adminNote = "") {
+    return withCardAction(async () => {
+        await requestJson("/api/complete", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ purchaseId: id, adminNote })
+        });
+    }, `Marked order #${id} complete.`);
+}
+
+async function reconcileStripe(id, adminNote = "") {
+    const result = await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/reconcile-stripe`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ adminNote })
+    }), `Re-checked Stripe for order #${id}.`);
+
+    if (result?.purchase?.diagnostics?.stripe) {
+        const stripeState = result.purchase.diagnostics.stripe;
+        showBanner(
+            `Stripe says session ${stripeState.id} is ${stripeState.status} with payment status ${stripeState.paymentStatus}.`,
+            "info"
+        );
+        await load();
+    }
+}
+
+async function applyOverride(id, payload, successMessage) {
+    await withCardAction(async () => requestJson(`/api/admin/purchases/${id}`, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    }), successMessage);
+}
+
+function renderDiagnostics(purchase) {
+    const diagnostics = purchase.diagnostics || {};
+    const container = createElement(
+        "div",
+        diagnostics.issueCount ? "diagnostics" : "diagnostics ok"
+    );
+    const title = diagnostics.issueCount
+        ? `Detected ${diagnostics.issueCount} issue${diagnostics.issueCount === 1 ? "" : "s"}`
+        : "Diagnostics look clean";
+
+    container.appendChild(createElement("h3", "", title));
+
+    if (diagnostics.issueCount) {
+        const list = document.createElement("ul");
+        diagnostics.issues.forEach(issue => {
+            const item = document.createElement("li");
+            item.textContent = issue;
+            list.appendChild(item);
+        });
+        container.appendChild(list);
+    } else {
+        container.appendChild(createElement(
+            "div",
+            "helper-text",
+            `Recommended server state is ${diagnostics.recommendedServerStatus || "unknown"}.`
+        ));
+    }
+
+    if (diagnostics.stripe) {
+        const stripeLine = createElement(
+            "div",
+            "helper-text",
+            `Stripe session ${diagnostics.stripe.id}: status ${diagnostics.stripe.status}, payment ${diagnostics.stripe.paymentStatus}.`
+        );
+        container.appendChild(stripeLine);
+    }
+
+    return container;
+}
+
+function renderAdvancedControls(purchase) {
+    const advanced = document.createElement("details");
+    advanced.className = state.manualOverride ? "advanced" : "advanced hidden";
+    const summary = document.createElement("summary");
+    summary.textContent = "Advanced Controls";
+    advanced.appendChild(summary);
+
+    const controlGrid = createElement("div", "control-grid");
+
+    const emailBlock = createElement("div", "control-block");
+    emailBlock.appendChild(createElement("label", "control-label", "Email"));
+    const emailInput = document.createElement("input");
+    emailInput.value = purchase.email || "";
+    emailBlock.appendChild(emailInput);
+    controlGrid.appendChild(emailBlock);
+
+    const serverNameBlock = createElement("div", "control-block");
+    serverNameBlock.appendChild(createElement("label", "control-label", "Server Name"));
+    const serverNameInput = document.createElement("input");
+    serverNameInput.value = purchase.serverName || "";
+    serverNameBlock.appendChild(serverNameInput);
+    controlGrid.appendChild(serverNameBlock);
+
+    const stripeBlock = createElement("div", "control-block");
+    stripeBlock.appendChild(createElement("label", "control-label", "Stripe Session ID"));
+    const stripeInput = document.createElement("input");
+    stripeInput.value = purchase.stripeSessionId || "";
+    stripeBlock.appendChild(stripeInput);
+    controlGrid.appendChild(stripeBlock);
+
+    const statusBlock = createElement("div", "control-block");
+    statusBlock.appendChild(createElement("label", "control-label", "Purchase Status"));
+    const statusSelect = document.createElement("select");
+    PURCHASE_STATUSES.forEach(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === purchase.status;
+        statusSelect.appendChild(option);
+    });
+    statusBlock.appendChild(statusSelect);
+    controlGrid.appendChild(statusBlock);
+
+    const serverStatusBlock = createElement("div", "control-block");
+    serverStatusBlock.appendChild(createElement("label", "control-label", "Server Status"));
+    const serverStatusSelect = document.createElement("select");
+    SERVER_STATUSES.forEach(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === purchase.serverStatus;
+        serverStatusSelect.appendChild(option);
+    });
+    serverStatusBlock.appendChild(serverStatusSelect);
+    serverStatusBlock.appendChild(createElement(
+        "div",
+        "helper-text",
+        `Recommended: ${purchase.diagnostics?.recommendedServerStatus || "unknown"}`
+    ));
+    controlGrid.appendChild(serverStatusBlock);
+
+    const tokenActionBlock = createElement("div", "control-block");
+    tokenActionBlock.appendChild(createElement("label", "control-label", "Setup Token"));
+    const tokenActionSelect = document.createElement("select");
+    [
+        ["keep", "Keep current token"],
+        ["refresh", "Extend token expiry"],
+        ["regenerate", "Regenerate token"],
+        ["clear", "Clear token"]
+    ].forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        tokenActionSelect.appendChild(option);
+    });
+    tokenActionBlock.appendChild(tokenActionSelect);
+    tokenActionBlock.appendChild(createElement(
+        "div",
+        "helper-text",
+        `Current expiry: ${formatTimestamp(purchase.setupTokenExpiresAt)}`
+    ));
+    controlGrid.appendChild(tokenActionBlock);
+
+    advanced.appendChild(controlGrid);
+
+    const advancedNoteBlock = createElement("div", "note-block");
+    advancedNoteBlock.appendChild(createElement("label", "note-label", "Override Note"));
+    const advancedNoteInput = document.createElement("textarea");
+    advancedNoteInput.placeholder = "Required in practice: explain why this override is safe.";
+    advancedNoteBlock.appendChild(advancedNoteInput);
+    advancedNoteBlock.appendChild(createElement(
+        "div",
+        "helper-text",
+        "Use this note whenever you manually change payment or server state."
+    ));
+    advanced.appendChild(advancedNoteBlock);
+
+    const quickActions = createElement("div", "advanced-actions");
+    quickActions.appendChild(createActionButton("Save Overrides", "primary", async () => {
+        const statusChanged = statusSelect.value !== purchase.status;
+        const serverStatusChanged = serverStatusSelect.value !== purchase.serverStatus;
+
+        if ((statusChanged || serverStatusChanged) &&
+            !confirmDangerousAction(purchase.id, "Save Overrides")) {
+            return;
+        }
+
+        await applyOverride(purchase.id, {
+            email: emailInput.value,
+            serverName: serverNameInput.value,
+            stripeSessionId: stripeInput.value,
+            status: statusSelect.value,
+            serverStatus: serverStatusSelect.value,
+            setupTokenAction: tokenActionSelect.value,
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Saved overrides for order #${purchase.id}.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Mark Paid", "secondary", async () => {
+        if (!confirmDangerousAction(purchase.id, "Mark Paid")) return;
+        await applyOverride(purchase.id, {
+            status: "paid",
+            serverStatus: "held",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Order #${purchase.id} manually marked paid.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Reset Pending", "warning", async () => {
+        if (!confirmDangerousAction(purchase.id, "Reset Pending")) return;
+        await applyOverride(purchase.id, {
+            status: "checkout_pending",
+            serverStatus: "held",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Order #${purchase.id} reset to pending.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Mark Expired", "danger", async () => {
+        if (!confirmDangerousAction(purchase.id, "Mark Expired")) return;
+        await applyOverride(purchase.id, {
+            status: "expired",
+            serverStatus: "available",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Order #${purchase.id} marked expired.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Cancel Order", "danger", async () => {
+        if (!confirmDangerousAction(purchase.id, "Cancel Order")) return;
+        await applyOverride(purchase.id, {
+            status: "cancelled",
+            serverStatus: "available",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Order #${purchase.id} cancelled.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Release Server", "neutral", async () => {
+        if (!confirmDangerousAction(purchase.id, "Release Server")) return;
+        await applyOverride(purchase.id, {
+            serverStatus: "available",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Server released for order #${purchase.id}.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Hold Server", "neutral", async () => {
+        await applyOverride(purchase.id, {
+            serverStatus: "held",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Server held for order #${purchase.id}.`);
+    }));
+
+    quickActions.appendChild(createActionButton("Allocate Server", "neutral", async () => {
+        if (!confirmDangerousAction(purchase.id, "Allocate Server")) return;
+        await applyOverride(purchase.id, {
+            serverStatus: "allocated",
+            adminNote: getOperatorNote(advancedNoteInput)
+        }, `Server allocated for order #${purchase.id}.`);
+    }));
+
+    advanced.appendChild(quickActions);
+    return advanced;
+}
+
+function renderPurchaseCard(purchase) {
+    const price = getPrice(purchase);
+    const status = getStatusView(purchase.status);
     const div = document.createElement("div");
     div.className = `card ${status.tone}`;
+
     const header = createElement("div", "order-header");
-    header.appendChild(createElement("div", "order-title", `Order #${p.id}`));
+    const titleGroup = createElement("div", "order-title-group");
+    titleGroup.appendChild(createElement("div", "order-title", `Order #${purchase.id}`));
+    if ((purchase.diagnostics?.issueCount || 0) > 0) {
+        titleGroup.appendChild(createElement(
+            "span",
+            "issue-pill",
+            `${purchase.diagnostics.issueCount} issue${purchase.diagnostics.issueCount === 1 ? "" : "s"}`
+        ));
+    }
+    header.appendChild(titleGroup);
     header.appendChild(createElement("span", `status-pill ${status.tone}`, status.label));
     div.appendChild(header);
 
     const metaGrid = createElement("div", "meta-grid");
-    metaGrid.appendChild(createMetaBlock("Slot", String(p.serverId ?? "-")));
+    metaGrid.appendChild(createMetaBlock("Slot", String(purchase.serverId ?? "-")));
     metaGrid.appendChild(createMetaBlock("Plan Price", `$${price.toFixed(2)}`));
     metaGrid.appendChild(createMetaBlock("Payment State", status.payment));
-    metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(p.createdAt)));
+    metaGrid.appendChild(createMetaBlock("Server State", purchase.serverStatus || "Unknown"));
+    metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(purchase.createdAt)));
     div.appendChild(metaGrid);
 
-    div.appendChild(createDetailLine("Email", p.email));
-    div.appendChild(createDetailLine("Server Name", p.serverName));
-    div.appendChild(createDetailLine("Stripe Session", p.stripeSessionId));
+    div.appendChild(createDetailLine("Email", purchase.email));
+    div.appendChild(createDetailLine("Server Name", purchase.serverName));
+    div.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
+    div.appendChild(createDetailLine("Setup Token Expires", formatTimestamp(purchase.setupTokenExpiresAt)));
 
-    const btn = document.createElement("button");
+    div.appendChild(renderDiagnostics(purchase));
 
-    if (p.status === "paid") {
-        btn.innerText = "Mark Complete";
-        btn.onclick = async () => {
-            const res = await authFetch("/api/complete", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ purchaseId: p.id })
-            });
+    const noteBlock = createElement("div", "note-block");
+    noteBlock.appendChild(createElement("label", "note-label", "Operator Note"));
+    const noteInput = document.createElement("textarea");
+    noteInput.placeholder = "Explain what you are correcting or why you are overriding the system.";
+    noteBlock.appendChild(noteInput);
+    noteBlock.appendChild(createElement(
+        "div",
+        "helper-text",
+        "This note will be stored in the audit trail for any action you trigger from this card."
+    ));
+    div.appendChild(noteBlock);
 
-            if (!res) return;
+    const actions = createElement("div", "action-row");
 
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                alert(data.error || "Could not complete purchase.");
-                return;
-            }
-
-            load();
-        };
-    } else {
-        btn.innerText = p.status === "completed" ? "Completed"
-            : p.status === "expired" || p.status === "cancelled" ? "Expired"
-            : "Awaiting Payment";
-        btn.disabled = true;
-        btn.className = "disabled";
+    if (purchase.status === "paid") {
+        actions.appendChild(createActionButton("Mark Complete", "primary", async () => {
+            await completePurchase(purchase.id, getOperatorNote(noteInput));
+        }));
     }
 
-    div.appendChild(btn);
+    if (purchase.stripeSessionId) {
+        actions.appendChild(createActionButton("Re-check Stripe", "secondary", async () => {
+            await reconcileStripe(purchase.id, getOperatorNote(noteInput));
+        }));
+    }
+
+    if (
+        purchase.diagnostics?.recommendedServerStatus &&
+        purchase.serverStatus !== purchase.diagnostics.recommendedServerStatus
+    ) {
+        actions.appendChild(createActionButton("Repair Server State", "warning", async () => {
+            await applyOverride(purchase.id, {
+                serverStatus: purchase.diagnostics.recommendedServerStatus,
+                adminNote: getOperatorNote(noteInput)
+            }, `Server state repaired for order #${purchase.id}.`);
+        }));
+    }
+
+    if (state.manualOverride) {
+        if (purchase.status !== "paid") {
+            actions.appendChild(createActionButton("Manual Mark Paid", "secondary", async () => {
+                if (!confirmDangerousAction(purchase.id, "Manual Mark Paid")) return;
+                await applyOverride(purchase.id, {
+                    status: "paid",
+                    serverStatus: "held",
+                    adminNote: getOperatorNote(noteInput)
+                }, `Order #${purchase.id} manually marked paid.`);
+            }));
+        }
+
+        if (purchase.status !== "checkout_pending") {
+            actions.appendChild(createActionButton("Reset Pending", "warning", async () => {
+                if (!confirmDangerousAction(purchase.id, "Reset Pending")) return;
+                await applyOverride(purchase.id, {
+                    status: "checkout_pending",
+                    serverStatus: "held",
+                    adminNote: getOperatorNote(noteInput)
+                }, `Order #${purchase.id} reset to pending.`);
+            }));
+        }
+    }
+
+    div.appendChild(actions);
+    div.appendChild(renderAdvancedControls(purchase));
+    div.appendChild(renderAuditLog(purchase));
     return div;
 }
 
@@ -466,6 +1187,25 @@ function renderSections(data) {
     }
 }
 
+function stopAutoRefresh() {
+    if (state.refreshTimer) {
+        clearInterval(state.refreshTimer);
+        state.refreshTimer = null;
+    }
+}
+
+function syncRefreshTimer() {
+    stopAutoRefresh();
+
+    if (!state.autoRefresh) {
+        return;
+    }
+
+    state.refreshTimer = setInterval(() => {
+        load({ silent: true }).catch(() => {});
+    }, 15000);
+}
+
 async function login() {
     const key = document.getElementById("keyInput").value.trim();
     if (!key) return;
@@ -487,6 +1227,7 @@ async function login() {
 
     document.getElementById("keyInput").value = "";
     showAdmin();
+    syncRefreshTimer();
     await load();
 }
 
@@ -495,10 +1236,12 @@ async function logout() {
         method: "POST",
         credentials: "same-origin"
     });
+
+    stopAutoRefresh();
     showLogin();
 }
 
-async function load() {
+async function load({ silent = false } = {}) {
     const res = await authFetch("/api/purchases");
     if (!res) return;
 
@@ -511,14 +1254,35 @@ async function load() {
     const data = await res.json();
     renderSummary(data);
     renderSections(data);
+
+    if (!silent && !document.getElementById("banner").classList.contains("visible")) {
+        clearBanner();
+    }
 }
+
+document.getElementById("overrideToggle").addEventListener("change", event => {
+    state.manualOverride = event.target.checked;
+    localStorage.setItem("admin.overrideMode", String(state.manualOverride));
+    load({ silent: true }).catch(() => {});
+});
+
+document.getElementById("autoRefreshToggle").addEventListener("change", event => {
+    state.autoRefresh = event.target.checked;
+    localStorage.setItem("admin.autoRefresh", String(state.autoRefresh));
+    syncRefreshTimer();
+    showBanner(
+        state.autoRefresh ? "Auto refresh enabled." : "Auto refresh paused.",
+        "info"
+    );
+});
 
 (async () => {
     const res = await authFetch("/api/purchases");
     if (!res) return;
 
     showAdmin();
-    load();
+    syncRefreshTimer();
+    await load({ silent: true });
 })();
 </script>
 
