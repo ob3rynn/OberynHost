@@ -2,115 +2,137 @@ const config = require("../config");
 const db = require("./index");
 const { SERVER_STATUS, PURCHASE_STATUS } = require("../constants/status");
 
-db.serialize(() => {
-    db.run(`
-        CREATE TABLE IF NOT EXISTS servers (
-            id INTEGER PRIMARY KEY,
-            type TEXT,
-            price REAL,
-            status TEXT
-        )
-    `);
-
-    db.run(`
-        CREATE TABLE IF NOT EXISTS purchases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            serverId INTEGER,
-            email TEXT,
-            serverName TEXT,
-            status TEXT,
-            stripeSessionId TEXT,
-            createdAt INTEGER
-        )
-    `);
-
-    db.all("PRAGMA table_info(purchases)", (err, columns) => {
-        if (err) {
-            console.error("Failed to inspect purchases table:", err);
-            return;
-        }
-
-        const columnNames = new Set(columns.map(column => column.name));
-        const migrations = [];
-
-        if (!columnNames.has("setupToken")) {
-            migrations.push("ALTER TABLE purchases ADD COLUMN setupToken TEXT");
-        }
-
-        if (!columnNames.has("setupTokenExpiresAt")) {
-            migrations.push("ALTER TABLE purchases ADD COLUMN setupTokenExpiresAt INTEGER");
-        }
-
-        function finalizeBootstrap() {
-            db.run(`
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_stripe_session_id
-                ON purchases(stripeSessionId)
-                WHERE stripeSessionId IS NOT NULL
-            `, indexErr => {
-                if (indexErr) {
-                    console.error("Failed to create purchase session index:", indexErr);
-                }
-            });
-
-            db.run(`
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_setup_token
-                ON purchases(setupToken)
-                WHERE setupToken IS NOT NULL
-            `, indexErr => {
-                if (indexErr) {
-                    console.error("Failed to create setup token index:", indexErr);
-                }
-            });
-
-            db.run("UPDATE servers SET status = ? WHERE status = 'reserved'", [SERVER_STATUS.HELD]);
-            db.run("UPDATE servers SET status = ? WHERE status = 'sold'", [SERVER_STATUS.ALLOCATED]);
-            db.run("UPDATE purchases SET status = ? WHERE status = 'pending'", [PURCHASE_STATUS.CHECKOUT_PENDING]);
-            db.run(
-                "UPDATE purchases SET setupToken = lower(hex(randomblob(32))) WHERE setupToken IS NULL"
-            );
-            db.run(
-                "UPDATE purchases SET setupTokenExpiresAt = ? WHERE setupTokenExpiresAt IS NULL",
-                [Date.now() + config.setupTokenTtlMs]
-            );
-
-            db.get("SELECT COUNT(*) as count FROM servers", (countErr, row) => {
-                if (countErr) {
-                    console.error("Failed to inspect server inventory:", countErr);
-                    return;
-                }
-
-                if (!row || row.count === 0) {
-                    const stmt = db.prepare("INSERT INTO servers VALUES (?, ?, ?, ?)");
-
-                    for (let i = 0; i < 20; i++) {
-                        stmt.run(i + 1, "2GB", 9.98, SERVER_STATUS.AVAILABLE);
-                    }
-
-                    for (let i = 0; i < 2; i++) {
-                        stmt.run(21 + i, "4GB", 31.98, SERVER_STATUS.AVAILABLE);
-                    }
-
-                    stmt.finalize();
-                }
-            });
-        }
-
-        function runMigrations(index) {
-            if (index >= migrations.length) {
-                finalizeBootstrap();
+function runStatement(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, function onRun(err) {
+            if (err) {
+                reject(err);
                 return;
             }
 
-            db.run(migrations[index], migrationErr => {
-                if (migrationErr) {
-                    console.error("Failed to migrate purchases table:", migrationErr);
-                    return;
-                }
+            resolve(this);
+        });
+    });
+}
 
-                runMigrations(index + 1);
-            });
+function getRow(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve(row);
+        });
+    });
+}
+
+function getAllRows(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve(rows);
+        });
+    });
+}
+
+async function seedInventory() {
+    for (let index = 0; index < 20; index += 1) {
+        await runStatement("INSERT INTO servers VALUES (?, ?, ?, ?)", [
+            index + 1,
+            "2GB",
+            9.98,
+            SERVER_STATUS.AVAILABLE
+        ]);
+    }
+
+    for (let index = 0; index < 2; index += 1) {
+        await runStatement("INSERT INTO servers VALUES (?, ?, ?, ?)", [
+            21 + index,
+            "4GB",
+            31.98,
+            SERVER_STATUS.AVAILABLE
+        ]);
+    }
+}
+
+const ready = (async () => {
+    try {
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS servers (
+                id INTEGER PRIMARY KEY,
+                type TEXT,
+                price REAL,
+                status TEXT
+            )
+        `);
+
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                serverId INTEGER,
+                email TEXT,
+                serverName TEXT,
+                status TEXT,
+                stripeSessionId TEXT,
+                createdAt INTEGER
+            )
+        `);
+
+        const columns = await getAllRows("PRAGMA table_info(purchases)");
+        const columnNames = new Set(columns.map(column => column.name));
+
+        if (!columnNames.has("setupToken")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN setupToken TEXT");
         }
 
-        runMigrations(0);
-    });
-});
+        if (!columnNames.has("setupTokenExpiresAt")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN setupTokenExpiresAt INTEGER");
+        }
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_stripe_session_id
+            ON purchases(stripeSessionId)
+            WHERE stripeSessionId IS NOT NULL
+        `);
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_setup_token
+            ON purchases(setupToken)
+            WHERE setupToken IS NOT NULL
+        `);
+
+        await runStatement("UPDATE servers SET status = ? WHERE status = 'reserved'", [
+            SERVER_STATUS.HELD
+        ]);
+        await runStatement("UPDATE servers SET status = ? WHERE status = 'sold'", [
+            SERVER_STATUS.ALLOCATED
+        ]);
+        await runStatement("UPDATE purchases SET status = ? WHERE status = 'pending'", [
+            PURCHASE_STATUS.CHECKOUT_PENDING
+        ]);
+        await runStatement(
+            "UPDATE purchases SET setupToken = lower(hex(randomblob(32))) WHERE setupToken IS NULL"
+        );
+        await runStatement(
+            "UPDATE purchases SET setupTokenExpiresAt = ? WHERE setupTokenExpiresAt IS NULL",
+            [Date.now() + config.setupTokenTtlMs]
+        );
+
+        const row = await getRow("SELECT COUNT(*) as count FROM servers");
+
+        if (!row || row.count === 0) {
+            await seedInventory();
+        }
+    } catch (err) {
+        console.error("Database initialization failed:", err);
+        throw err;
+    }
+})();
+
+module.exports = ready;

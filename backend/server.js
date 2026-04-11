@@ -4,7 +4,7 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const express = require("express");
 
 const config = require("./config");
-require("./db/init"); // runs automatically
+const dbReady = require("./db/init");
 
 const requireSameOrigin = require("./middleware/sameOrigin");
 const securityHeaders = require("./middleware/securityHeaders");
@@ -42,9 +42,18 @@ app.use("/api", checkoutRoutes);
 app.use("/api", setupRoutes);
 app.use("/api", adminRoutes);
 
-if (require.main === module) {
-    app.listen(config.port, () => {
+async function startServer() {
+    await dbReady;
+
+    return app.listen(config.port, () => {
         console.log(`Server running on ${config.baseUrl}`);
+    });
+}
+
+if (require.main === module) {
+    startServer().catch(err => {
+        console.error("Failed to start server:", err);
+        process.exit(1);
     });
 }
 
