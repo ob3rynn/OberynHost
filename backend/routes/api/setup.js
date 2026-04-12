@@ -72,7 +72,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
 
         const hasServerName = Boolean((purchase.serverName || "").trim());
         const canEdit =
-            purchase.status === PURCHASE_STATUS.PAID ||
+            (purchase.status === PURCHASE_STATUS.PAID && !hasServerName) ||
             (purchase.status === PURCHASE_STATUS.COMPLETED && !hasServerName);
 
         let message = "Payment verified. You can choose your server name.";
@@ -129,7 +129,7 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
          WHERE setupToken = ?
            AND (setupTokenExpiresAt IS NULL OR setupTokenExpiresAt >= ?)
            AND (
-                status = ?
+                (status = ? AND (serverName IS NULL OR TRIM(serverName) = ''))
                 OR (status = ? AND (serverName IS NULL OR TRIM(serverName) = ''))
            )`,
         [
