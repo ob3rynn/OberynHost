@@ -28,6 +28,7 @@ test("public routes serve correctly and set security headers", async t => {
 
 test("plans api returns seeded inventory counts", async t => {
     const app = await createTestApp(t);
+    const { runQuery } = app.queries;
 
     const res = await app.request("/api/plans");
     assert.equal(res.status, 200);
@@ -38,6 +39,17 @@ test("plans api returns seeded inventory counts", async t => {
     assert.equal(byType["2GB"].available, 20);
     assert.equal(byType["4GB"].available, 2);
     assert.match(byType["2GB"].features.join(" "), /Paper server software/);
+
+    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "4GB"]);
+
+    const soldOutRes = await app.request("/api/plans");
+    assert.equal(soldOutRes.status, 200);
+
+    const soldOutPlans = await soldOutRes.json();
+    const soldOutByType = Object.fromEntries(soldOutPlans.map(plan => [plan.type, plan]));
+
+    assert.equal(soldOutByType["4GB"].available, 0);
+    assert.equal(soldOutByType["4GB"].price, 31.98);
 });
 
 test("checkout creates a pending purchase, reserves inventory, and sets setup cookie", async t => {

@@ -1,5 +1,6 @@
 const PLAN_DEFINITIONS = {
     "2GB": {
+        price: 9.98,
         features: [
             "2GB RAM",
             "Paper server software",
@@ -10,6 +11,7 @@ const PLAN_DEFINITIONS = {
         ]
     },
     "4GB": {
+        price: 31.98,
         features: [
             "4GB RAM",
             "Paper server software",

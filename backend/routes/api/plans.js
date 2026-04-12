@@ -7,22 +7,29 @@ const router = express.Router();
 
 router.get("/plans", (req, res) => {
     db.all(`
-        SELECT type, price, COUNT(*) as available
+        SELECT
+            type,
+            MAX(price) as price,
+            SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as available
         FROM servers
-        WHERE status = ?
-        GROUP BY type, price
+        GROUP BY type
     `, [SERVER_STATUS.AVAILABLE], (err, rows) => {
 
         if (err) {
             return res.status(500).json({ error: "DB error" });
         }
 
-        const plans = rows.map(row => ({
-            type: row.type,
-            price: row.price,
-            available: row.available,
-            features: PLAN_DEFINITIONS[row.type]?.features || []
-        }));
+        const rowsByType = new Map(rows.map(row => [row.type, row]));
+        const plans = Object.entries(PLAN_DEFINITIONS).map(([type, definition]) => {
+            const row = rowsByType.get(type);
+
+            return {
+                type,
+                price: row?.price ?? definition.price,
+                available: row ? Number(row.available) : 0,
+                features: definition.features || []
+            };
+        });
 
         res.json(plans);
     });
