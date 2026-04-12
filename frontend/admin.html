@@ -116,6 +116,13 @@
             align-items: center;
         }
 
+        .topbar-nav {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
         .toggle-chip {
             display: inline-flex;
             align-items: center;
@@ -188,6 +195,12 @@
             opacity: 0.45;
             cursor: not-allowed;
             transform: none;
+        }
+
+        .button.secondary {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text);
+            border-color: var(--line);
         }
 
         .login-shell {
@@ -728,7 +741,11 @@
             .hero-actions,
             .action-row,
             .advanced-actions,
-            .topbar-actions {
+        .topbar-actions {
+            width: 100%;
+        }
+
+            .topbar-nav {
                 width: 100%;
             }
 
@@ -767,6 +784,10 @@
         </a>
 
         <div class="topbar-actions">
+            <div class="topbar-nav">
+                <a class="button secondary" href="/">Main Site</a>
+                <a class="button secondary" href="/pricing">Plans</a>
+            </div>
             <label class="toggle-chip">
                 <input type="checkbox" id="autoRefreshToggle">
                 Auto refresh
