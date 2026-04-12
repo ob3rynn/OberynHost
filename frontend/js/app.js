@@ -1,5 +1,6 @@
 let plans = [];
 let resumeCheckout = null;
+let checkoutInFlight = null;
 
 async function init() {
     const featuredContainer = document.getElementById("featuredPlans");
@@ -119,9 +120,10 @@ function createPlanCard(plan, options = {}) {
     button.className = "button button--primary";
     button.textContent = plan.available === 0 ? "Sold Out" : options.ctaLabel || "Get Server";
     button.disabled = plan.available === 0;
+    button.dataset.defaultLabel = button.textContent;
 
     if (plan.available > 0) {
-        button.onclick = () => startCheckout(plan.type);
+        button.onclick = () => startCheckout(plan.type, button);
     }
 
     footer.appendChild(button);
@@ -157,6 +159,56 @@ function renderResumeCheckout(container) {
     container.appendChild(button);
 }
 
+function showResumeConflict(container, message, resumeUrl, planType) {
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = "";
+    container.hidden = false;
+
+    const copy = document.createElement("div");
+    copy.className = "resume-checkout__copy";
+    copy.innerHTML = `
+        <strong>Checkout already in progress</strong>
+        <p>${message}</p>
+    `;
+    container.appendChild(copy);
+
+    const actions = document.createElement("div");
+    actions.className = "resume-checkout__actions";
+
+    const resumeButton = document.createElement("a");
+    resumeButton.className = "button button--secondary";
+    resumeButton.href = resumeUrl;
+    resumeButton.textContent = `Resume ${planType} checkout`;
+    actions.appendChild(resumeButton);
+
+    const dismissButton = document.createElement("button");
+    dismissButton.type = "button";
+    dismissButton.className = "button button--ghost";
+    dismissButton.textContent = "Dismiss";
+    dismissButton.onclick = () => renderResumeCheckout(container);
+    actions.appendChild(dismissButton);
+
+    container.appendChild(actions);
+}
+
+function setCheckoutLoadingState(activeButton, active) {
+    if (!activeButton || activeButton.dataset.defaultLabel === "Sold Out") {
+        return;
+    }
+
+    if (active) {
+        activeButton.disabled = true;
+        activeButton.textContent = "Opening Checkout...";
+        return;
+    }
+
+    activeButton.disabled = false;
+    activeButton.textContent = activeButton.dataset.defaultLabel;
+}
+
 function renderPlans(container, options = {}) {
     container.innerHTML = "";
 
@@ -173,7 +225,15 @@ function renderPlans(container, options = {}) {
     });
 }
 
-async function startCheckout(planType) {
+async function startCheckout(planType, button) {
+    if (checkoutInFlight) {
+        return;
+    }
+
+    const resumeContainer = document.getElementById("resumeCheckout");
+    checkoutInFlight = planType;
+    setCheckoutLoadingState(button, true);
+
     try {
         const res = await fetch("/api/create-checkout", {
             method: "POST",
@@ -187,14 +247,18 @@ async function startCheckout(planType) {
 
         if (!res.ok) {
             if (res.status === 409 && data.resumeUrl) {
-                const resume = window.confirm(
-                    data.error || "You already have a checkout in progress. Resume it instead?"
+                resumeCheckout = {
+                    resumable: true,
+                    message: data.error || "You already have a checkout in progress. Resume it instead.",
+                    url: data.resumeUrl,
+                    planType: data.planType || planType
+                };
+                showResumeConflict(
+                    resumeContainer,
+                    resumeCheckout.message,
+                    resumeCheckout.url,
+                    resumeCheckout.planType
                 );
-
-                if (resume) {
-                    window.location.href = data.resumeUrl;
-                }
-
                 return;
             }
 
@@ -210,6 +274,9 @@ async function startCheckout(planType) {
         window.location.href = data.url;
     } catch {
         alert("Network error while starting checkout.");
+    } finally {
+        checkoutInFlight = null;
+        setCheckoutLoadingState(button, false);
     }
 }
 

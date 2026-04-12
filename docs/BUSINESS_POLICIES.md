@@ -61,8 +61,7 @@ Each fulfillment email should include:
 - Orders are accepted only while inventory is available.
 - Once all slots are filled, new purchases stop until a slot becomes available.
 - Each server slot is hard-allocated with fixed resources.
-- Upgrades or expansions are not available on standard slots after purchase.
-- The only upgrade path is if one of the two premium slots becomes available.
+- Upgrades or expansions are not available after purchase.
 
 ## 8. Included Vs Not Included
 

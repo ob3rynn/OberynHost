@@ -1,4 +1,5 @@
 const rawBaseUrl = (process.env.BASE_URL || "").trim();
+const rawAllowedOrigins = (process.env.ALLOWED_ORIGINS || "").trim();
 
 let parsedBaseUrl = null;
 
@@ -12,10 +13,20 @@ const baseUrl = parsedBaseUrl
     ? parsedBaseUrl.toString().replace(/\/+$/, "")
     : "";
 
+const allowedOrigins = Array.from(new Set([
+    parsedBaseUrl ? parsedBaseUrl.origin : "",
+    ...rawAllowedOrigins
+        .split(",")
+        .map(origin => origin.trim())
+        .filter(Boolean)
+])).filter(Boolean);
+
 const config = {
     port: Number(process.env.PORT || 3000),
+    host: (process.env.HOST || "0.0.0.0").trim(),
     baseUrl,
     baseOrigin: parsedBaseUrl ? parsedBaseUrl.origin : "",
+    allowedOrigins,
     secureCookies: parsedBaseUrl ? parsedBaseUrl.protocol === "https:" : false,
     adminKey: process.env.ADMIN_KEY,
     adminSessionTtlMs: 1000 * 60 * 60 * 12,

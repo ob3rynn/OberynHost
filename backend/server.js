@@ -45,7 +45,7 @@ app.use("/api", adminRoutes);
 async function startServer() {
     await dbReady;
 
-    return app.listen(config.port, () => {
+    return app.listen(config.port, config.host, () => {
         console.log(`Server running on ${config.baseUrl}`);
     });
 }
