@@ -1,14 +1,19 @@
 let plans = [];
+let resumeCheckout = null;
 
 async function init() {
     const featuredContainer = document.getElementById("featuredPlans");
     const pricingContainer = document.getElementById("plans");
+    const resumeContainer = document.getElementById("resumeCheckout");
 
     if (!featuredContainer && !pricingContainer) {
         return;
     }
 
-    await fetchPlans();
+    await Promise.all([
+        fetchPlans(),
+        pricingContainer ? fetchResumeCheckout() : Promise.resolve()
+    ]);
 
     if (featuredContainer) {
         renderPlans(featuredContainer, {
@@ -18,6 +23,7 @@ async function init() {
     }
 
     if (pricingContainer) {
+        renderResumeCheckout(resumeContainer);
         renderPlans(pricingContainer, {
             ctaLabel: "Start Checkout",
             compact: false
@@ -36,6 +42,21 @@ async function fetchPlans() {
         plans = await res.json();
     } catch {
         plans = [];
+    }
+}
+
+async function fetchResumeCheckout() {
+    try {
+        const res = await fetch("/api/resume-checkout");
+
+        if (!res.ok) {
+            throw new Error("Could not check for a resumable checkout.");
+        }
+
+        const data = await res.json();
+        resumeCheckout = data.resumable ? data : null;
+    } catch {
+        resumeCheckout = null;
     }
 }
 
@@ -109,6 +130,33 @@ function createPlanCard(plan, options = {}) {
     return card;
 }
 
+function renderResumeCheckout(container) {
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = "";
+    container.hidden = !resumeCheckout;
+
+    if (!resumeCheckout) {
+        return;
+    }
+
+    const copy = document.createElement("div");
+    copy.className = "resume-checkout__copy";
+    copy.innerHTML = `
+        <strong>Resume checkout</strong>
+        <p>${resumeCheckout.message}</p>
+    `;
+    container.appendChild(copy);
+
+    const button = document.createElement("a");
+    button.className = "button button--secondary";
+    button.href = resumeCheckout.url;
+    button.textContent = `Resume ${resumeCheckout.planType} checkout`;
+    container.appendChild(button);
+}
+
 function renderPlans(container, options = {}) {
     container.innerHTML = "";
 
@@ -138,6 +186,23 @@ async function startCheckout(planType) {
         const data = await res.json();
 
         if (!res.ok) {
+            if (res.status === 409 && data.resumeUrl) {
+                const resume = window.confirm(
+                    data.error || "You already have a checkout in progress. Resume it instead?"
+                );
+
+                if (resume) {
+                    window.location.href = data.resumeUrl;
+                }
+
+                return;
+            }
+
+            if (res.status === 409 && data.redirectUrl) {
+                window.location.href = data.redirectUrl;
+                return;
+            }
+
             alert(data.error || "Could not start checkout.");
             return;
         }

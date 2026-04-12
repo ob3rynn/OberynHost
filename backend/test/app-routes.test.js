@@ -88,6 +88,154 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
     assert.equal(server.status, "held");
 });
 
+test("resume checkout endpoint surfaces an open pending checkout for the same browser", async t => {
+    const app = await createTestApp(t, {
+        createdSession: {
+            id: "cs_test_resume_visible",
+            url: "https://checkout.stripe.test/resume-visible"
+        },
+        stripe: {
+            retrieveSession: async id => ({
+                id,
+                status: "open",
+                payment_status: "unpaid",
+                url: "https://checkout.stripe.test/resume-visible"
+            })
+        }
+    });
+
+    const checkoutRes = await app.request("/api/create-checkout", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ planType: "2GB" })
+    });
+    const setupCookie = app.parseSetCookie(checkoutRes);
+
+    const resumeRes = await app.request("/api/resume-checkout", {
+        headers: { cookie: setupCookie }
+    });
+    assert.equal(resumeRes.status, 200);
+
+    const resumeData = await resumeRes.json();
+    assert.equal(resumeData.resumable, true);
+    assert.equal(resumeData.planType, "2GB");
+    assert.equal(resumeData.url, "https://checkout.stripe.test/resume-visible");
+});
+
+test("retrying the same server resumes the existing checkout instead of reserving another slot", async t => {
+    let createCount = 0;
+    const app = await createTestApp(t, {
+        stripe: {
+            createSession: async () => {
+                createCount += 1;
+                return {
+                    id: "cs_test_resume_same_plan",
+                    url: "https://checkout.stripe.test/resume-same-plan"
+                };
+            },
+            retrieveSession: async id => ({
+                id,
+                status: "open",
+                payment_status: "unpaid",
+                url: "https://checkout.stripe.test/resume-same-plan"
+            })
+        }
+    });
+    const { getQuery } = app.queries;
+
+    const firstRes = await app.request("/api/create-checkout", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ planType: "2GB" })
+    });
+    const setupCookie = app.parseSetCookie(firstRes);
+
+    const secondRes = await app.request("/api/create-checkout", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl,
+            cookie: setupCookie
+        },
+        body: JSON.stringify({ planType: "2GB" })
+    });
+    assert.equal(secondRes.status, 200);
+
+    const secondData = await secondRes.json();
+    assert.equal(secondData.resumed, true);
+    assert.equal(secondData.url, "https://checkout.stripe.test/resume-same-plan");
+    assert.equal(createCount, 1);
+
+    const purchaseCount = await getQuery("SELECT COUNT(*) AS count FROM purchases");
+    assert.equal(purchaseCount.count, 1);
+
+    const heldServers = await getQuery("SELECT COUNT(*) AS count FROM servers WHERE status = ?", ["held"]);
+    assert.equal(heldServers.count, 1);
+});
+
+test("retrying with a different server type offers the existing checkout instead of taking a second hold", async t => {
+    let createCount = 0;
+    const app = await createTestApp(t, {
+        stripe: {
+            createSession: async () => {
+                createCount += 1;
+                return {
+                    id: "cs_test_resume_conflict",
+                    url: "https://checkout.stripe.test/resume-conflict"
+                };
+            },
+            retrieveSession: async id => ({
+                id,
+                status: "open",
+                payment_status: "unpaid",
+                url: "https://checkout.stripe.test/resume-conflict"
+            })
+        }
+    });
+    const { getQuery } = app.queries;
+
+    const firstRes = await app.request("/api/create-checkout", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ planType: "2GB" })
+    });
+    const setupCookie = app.parseSetCookie(firstRes);
+
+    const secondRes = await app.request("/api/create-checkout", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl,
+            cookie: setupCookie
+        },
+        body: JSON.stringify({ planType: "4GB" })
+    });
+    assert.equal(secondRes.status, 409);
+
+    const secondData = await secondRes.json();
+    assert.equal(secondData.existingPlanType, "2GB");
+    assert.equal(secondData.resumeUrl, "https://checkout.stripe.test/resume-conflict");
+    assert.equal(createCount, 1);
+
+    const purchaseCount = await getQuery("SELECT COUNT(*) AS count FROM purchases");
+    assert.equal(purchaseCount.count, 1);
+
+    const held4Gb = await getQuery(
+        "SELECT COUNT(*) AS count FROM servers WHERE type = ? AND status = ?",
+        ["4GB", "held"]
+    );
+    assert.equal(held4Gb.count, 0);
+});
+
 test("checkout rejects invalid plan types and foreign origins", async t => {
     const app = await createTestApp(t);
     const { runQuery } = app.queries;
