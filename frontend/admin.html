@@ -116,30 +116,6 @@
             align-items: center;
         }
 
-        .topbar-nav {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        .toggle-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 12px;
-            border-radius: 999px;
-            border: 1px solid var(--line);
-            background: rgba(255, 255, 255, 0.03);
-            color: var(--muted-strong);
-        }
-
-        .toggle-chip input {
-            width: auto;
-            margin: 0;
-            accent-color: var(--accent-strong);
-        }
-
         .button,
         button {
             display: inline-flex;
@@ -355,22 +331,26 @@
 
         .tabbar {
             display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            padding: 14px;
+            gap: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            scrollbar-width: thin;
         }
 
         .tab-button {
             display: inline-flex;
             align-items: center;
             justify-content: space-between;
-            gap: 12px;
-            min-width: 150px;
-            padding: 12px 14px;
-            border-radius: 18px;
+            gap: 8px;
+            flex: 0 0 auto;
+            min-width: 0;
+            padding: 8px 11px;
+            border-radius: 14px;
             border: 1px solid var(--line);
-            background: rgba(255, 255, 255, 0.03);
+            background: rgba(255, 255, 255, 0.02);
             color: var(--muted-strong);
+            font-size: 0.88rem;
+            white-space: nowrap;
         }
 
         .tab-button.is-active {
@@ -380,15 +360,15 @@
         }
 
         .tab-count {
-            padding: 4px 9px;
+            padding: 2px 7px;
             border-radius: 999px;
             background: rgba(255, 255, 255, 0.06);
-            font-size: 12px;
+            font-size: 10px;
             font-weight: 700;
         }
 
         .panel-surface {
-            padding: 26px;
+            padding: 22px;
         }
 
         .view-shell {
@@ -416,13 +396,13 @@
 
         .view-intro__stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
             width: min(100%, 360px);
         }
 
         .view-stat {
-            padding: 14px 16px;
+            padding: 12px 14px;
             border-radius: 18px;
             background: rgba(255, 255, 255, 0.035);
             border: 1px solid rgba(255, 255, 255, 0.05);
@@ -438,7 +418,7 @@
 
         .view-stat__value {
             color: var(--text);
-            font-size: 1.5rem;
+            font-size: 1.35rem;
             font-weight: 800;
         }
 
@@ -457,6 +437,39 @@
             border-radius: 22px;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .bulk-toolbar summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            list-style: none;
+            color: var(--muted-strong);
+            font-weight: 700;
+        }
+
+        .bulk-toolbar summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .bulk-toolbar summary::after {
+            content: "Expand";
+            color: var(--muted);
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .bulk-toolbar[open] summary::after {
+            content: "Hide";
+        }
+
+        .bulk-toolbar__body {
+            display: grid;
+            gap: 14px;
+            margin-top: 14px;
         }
 
         .bulk-toolbar__header,
@@ -486,6 +499,19 @@
             flex-wrap: wrap;
         }
 
+        .bulk-toolbar__actions button,
+        .action-row > button,
+        .advanced-actions > button,
+        .guarded-action > button,
+        .guard-actions > button,
+        .topbar-actions > button {
+            padding: 8px 12px;
+            border-radius: 14px;
+            font-size: 0.92rem;
+            line-height: 1.2;
+            box-shadow: none;
+        }
+
         .section-heading {
             display: flex;
             justify-content: space-between;
@@ -504,6 +530,12 @@
             gap: 14px;
         }
 
+        .meta-grid {
+            grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
         .summary-grid {
             grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
         }
@@ -511,7 +543,7 @@
         .summary-card,
         .overview-card {
             border-radius: 20px;
-            padding: 18px;
+            padding: 16px;
         }
 
         .summary-label {
@@ -580,10 +612,10 @@
             list-style: none;
             display: flex;
             justify-content: space-between;
-            gap: 16px;
+            gap: 14px;
             align-items: center;
             flex-wrap: wrap;
-            padding: 18px 22px;
+            padding: 16px 20px;
             cursor: pointer;
         }
 
@@ -630,7 +662,7 @@
         }
 
         .order-title {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             color: var(--text);
         }
 
@@ -645,11 +677,11 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 6px 10px;
+            padding: 5px 9px;
             border-radius: 999px;
             background: rgba(255, 255, 255, 0.04);
             color: var(--muted-strong);
-            font-size: 12px;
+            font-size: 11px;
             letter-spacing: 0.04em;
             text-transform: uppercase;
         }
@@ -675,7 +707,7 @@
         }
 
         .order-body {
-            padding: 0 22px 22px;
+            padding: 0 20px 20px;
         }
 
         .status-pill,
@@ -700,30 +732,29 @@
             color: #f3d4a0;
         }
 
-        .meta-grid {
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            margin-bottom: 16px;
-        }
-
         .meta-block {
-            padding: 14px;
-            border-radius: 18px;
+            padding: 10px 11px;
+            border-radius: 14px;
             background: rgba(255, 255, 255, 0.035);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         .meta-label {
-            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.06em;
             color: #a59b90;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
         }
 
         .meta-value {
             color: var(--text);
             word-break: break-word;
-            font-size: 1rem;
+            font-size: 0.86rem;
+            line-height: 1.35;
         }
 
         .detail-line {
@@ -736,14 +767,99 @@
             color: var(--muted-strong);
         }
 
+        .label-with-tip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .info-tip {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 700;
+            cursor: help;
+        }
+
+        .info-tip::before {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 50%;
+            bottom: calc(100% + 10px);
+            transform: translateX(-50%);
+            width: min(240px, 70vw);
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(9, 11, 12, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text);
+            font-size: 12px;
+            line-height: 1.45;
+            text-transform: none;
+            letter-spacing: normal;
+            text-align: left;
+            box-shadow: var(--shadow);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 10;
+        }
+
+        .info-tip:hover::before,
+        .info-tip:focus-visible::before {
+            opacity: 1;
+        }
+
         .diagnostics,
         .note-block,
-        .audit-log {
+        .audit-log,
+        .detail-section {
             margin-top: 16px;
             padding: 16px;
             border-radius: 18px;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .detail-section {
+            margin-top: 0;
+        }
+
+        .detail-section summary {
+            cursor: pointer;
+            color: var(--muted-strong);
+            font-weight: 700;
+            list-style: none;
+        }
+
+        .detail-section summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .detail-section summary::after {
+            content: "Expand";
+            float: right;
+            color: var(--muted);
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .detail-section[open] summary::after {
+            content: "Hide";
+        }
+
+        .detail-section__body {
+            display: grid;
+            gap: 8px;
+            margin-top: 12px;
         }
 
         .diagnostics.ok {
@@ -817,6 +933,52 @@
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+        }
+
+        .order-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.95fr);
+            gap: 18px;
+            align-items: start;
+        }
+
+        .order-main,
+        .order-side {
+            display: grid;
+            gap: 16px;
+        }
+
+        .notes-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: nowrap;
+        }
+
+        .note-block {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            margin-top: 0;
+            min-width: 0;
+            flex: 1 1 0;
+        }
+
+        .note-block .note-label {
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .note-inline-input {
+            min-width: 0;
+            flex: 1 1 auto;
+            padding: 10px 12px;
+            border-radius: 12px;
+        }
+
+        .note-block .helper-text {
+            display: none;
         }
 
         details.advanced {
@@ -893,16 +1055,59 @@
             .hero-actions,
             .action-row,
             .advanced-actions,
-        .topbar-actions {
-            width: 100%;
-        }
-
-            .topbar-nav {
+            .topbar-actions,
+            .order-layout {
                 width: 100%;
             }
 
-            .tab-button {
-                min-width: 0;
+            .order-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .notes-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 1400px) {
+            .order-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .panel-header {
+                padding: 20px;
+            }
+        }
+
+        @media (max-width: 980px) {
+            .view-intro {
+                display: grid;
+                gap: 14px;
+            }
+
+            .view-intro__stats {
+                width: 100%;
+                max-width: none;
+            }
+
+            .bulk-toolbar summary {
+                align-items: start;
+                flex-direction: column;
+            }
+        }
+
+        @media (max-width: 620px) {
+            .order-summary-meta,
+            .order-summary-glance {
+                width: 100%;
+            }
+
+            .notes-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .note-block {
                 width: 100%;
             }
         }
@@ -936,10 +1141,7 @@
         </a>
 
         <div class="topbar-actions">
-            <label class="toggle-chip">
-                <input type="checkbox" id="autoRefreshToggle">
-                Auto refresh
-            </label>
+            <button class="secondary" onclick="load()">Refresh</button>
             <button class="danger" onclick="logout()">Logout</button>
         </div>
     </header>
@@ -995,12 +1197,6 @@ const TAB_CONFIG = [
         subtitle: "Open checkouts that have been held long enough to deserve manual review."
     },
     {
-        key: "completed",
-        label: "Completed",
-        title: "Completed Orders",
-        subtitle: "Orders that have already been fulfilled."
-    },
-    {
         key: "archived",
         label: "Archived",
         title: "Expired Or Cancelled",
@@ -1018,11 +1214,31 @@ const PURCHASE_STATUSES = ["checkout_pending", "paid", "completed", "expired", "
 const SERVER_STATUSES = ["available", "held", "allocated"];
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"]);
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
+const META_HELP = {
+    "Slot": "The reserved inventory slot tied to this order.",
+    "Server Price": "The monthly price for this server subscription.",
+    "Payment State": "Your local fulfillment-facing read of whether payment is verified yet.",
+    "Server State": "How the inventory slot is currently held in your system.",
+    "Subscription": "The current Stripe subscription status tied to the order.",
+    "Period End": "When the current paid billing period ends in Stripe.",
+    "Renewal": "Whether the subscription will renew or end at the current period boundary.",
+    "Policy State": "The admin policy summary for grace, suspension, or purge timing.",
+    "Service Access": "Whether the delivered service is currently live or manually suspended.",
+    "Created": "When the order was first created in your system."
+};
+const DETAIL_HELP = {
+    "Email": "The customer address tied to billing and delivery contact.",
+    "Server Name": "The setup name submitted by the customer after payment.",
+    "Stripe Session": "The Checkout Session used to start the purchase flow.",
+    "Stripe Customer": "The Stripe customer record associated with the order.",
+    "Stripe Subscription": "The recurring Stripe subscription created for this server.",
+    "Stripe Price": "The Stripe recurring price object attached to the subscription.",
+    "Setup Token Expires": "When the post-checkout setup link will stop being valid.",
+    "Refund Eligible Until": "The end of the original-order refund window, if one is still applicable."
+};
 const state = {
     purchases: [],
-    autoRefresh: localStorage.getItem("admin.autoRefresh") !== "false",
     activeTab: localStorage.getItem("admin.activeTab") || "overview",
-    refreshTimer: null,
     selectedPurchaseIds: new Set()
 };
 
@@ -1114,7 +1330,6 @@ function groupPurchases(data) {
         ready: data.filter(p => p.status === "paid"),
         pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)),
         stale: data.filter(p => isStaleCheckout(p)),
-        completed: data.filter(p => p.status === "completed"),
         archived: data.filter(p => p.status === "expired" || p.status === "cancelled"),
         issues: data.filter(p => hasNonStaleIssues(p))
     };
@@ -1131,7 +1346,6 @@ async function authFetch(url, options = {}) {
     });
 
     if (res.status === 401) {
-        stopAutoRefresh();
         showLogin("Session expired. Sign in again.");
         return null;
     }
@@ -1175,7 +1389,6 @@ function showAdmin() {
     document.getElementById("login").style.display = "none";
     document.getElementById("adminPanel").style.display = "block";
     document.getElementById("error").innerText = "";
-    document.getElementById("autoRefreshToggle").checked = state.autoRefresh;
 }
 
 function createElement(tag, className, text) {
@@ -1194,18 +1407,48 @@ function createElement(tag, className, text) {
 
 function createMetaBlock(label, value) {
     const block = createElement("div", "meta-block");
-    block.appendChild(createElement("div", "meta-label", label));
+    const labelEl = createElement("div", "meta-label");
+    labelEl.appendChild(document.createTextNode(label));
+    if (META_HELP[label]) {
+        labelEl.appendChild(createInfoTip(META_HELP[label]));
+    }
+    block.appendChild(labelEl);
     block.appendChild(createElement("div", "meta-value", value));
     return block;
 }
 
 function createDetailLine(label, value) {
     const line = createElement("div", "detail-line");
-    const strong = document.createElement("strong");
-    strong.textContent = `${label}: `;
+    const strong = createElement("strong", "label-with-tip");
+    strong.appendChild(document.createTextNode(`${label}:`));
+    if (DETAIL_HELP[label]) {
+        strong.appendChild(createInfoTip(DETAIL_HELP[label]));
+    }
     line.appendChild(strong);
+    line.appendChild(document.createTextNode(" "));
     line.appendChild(document.createTextNode(value || "-"));
     return line;
+}
+
+function createInfoTip(text) {
+    const tip = document.createElement("span");
+    tip.className = "info-tip";
+    tip.textContent = "i";
+    tip.tabIndex = 0;
+    tip.setAttribute("role", "img");
+    tip.setAttribute("aria-label", text);
+    tip.dataset.tooltip = text;
+    return tip;
+}
+
+function scrollCardIntoView(card) {
+    requestAnimationFrame(() => {
+        const top = card.getBoundingClientRect().top + window.scrollY - 18;
+        window.scrollTo({
+            top: Math.max(top, 0),
+            behavior: "smooth"
+        });
+    });
 }
 
 function createActionButton(label, tone, onClick, disabled = false) {
@@ -1335,7 +1578,6 @@ function renderSummaryGrid(data) {
         paid: data.filter(p => p.status === "paid").length,
         pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)).length,
         stale: data.filter(p => isStaleCheckout(p)).length,
-        completed: data.filter(p => p.status === "completed").length,
         archived: data.filter(p => p.status === "expired" || p.status === "cancelled").length,
         issues: data.filter(p => hasNonStaleIssues(p)).length
     };
@@ -1347,7 +1589,6 @@ function renderSummaryGrid(data) {
         ["Ready", counts.paid],
         ["Pending", counts.pending],
         ["Stale", counts.stale],
-        ["Completed", counts.completed],
         ["Issues", counts.issues]
     ].forEach(([label, value]) => {
         const card = createElement("article", "summary-card");
@@ -1471,17 +1712,6 @@ function getViewIntroContent(tabKey, items, grouped) {
         };
     }
 
-    if (tabKey === "completed") {
-        return {
-            body: "These orders have been fulfilled and can be reviewed without the noise of active queues.",
-            note: "This is your best tab for looking back at delivered orders and validating what went out.",
-            stats: [
-                ["Completed", items.length],
-                ["With Email", items.filter(item => Boolean(item.email)).length]
-            ]
-        };
-    }
-
     if (tabKey === "archived") {
         return {
             body: "Expired and cancelled orders live here so they stay out of the live workflow.",
@@ -1522,10 +1752,25 @@ function renderViewIntro(tabKey, items, grouped) {
 }
 
 function renderBulkToolbar(items) {
-    const toolbar = createElement("section", "bulk-toolbar");
+    const toolbar = document.createElement("details");
+    toolbar.className = "bulk-toolbar";
     const selectedItems = items.filter(item => isPurchaseSelected(item.id));
     const selectedCount = selectedItems.length;
 
+    const summary = document.createElement("summary");
+    summary.appendChild(createElement(
+        "span",
+        "",
+        selectedCount ? `Bulk Overrides (${selectedCount} selected)` : "Bulk Overrides"
+    ));
+    summary.appendChild(createElement(
+        "span",
+        "selection-chip",
+        selectedCount ? `${selectedCount} selected in this view` : "No orders selected"
+    ));
+    toolbar.appendChild(summary);
+
+    const body = createElement("div", "bulk-toolbar__body");
     const header = createElement("div", "bulk-toolbar__header");
     const copy = createElement("div", "");
     copy.appendChild(createElement("h3", "", "Bulk Overrides"));
@@ -1535,12 +1780,7 @@ function renderBulkToolbar(items) {
         "Select multiple orders in this view, then run guarded admin actions with one confirmation flow."
     ));
     header.appendChild(copy);
-    header.appendChild(createElement(
-        "div",
-        "selection-chip",
-        selectedCount ? `${selectedCount} selected in this view` : "No orders selected"
-    ));
-    toolbar.appendChild(header);
+    body.appendChild(header);
 
     const tools = createElement("div", "selection-tools");
     tools.appendChild(createActionButton("Select All Visible", "secondary", () => {
@@ -1554,8 +1794,8 @@ function renderBulkToolbar(items) {
 
     const noteInput = document.createElement("textarea");
     noteInput.placeholder = "Bulk note for the audit trail.";
-    toolbar.appendChild(tools);
-    toolbar.appendChild(noteInput);
+    body.appendChild(tools);
+    body.appendChild(noteInput);
 
     const actions = createElement("div", "bulk-toolbar__actions");
     actions.appendChild(createActionButton("Bulk Re-check Stripe", "secondary", async () => {
@@ -1671,7 +1911,8 @@ function renderBulkToolbar(items) {
         !selectedCount
     ));
 
-    toolbar.appendChild(actions);
+    body.appendChild(actions);
+    toolbar.appendChild(body);
     return toolbar;
 }
 
@@ -1728,6 +1969,25 @@ function renderAuditLog(purchase) {
     return container;
 }
 
+function createDetailSection(title, bodyBuilder, helperText = "") {
+    const section = document.createElement("details");
+    section.className = "detail-section";
+
+    const summary = document.createElement("summary");
+    summary.textContent = title;
+    section.appendChild(summary);
+
+    const body = createElement("div", "detail-section__body");
+    bodyBuilder(body);
+
+    if (helperText) {
+        body.appendChild(createElement("div", "helper-text", helperText));
+    }
+
+    section.appendChild(body);
+    return section;
+}
+
 async function completePurchase(id, adminNote = "") {
     return withCardAction(async () => {
         await requestJson("/api/complete", {
@@ -1765,13 +2025,25 @@ async function applyOverride(id, payload, successMessage) {
 
 function renderDiagnostics(purchase) {
     const diagnostics = purchase.diagnostics || {};
+    const policy = getPolicyState(purchase);
+    const hasActionablePolicy = Boolean(
+        policy.inGracePeriod ||
+        policy.suspensionRequired ||
+        policy.suspendedAt ||
+        policy.purgeRequired
+    );
+
+    if (!diagnostics.issueCount && !diagnostics.stripe && !hasActionablePolicy) {
+        return null;
+    }
+
     const container = createElement("div", diagnostics.issueCount ? "diagnostics" : "diagnostics ok");
     container.appendChild(createElement(
         "h3",
         "",
         diagnostics.issueCount
             ? `Detected ${diagnostics.issueCount} issue${diagnostics.issueCount === 1 ? "" : "s"}`
-            : "Diagnostics look clean"
+            : "Diagnostics"
     ));
 
     if (diagnostics.issueCount) {
@@ -1811,7 +2083,6 @@ function renderDiagnostics(purchase) {
         container.appendChild(createElement("div", "helper-text", runtime));
     }
 
-    const policy = getPolicyState(purchase);
     const policyParts = [];
 
     if (policy.preFulfillmentRefundEligible) {
@@ -2004,6 +2275,11 @@ function renderPurchaseCard(purchase) {
     const status = getStatusView(purchase.status);
     const card = document.createElement("details");
     card.className = `order-card is-${status.tone}`;
+    card.addEventListener("toggle", () => {
+        if (card.open) {
+            scrollCardIntoView(card);
+        }
+    });
 
     const summary = createElement("summary", "order-summary");
     const titleGroup = createElement("div", "order-title-group");
@@ -2050,6 +2326,9 @@ function renderPurchaseCard(purchase) {
     card.appendChild(summary);
 
     const body = createElement("div", "order-body");
+    const layout = createElement("div", "order-layout");
+    const main = createElement("div", "order-main");
+    const side = createElement("div", "order-side");
 
     const metaGrid = createElement("div", "meta-grid");
     metaGrid.appendChild(createMetaBlock("Slot", String(purchase.serverId ?? "-")));
@@ -2074,28 +2353,40 @@ function renderPurchaseCard(purchase) {
         purchase.serviceSuspendedAt ? "Suspended" : "Live"
     ));
     metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(purchase.createdAt)));
-    body.appendChild(metaGrid);
+    main.appendChild(metaGrid);
+    const diagnosticsBlock = renderDiagnostics(purchase);
+    if (diagnosticsBlock) {
+        main.appendChild(diagnosticsBlock);
+    }
 
-    body.appendChild(createDetailLine("Email", purchase.email));
-    body.appendChild(createDetailLine("Server Name", purchase.serverName));
-    body.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
-    body.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
-    body.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
-    body.appendChild(createDetailLine("Stripe Price", purchase.stripePriceId));
-    body.appendChild(createDetailLine("Setup Token Expires", formatTimestamp(purchase.setupTokenExpiresAt)));
-    body.appendChild(renderDiagnostics(purchase));
+    const policy = getPolicyState(purchase);
+
+    main.appendChild(createDetailSection("Customer and Subscription Details", section => {
+        section.appendChild(createDetailLine("Email", purchase.email));
+        section.appendChild(createDetailLine("Server Name", purchase.serverName));
+        section.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
+        section.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
+        section.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
+        section.appendChild(createDetailLine("Stripe Price", purchase.stripePriceId));
+        section.appendChild(createDetailLine("Setup Token Expires", formatTimestamp(purchase.setupTokenExpiresAt)));
+        if (policy.refundWindowEndsAt) {
+            section.appendChild(createDetailLine(
+                "Refund Eligible Until",
+                formatTimestamp(policy.refundWindowEndsAt)
+            ));
+        }
+    }));
+
+    const notesRow = createElement("div", "notes-row");
 
     const noteBlock = createElement("div", "note-block");
     noteBlock.appendChild(createElement("label", "note-label", "Operator Note"));
-    const noteInput = document.createElement("textarea");
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.className = "note-inline-input";
     noteInput.placeholder = "Explain what you are changing or why this order needs attention.";
     noteBlock.appendChild(noteInput);
-    noteBlock.appendChild(createElement(
-        "div",
-        "helper-text",
-        "Any action triggered from this card will store this note in the audit trail."
-    ));
-    body.appendChild(noteBlock);
+    notesRow.appendChild(noteBlock);
 
     const actions = createElement("div", "action-row");
 
@@ -2161,23 +2452,27 @@ function renderPurchaseCard(purchase) {
         }));
     }
 
-    body.appendChild(actions);
+    side.appendChild(actions);
 
     const advancedNoteBlock = createElement("div", "note-block");
     advancedNoteBlock.appendChild(createElement("label", "note-label", "Override Note"));
-    const advancedNoteInput = document.createElement("textarea");
+    const advancedNoteInput = document.createElement("input");
+    advancedNoteInput.type = "text";
+    advancedNoteInput.className = "note-inline-input";
     advancedNoteInput.placeholder = "Explain why this override is safe.";
     advancedNoteBlock.appendChild(advancedNoteInput);
-    advancedNoteBlock.appendChild(createElement(
-        "div",
-        "helper-text",
-        "Use this note when manually changing payment or server state."
-    ));
 
-    body.appendChild(advancedNoteBlock);
-    body.appendChild(renderAdvancedControls(purchase, advancedNoteInput));
+    notesRow.appendChild(advancedNoteBlock);
+    side.appendChild(notesRow);
+    side.appendChild(renderAdvancedControls(purchase, advancedNoteInput));
 
-    body.appendChild(renderAuditLog(purchase));
+    main.appendChild(createDetailSection("Audit Trail", section => {
+        section.appendChild(renderAuditLog(purchase));
+    }, "Open this when you need the operator history for the order."));
+
+    layout.appendChild(main);
+    layout.appendChild(side);
+    body.appendChild(layout);
     card.appendChild(body);
     return card;
 }
@@ -2224,29 +2519,12 @@ function renderAdmin() {
         ready: "No verified orders are waiting right now.",
         pending: "No orders are currently waiting on payment.",
         stale: "No stale checkout holds right now.",
-        completed: "No orders have been completed yet.",
         archived: "No expired or cancelled orders right now.",
         issues: "No orders currently need manual review."
     }[state.activeTab] || "Nothing to show right now.";
 
     viewShell.appendChild(renderListView(items, emptyText));
     content.appendChild(viewShell);
-}
-
-function stopAutoRefresh() {
-    if (state.refreshTimer) {
-        clearInterval(state.refreshTimer);
-        state.refreshTimer = null;
-    }
-}
-
-function syncRefreshTimer() {
-    stopAutoRefresh();
-    if (!state.autoRefresh) return;
-
-    state.refreshTimer = setInterval(() => {
-        load({ silent: true }).catch(() => {});
-    }, 15000);
 }
 
 async function login() {
@@ -2270,7 +2548,6 @@ async function login() {
 
     document.getElementById("keyInput").value = "";
     showAdmin();
-    syncRefreshTimer();
     await load();
 }
 
@@ -2280,7 +2557,6 @@ async function logout() {
         credentials: "same-origin"
     });
 
-    stopAutoRefresh();
     showLogin();
 }
 
@@ -2302,19 +2578,11 @@ async function load({ silent = false } = {}) {
     }
 }
 
-document.getElementById("autoRefreshToggle").addEventListener("change", event => {
-    state.autoRefresh = event.target.checked;
-    localStorage.setItem("admin.autoRefresh", String(state.autoRefresh));
-    syncRefreshTimer();
-    showBanner(state.autoRefresh ? "Auto refresh enabled." : "Auto refresh paused.", "info");
-});
-
 (async () => {
     const res = await authFetch("/api/purchases");
     if (!res) return;
 
     showAdmin();
-    syncRefreshTimer();
     await load({ silent: true });
 })();
 </script>
