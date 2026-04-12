@@ -3,63 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Complete Server Setup | Oberynn Hosting</title>
+    <title>Finish Server Details | Oberynn Hosting</title>
     <meta
         name="description"
-        content="Finish post-purchase setup for your Minecraft server by confirming payment status and submitting your server name."
+        content="Finish your Minecraft server details after checkout. Once fulfilled, your panel link and login will be emailed from support@oberynn.com."
     >
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<div class="site-shell">
-    <header class="site-header">
-        <a class="brand-mark" href="/">
-            <span class="brand-mark__badge">OH</span>
-            <span>
+<div class="site-frame">
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand__mark">OH</span>
+            <span class="brand__copy">
                 <strong>Oberynn Hosting</strong>
-                <small>Post-purchase setup</small>
+                <small>Post-checkout setup</small>
             </span>
         </a>
     </header>
 
-    <main>
-        <section class="hero-panel hero-panel--compact">
-            <div class="hero-copy">
+    <main class="pricing-wrap">
+        <section class="pricing-card">
+            <div class="pricing-intro">
                 <p class="eyebrow">Setup</p>
-                <h1>Finish the last step so your server can move into fulfillment.</h1>
-                <p id="lead" class="hero-lead">We are checking your purchase status.</p>
+                <h1>Finish your server details.</h1>
+                <p id="lead">
+                    We’re verifying your payment. Once confirmed, you can submit your server details.
+                </p>
             </div>
 
-            <aside class="hero-aside">
-                <div class="hero-stat-card">
-                    <p class="eyebrow">What happens here</p>
-                    <ul class="feature-list">
-                        <li>Payment status is checked first</li>
-                        <li>Server naming unlocks after verification</li>
-                        <li>The page retries automatically if Stripe is still confirming payment</li>
-                    </ul>
-                </div>
-            </aside>
-        </section>
+            <div class="hero-note" style="max-width:none; margin: 0 0 24px;">
+                <p>
+                    After your server details are submitted, your order moves into preparation.
+                    Your panel link and login will be emailed to you from support@oberynn.com when the server is ready.
+                </p>
+                <p style="margin-top:10px;">
+                    Most orders are prepared later the same day or within one business day.
+                    Orders submitted during weekday business hours are typically prepared after 4:30 PM CT.
+                    Orders submitted on Friday evening or over the weekend are typically prepared on the next business day.
+                </p>
+            </div>
 
-        <section class="section-block section-block--dense">
-            <div class="setup-panel">
-                <div class="setup-panel__intro">
-                    <h2>Choose your server name</h2>
-                    <p id="status" class="status-text">Waiting for verification.</p>
-                </div>
+            <div class="field-group">
+                <label for="serverName">Server name</label>
+                <input id="serverName" placeholder="My Server" disabled>
+            </div>
 
-                <label class="field-group" for="serverName">
-                    <span>Server name</span>
-                    <input id="serverName" placeholder="My Server" disabled>
-                </label>
+            <div class="hero-note" style="max-width:none; margin: 18px 0 0;">
+                <p id="status">Waiting for verification.</p>
+            </div>
 
-                <div class="hero-actions">
-                    <button id="completeBtn" class="button button--primary" onclick="complete()" disabled>
-                        Save Setup
-                    </button>
-                    <a class="button button--ghost" href="/pricing">Back to pricing</a>
-                </div>
+            <div class="hero-actions" style="justify-content:flex-start;">
+                <button id="completeBtn" onclick="complete()" disabled>Submit Server Details</button>
             </div>
         </section>
     </main>
@@ -97,7 +92,7 @@ async function refreshSetupStatus() {
         });
         const data = await res.json();
 
-        lead.innerText = data.message || "We are checking your purchase status.";
+        lead.innerText = data.message || "We’re verifying your payment. Once confirmed, you can submit your server details.";
 
         if (!res.ok) {
             statusEl.innerText = data.message || "This setup link is not valid.";
@@ -113,7 +108,7 @@ async function refreshSetupStatus() {
         setReadyState(Boolean(data.ready));
 
         if (data.ready) {
-            statusEl.innerText = "Payment verified. Choose a server name and submit it.";
+            statusEl.innerText = "Payment verified. Submit your server details to continue.";
             stopPolling();
             return;
         }
@@ -160,8 +155,8 @@ async function complete() {
     const data = await res.json();
 
     if (data.success) {
-        lead.innerText = "Server name saved.";
-        statusEl.innerText = "Setup complete.";
+        lead.innerText = "Your server details have been received.";
+        statusEl.innerText = "You’re all set. Watch your email for panel access from support@oberynn.com once the server is ready.";
         setReadyState(false);
         stopPolling();
     } else {
