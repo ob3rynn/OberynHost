@@ -3,7 +3,11 @@ const sqlite3 = require("sqlite3").verbose();
 
 const configuredDatabasePath = (process.env.DATABASE_PATH || "").trim();
 const databasePath = configuredDatabasePath
-    ? path.resolve(configuredDatabasePath)
+    ? (
+        path.isAbsolute(configuredDatabasePath)
+            ? configuredDatabasePath
+            : path.resolve(__dirname, "..", configuredDatabasePath)
+    )
     : path.join(__dirname, "../data.db");
 
 const db = new sqlite3.Database(databasePath);

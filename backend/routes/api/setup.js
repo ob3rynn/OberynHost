@@ -84,7 +84,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
             purchase.status === PURCHASE_STATUS.CANCELLED
         ) {
             message = "This checkout is no longer valid for server setup.";
-        } else if (purchase.status === PURCHASE_STATUS.COMPLETED && hasServerName) {
+        } else if (hasServerName) {
             message = "Server setup has already been submitted for this order.";
         }
 

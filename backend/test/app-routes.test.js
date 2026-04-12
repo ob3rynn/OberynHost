@@ -281,6 +281,10 @@ test("setup can only be submitted once through the customer flow", async t => {
     });
     const secondStatusData = await secondStatus.json();
     assert.equal(secondStatusData.ready, false);
+    assert.equal(
+        secondStatusData.message,
+        "Server setup has already been submitted for this order."
+    );
 
     const secondComplete = await app.request("/api/complete-setup", {
         method: "POST",

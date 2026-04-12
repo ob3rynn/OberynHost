@@ -1,9 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 const { parseCookies, serializeCookie, clearCookie } = require("../utils/cookies");
 const { generateOpaqueToken, isOpaqueToken, timingSafeEqualString } = require("../utils/tokens");
 const { createRateLimiter } = require("../middleware/rateLimit");
+const BACKEND_ROOT = path.resolve(__dirname, "..");
 
 test("cookie helpers parse, serialize, and clear cookies", () => {
     const header = serializeCookie("session", "abc 123", {
@@ -66,4 +70,55 @@ test("rate limiter blocks requests after the configured threshold", () => {
     assert.equal(responses[0].statusCode, 429);
     assert.equal(responses[0].payload.error, "Too many requests");
     assert.ok(Number(responses[0].headers["Retry-After"]) >= 1);
+});
+
+test("relative DATABASE_PATH resolves from the backend directory, not cwd", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "oberynn-db-path-"));
+    const databaseFile = path.join(tempDir, "relative-test.db");
+    const relativeToBackend = path.relative(BACKEND_ROOT, databaseFile);
+    const previousCwd = process.cwd();
+    const previousDatabasePath = process.env.DATABASE_PATH;
+    const dbModulePath = require.resolve("../db");
+
+    delete require.cache[dbModulePath];
+
+    process.env.DATABASE_PATH = relativeToBackend;
+    process.chdir(os.tmpdir());
+
+    const db = require("../db");
+
+    await new Promise((resolve, reject) => {
+        db.run("CREATE TABLE IF NOT EXISTS smoke (id INTEGER)", err => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve();
+        });
+    });
+
+    await new Promise((resolve, reject) => {
+        db.close(err => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve();
+        });
+    });
+
+    process.chdir(previousCwd);
+
+    if (previousDatabasePath === undefined) {
+        delete process.env.DATABASE_PATH;
+    } else {
+        process.env.DATABASE_PATH = previousDatabasePath;
+    }
+
+    delete require.cache[dbModulePath];
+
+    assert.equal(fs.existsSync(databaseFile), true);
+    fs.rmSync(tempDir, { recursive: true, force: true });
 });
