@@ -12,7 +12,7 @@ async function init() {
 
     if (featuredContainer) {
         renderPlans(featuredContainer, {
-            ctaLabel: "View Plan",
+            ctaLabel: "View Server",
             compact: true
         });
     }
@@ -30,7 +30,7 @@ async function fetchPlans() {
         const res = await fetch("/api/plans");
 
         if (!res.ok) {
-            throw new Error("Could not load plans.");
+            throw new Error("Could not load servers.");
         }
 
         plans = await res.json();
@@ -60,7 +60,7 @@ function createPlanCard(plan, options = {}) {
     header.innerHTML = `
         <div>
             <p class="plan-card__eyebrow">${plan.type}</p>
-            <h3>${plan.type} Minecraft Server</h3>
+            <h3>${plan.type} Paper Minecraft Server</h3>
         </div>
         <span class="plan-card__availability ${plan.available === 0 ? "sold-out" : ""}">
             ${getAvailabilityCopy(plan)}
@@ -90,7 +90,7 @@ function createPlanCard(plan, options = {}) {
     const note = document.createElement("p");
     note.className = "plan-card__note";
     note.textContent = plan.available === 0
-        ? "This plan is unavailable right now."
+        ? "This server is unavailable right now."
         : "Checkout will reserve inventory before redirecting to Stripe.";
     footer.appendChild(note);
 
@@ -115,7 +115,7 @@ function renderPlans(container, options = {}) {
     if (!plans.length) {
         const empty = document.createElement("div");
         empty.className = "empty-state";
-        empty.textContent = "Plan data is not available right now. Please refresh and try again.";
+        empty.textContent = "Server availability is not loading right now. Please refresh and try again.";
         container.appendChild(empty);
         return;
     }

@@ -2,6 +2,7 @@ const PLAN_DEFINITIONS = {
     "2GB": {
         features: [
             "2GB RAM",
+            "Paper server software",
             "Shared CPU",
             "Optimized configuration",
             "No setup required",
@@ -11,6 +12,7 @@ const PLAN_DEFINITIONS = {
     "4GB": {
         features: [
             "4GB RAM",
+            "Paper server software",
             "2 Dedicated CPU Threads",
             "Optimized configuration",
             "No setup required",
