@@ -866,6 +866,8 @@ const TAB_CONFIG = [
 
 const PURCHASE_STATUSES = ["checkout_pending", "paid", "completed", "expired", "cancelled"];
 const SERVER_STATUSES = ["available", "held", "allocated"];
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"]);
+const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
 const state = {
     purchases: [],
     manualOverride: localStorage.getItem("admin.overrideMode") === "true",
@@ -892,6 +894,18 @@ function getPrice(purchase) {
     return purchase.serverId <= 20 ? 9.98 : 31.98;
 }
 
+function hasLiveSubscription(purchase) {
+    return Boolean(
+        purchase.stripeSubscriptionStatus &&
+        ACTIVE_SUBSCRIPTION_STATUSES.has(purchase.stripeSubscriptionStatus)
+    );
+}
+
+function formatSubscriptionStatus(status) {
+    if (!status) return "Not synced";
+    return status.replace(/_/g, " ");
+}
+
 function getStatusView(status) {
     switch (status) {
         case "paid":
@@ -910,7 +924,7 @@ function getStatusView(status) {
 function groupPurchases(data) {
     return {
         overview: data,
-        subscriptions: data.filter(p => p.status === "completed"),
+        subscriptions: data.filter(p => hasLiveSubscription(p)),
         ready: data.filter(p => p.status === "paid"),
         pending: data.filter(p => p.status === "checkout_pending"),
         completed: data.filter(p => p.status === "completed"),
@@ -1061,7 +1075,7 @@ function renderTabs(data) {
 function renderSummaryGrid(data) {
     const counts = {
         total: data.length,
-        subscriptions: data.filter(p => p.status === "completed").length,
+        subscriptions: data.filter(p => hasLiveSubscription(p)).length,
         paid: data.filter(p => p.status === "paid").length,
         pending: data.filter(p => p.status === "checkout_pending").length,
         completed: data.filter(p => p.status === "completed").length,
@@ -1150,11 +1164,11 @@ function createViewStat(label, value) {
 function getViewIntroContent(tabKey, items, grouped) {
     if (tabKey === "subscriptions") {
         return {
-            body: "Active subscriptions mirror fulfilled customer servers for now, so you have one place to reference the currently serviced accounts.",
-            note: "This view can duplicate completed-order data until recurring billing and renewals are modeled separately.",
+            body: "These customer servers have live Stripe subscription runtime attached to them and should be treated as active service.",
+            note: "Use this view for renewals, period-end cancellations, failed-payment follow-up, and runtime checks.",
             stats: [
                 ["Active", items.length],
-                ["Named Servers", items.filter(item => Boolean(item.serverName)).length]
+                ["Canceling", items.filter(item => Boolean(item.stripeCancelAtPeriodEnd)).length]
             ]
         };
     }
@@ -1173,7 +1187,7 @@ function getViewIntroContent(tabKey, items, grouped) {
     if (tabKey === "pending") {
         return {
             body: "These checkouts exist locally, but payment has not been confirmed yet.",
-            note: "If a customer says they paid, re-check Stripe before making a manual override.",
+            note: "Fresh pending checkouts stay here. Re-check Stripe only if the customer says they paid or the hold starts looking stale.",
             stats: [
                 ["Pending", items.length],
                 ["Stripe Sessions", items.filter(item => Boolean(item.stripeSessionId)).length]
@@ -1204,10 +1218,10 @@ function getViewIntroContent(tabKey, items, grouped) {
     }
 
     return {
-        body: "This queue highlights orders with mismatched state, missing details, or anything else that deserves operator review.",
+        body: "This queue highlights stale holds, mismatched state, missing details, or anything else that deserves operator review.",
         note: grouped.ready.length
             ? "Check for orders that are marked paid but still missing the data you need to finish delivery."
-            : "No verified orders are waiting right now, so this tab is mainly about cleanup and correction.",
+            : "Normal pending checkouts stay out of this view unless they become stale or inconsistent.",
         stats: [
             ["Issues", items.length],
             ["Ready Queue", grouped.ready.length]
@@ -1352,6 +1366,19 @@ function renderDiagnostics(purchase) {
             "helper-text",
             `Stripe session ${diagnostics.stripe.id}: ${diagnostics.stripe.status} / ${diagnostics.stripe.paymentStatus}.`
         ));
+    }
+
+    if (purchase.stripeSubscriptionId) {
+        const runtime = [
+            `Subscription ${purchase.stripeSubscriptionId}`,
+            `status ${formatSubscriptionStatus(purchase.stripeSubscriptionStatus)}`,
+            purchase.stripeCurrentPeriodEnd
+                ? `period end ${formatTimestamp(purchase.stripeCurrentPeriodEnd)}`
+                : null,
+            purchase.stripeCancelAtPeriodEnd ? "cancels at period end" : null
+        ].filter(Boolean).join(" • ");
+
+        container.appendChild(createElement("div", "helper-text", runtime));
     }
 
     return container;
@@ -1549,12 +1576,27 @@ function renderPurchaseCard(purchase) {
     metaGrid.appendChild(createMetaBlock("Server Price", `$${price.toFixed(2)}`));
     metaGrid.appendChild(createMetaBlock("Payment State", status.payment));
     metaGrid.appendChild(createMetaBlock("Server State", purchase.serverStatus || "Unknown"));
+    metaGrid.appendChild(createMetaBlock(
+        "Subscription",
+        formatSubscriptionStatus(purchase.stripeSubscriptionStatus)
+    ));
+    metaGrid.appendChild(createMetaBlock(
+        "Period End",
+        purchase.stripeCurrentPeriodEnd ? formatTimestamp(purchase.stripeCurrentPeriodEnd) : "Unknown"
+    ));
+    metaGrid.appendChild(createMetaBlock(
+        "Renewal",
+        purchase.stripeCancelAtPeriodEnd ? "Ends at period end" : "Renews"
+    ));
     metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(purchase.createdAt)));
     card.appendChild(metaGrid);
 
     card.appendChild(createDetailLine("Email", purchase.email));
     card.appendChild(createDetailLine("Server Name", purchase.serverName));
     card.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
+    card.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
+    card.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
+    card.appendChild(createDetailLine("Stripe Price", purchase.stripePriceId));
     card.appendChild(createDetailLine("Setup Token Expires", formatTimestamp(purchase.setupTokenExpiresAt)));
     card.appendChild(renderDiagnostics(purchase));
 

@@ -18,6 +18,9 @@ const {
 
 const stripe = new Stripe(config.stripeSecretKey);
 const router = express.Router();
+const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"]);
+const STALE_PENDING_CHECKOUT_MS = 1000 * 60 * 30;
 const loginLimiter = createRateLimiter({
     windowMs: 1000 * 60 * 15,
     max: 5,
@@ -32,8 +35,16 @@ const adminApiLimiter = createRateLimiter({
 const PURCHASE_STATUSES = new Set(Object.values(PURCHASE_STATUS));
 const SERVER_STATUSES = new Set(Object.values(SERVER_STATUS));
 
-function inferServerStatus(status) {
-    switch (status) {
+function inferServerStatus(purchase) {
+    if (
+        purchase.status === PURCHASE_STATUS.COMPLETED &&
+        purchase.stripeSubscriptionStatus &&
+        TERMINAL_SUBSCRIPTION_STATUSES.has(purchase.stripeSubscriptionStatus)
+    ) {
+        return SERVER_STATUS.AVAILABLE;
+    }
+
+    switch (purchase.status) {
         case PURCHASE_STATUS.COMPLETED:
             return SERVER_STATUS.ALLOCATED;
         case PURCHASE_STATUS.EXPIRED:
@@ -54,10 +65,17 @@ function addIssue(issues, condition, message) {
 
 function buildDiagnostics(purchase) {
     const issues = [];
-    const recommendedServerStatus = inferServerStatus(purchase.status);
+    const recommendedServerStatus = inferServerStatus(purchase);
+    const createdAt = Number(purchase.createdAt) || 0;
     const tokenExpired = Boolean(
         purchase.setupTokenExpiresAt &&
         Number(purchase.setupTokenExpiresAt) < Date.now()
+    );
+    const stalePendingCheckout = Boolean(
+        purchase.status === PURCHASE_STATUS.CHECKOUT_PENDING &&
+        purchase.stripeSessionId &&
+        createdAt > 0 &&
+        (Date.now() - createdAt) >= STALE_PENDING_CHECKOUT_MS
     );
 
     addIssue(
@@ -85,6 +103,26 @@ function buildDiagnostics(purchase) {
     );
     addIssue(
         issues,
+        (purchase.status === PURCHASE_STATUS.PAID || purchase.status === PURCHASE_STATUS.COMPLETED) &&
+        !purchase.stripeSubscriptionId,
+        "Stripe subscription ID is missing."
+    );
+    addIssue(
+        issues,
+        purchase.status === PURCHASE_STATUS.COMPLETED &&
+        !purchase.stripeSubscriptionStatus,
+        "Subscription runtime has not been synced onto this fulfilled order."
+    );
+    addIssue(
+        issues,
+        purchase.status === PURCHASE_STATUS.COMPLETED &&
+        purchase.stripeSubscriptionStatus &&
+        TERMINAL_SUBSCRIPTION_STATUSES.has(purchase.stripeSubscriptionStatus) &&
+        purchase.serverStatus !== SERVER_STATUS.AVAILABLE,
+        "Subscription is no longer active, but the server is still allocated."
+    );
+    addIssue(
+        issues,
         tokenExpired && (
             purchase.status === PURCHASE_STATUS.CHECKOUT_PENDING ||
             purchase.status === PURCHASE_STATUS.PAID ||
@@ -99,8 +137,8 @@ function buildDiagnostics(purchase) {
     );
     addIssue(
         issues,
-        purchase.status === PURCHASE_STATUS.CHECKOUT_PENDING && purchase.stripeSessionId,
-        "Pending checkout can be re-checked against Stripe if the customer says they paid."
+        stalePendingCheckout,
+        "Pending checkout has been held for over 30 minutes without payment confirmation."
     );
 
     return {
@@ -108,7 +146,16 @@ function buildDiagnostics(purchase) {
         issueCount: issues.length,
         recommendedServerStatus,
         tokenExpired,
-        stripeSyncAvailable: Boolean(purchase.stripeSessionId)
+        stalePendingCheckout,
+        stripeSyncAvailable: Boolean(purchase.stripeSessionId),
+        activeSubscription: Boolean(
+            purchase.stripeSubscriptionStatus &&
+            ACTIVE_SUBSCRIPTION_STATUSES.has(purchase.stripeSubscriptionStatus)
+        ),
+        terminalSubscription: Boolean(
+            purchase.stripeSubscriptionStatus &&
+            TERMINAL_SUBSCRIPTION_STATUSES.has(purchase.stripeSubscriptionStatus)
+        )
     };
 }
 
@@ -330,10 +377,16 @@ router.post("/admin/purchases/:purchaseId/reconcile-stripe", async (req, res) =>
         }
 
         const session = await stripe.checkout.sessions.retrieve(purchase.stripeSessionId);
+        const subscriptionId = typeof session.subscription === "string"
+            ? session.subscription
+            : session.subscription?.id;
+        const subscription = subscriptionId
+            ? await stripe.subscriptions.retrieve(subscriptionId)
+            : null;
         let action = "no_change";
 
         if (session.payment_status === "paid") {
-            await markPurchasePaid(session);
+            await markPurchasePaid(session, subscription);
             action = "marked_paid";
         } else if (session.status === "expired") {
             await expirePurchase(session);
@@ -343,6 +396,7 @@ router.post("/admin/purchases/:purchaseId/reconcile-stripe", async (req, res) =>
         await recordAdminAction(req, purchaseId, "reconcile_stripe", adminNote.value || "", {
             action,
             stripeSessionId: session.id,
+            stripeSubscriptionId: subscription?.id || subscriptionId || "",
             stripeStatus: session.status,
             stripePaymentStatus: session.payment_status
         });
@@ -351,7 +405,15 @@ router.post("/admin/purchases/:purchaseId/reconcile-stripe", async (req, res) =>
             id: session.id,
             status: session.status,
             paymentStatus: session.payment_status,
-            customerEmail: session.customer_details?.email || session.customer_email || ""
+            customerEmail: session.customer_details?.email || session.customer_email || "",
+            subscriptionId: subscription?.id || subscriptionId || "",
+            subscriptionStatus: subscription?.status || "",
+            currentPeriodEnd: subscription?.items?.data?.[0]?.current_period_end
+                ? subscription.items.data[0].current_period_end * 1000
+                : subscription?.current_period_end
+                    ? subscription.current_period_end * 1000
+                    : null,
+            cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end)
         });
 
         res.json({
@@ -415,7 +477,10 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
         }
 
         const status = nextStatus || purchase.status;
-        const serverStatus = nextServerStatus || inferServerStatus(status);
+        const serverStatus = nextServerStatus || inferServerStatus({
+            ...purchase,
+            status
+        });
         const email = emailInput.present ? emailInput.value : (purchase.email || "");
         const serverName = serverNameInput.present ? serverNameInput.value : (purchase.serverName || "");
         const stripeSessionId = stripeSessionInput.present

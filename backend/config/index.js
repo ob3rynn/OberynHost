@@ -27,6 +27,10 @@ const config = {
         : "setup_session",
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    stripePriceIds: {
+        "2GB": (process.env.STRIPE_PRICE_2GB || "price_1TLNS1AHxmSgftnMGKoN5LnI").trim(),
+        "4GB": (process.env.STRIPE_PRICE_4GB || "price_1TLNSQAHxmSgftnMHqcihgg1").trim()
+    },
     setupTokenTtlMs: 1000 * 60 * 60 * 24 * 7
 };
 
@@ -34,7 +38,9 @@ const missingConfig = [
     ["BASE_URL", config.baseUrl],
     ["ADMIN_KEY", config.adminKey],
     ["STRIPE_SECRET_KEY", config.stripeSecretKey],
-    ["STRIPE_WEBHOOK_SECRET", config.stripeWebhookSecret]
+    ["STRIPE_WEBHOOK_SECRET", config.stripeWebhookSecret],
+    ["STRIPE_PRICE_2GB", config.stripePriceIds["2GB"]],
+    ["STRIPE_PRICE_4GB", config.stripePriceIds["4GB"]]
 ].filter(([, value]) => !value);
 
 if (missingConfig.length > 0) {

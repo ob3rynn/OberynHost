@@ -31,7 +31,16 @@ const configuredStripeBin = (process.env.STRIPE_CLI_BIN || "").trim();
 const stripeArgs = [
     "listen",
     "--events",
-    "checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.expired",
+    [
+        "checkout.session.completed",
+        "checkout.session.async_payment_succeeded",
+        "checkout.session.expired",
+        "invoice.paid",
+        "invoice.payment_failed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted"
+    ].join(","),
     "--forward-to",
     webhookUrl
 ];

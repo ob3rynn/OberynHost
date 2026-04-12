@@ -92,6 +92,8 @@ async function createTestApp(t, options = {}) {
         "ADMIN_KEY",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
+        "STRIPE_PRICE_2GB",
+        "STRIPE_PRICE_4GB",
         "DATABASE_PATH"
     ];
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -101,9 +103,12 @@ async function createTestApp(t, options = {}) {
     process.env.ADMIN_KEY = options.adminKey || "test-admin-key";
     process.env.STRIPE_SECRET_KEY = options.stripeSecretKey || "sk_test_mocked";
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
+    process.env.STRIPE_PRICE_2GB = options.stripePrice2GB || "price_test_2gb";
+    process.env.STRIPE_PRICE_4GB = options.stripePrice4GB || "price_test_4gb";
     process.env.DATABASE_PATH = databasePath;
 
     const stripeState = {
+        lastCreatedSessionParams: null,
         createSession: async params => ({
             id: `cs_test_${Date.now()}`,
             url: "https://checkout.stripe.test/session",
@@ -115,6 +120,20 @@ async function createTestApp(t, options = {}) {
             payment_status: "paid",
             customer_details: { email: "buyer@example.com" },
             metadata: {}
+        }),
+        retrieveSubscription: async id => ({
+            id,
+            status: "active",
+            cancel_at_period_end: false,
+            customer: "cus_test_default",
+            items: {
+                data: [
+                    {
+                        current_period_end: Math.floor(Date.now() / 1000) + 86400,
+                        price: { id: process.env.STRIPE_PRICE_2GB }
+                    }
+                ]
+            }
         }),
         constructEvent: (body, signature) => {
             if (signature === "bad-signature") {
@@ -129,6 +148,12 @@ async function createTestApp(t, options = {}) {
         Object.assign(stripeState, options.stripe);
     }
 
+    const originalCreateSession = stripeState.createSession;
+    stripeState.createSession = async params => {
+        stripeState.lastCreatedSessionParams = params;
+        return originalCreateSession(params);
+    };
+
     const originalLoad = Module._load;
     Module._load = function patchedLoad(request, parent, isMain) {
         if (request === "stripe") {
@@ -140,6 +165,9 @@ async function createTestApp(t, options = {}) {
                                 create: params => stripeState.createSession(params),
                                 retrieve: id => stripeState.retrieveSession(id)
                             }
+                        },
+                        subscriptions: {
+                            retrieve: id => stripeState.retrieveSubscription(id)
                         },
                         webhooks: {
                             constructEvent: (body, signature, secret) =>

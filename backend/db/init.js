@@ -107,10 +107,40 @@ const ready = (async () => {
             await runStatement("ALTER TABLE purchases ADD COLUMN setupTokenExpiresAt INTEGER");
         }
 
+        if (!columnNames.has("stripeCustomerId")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN stripeCustomerId TEXT");
+        }
+
+        if (!columnNames.has("stripeSubscriptionId")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN stripeSubscriptionId TEXT");
+        }
+
+        if (!columnNames.has("stripeSubscriptionStatus")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN stripeSubscriptionStatus TEXT");
+        }
+
+        if (!columnNames.has("stripeCurrentPeriodEnd")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN stripeCurrentPeriodEnd INTEGER");
+        }
+
+        if (!columnNames.has("stripeCancelAtPeriodEnd")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN stripeCancelAtPeriodEnd INTEGER");
+        }
+
+        if (!columnNames.has("stripePriceId")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN stripePriceId TEXT");
+        }
+
         await runStatement(`
             CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_stripe_session_id
             ON purchases(stripeSessionId)
             WHERE stripeSessionId IS NOT NULL
+        `);
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_stripe_subscription_id
+            ON purchases(stripeSubscriptionId)
+            WHERE stripeSubscriptionId IS NOT NULL
         `);
 
         await runStatement(`

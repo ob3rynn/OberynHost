@@ -29,6 +29,12 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
         return res.status(400).json({ error: "Invalid plan type" });
     }
 
+    const stripePriceId = config.stripePriceIds[planType];
+
+    if (!stripePriceId) {
+        return res.status(500).json({ error: "Stripe price is not configured for this server" });
+    }
+
     let purchaseId = null;
     let server = null;
     const setupToken = generateOpaqueToken();
@@ -86,17 +92,11 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
         const cancelUrl = `${config.baseUrl}/pricing`;
 
         const session = await stripe.checkout.sessions.create({
-            mode: "payment",
+            mode: "subscription",
             payment_method_types: ["card"],
             line_items: [
                 {
-                    price_data: {
-                        currency: "usd",
-                        product_data: {
-                            name: `${planType} Minecraft Server`
-                        },
-                        unit_amount: Math.round(server.price * 100)
-                    },
+                    price: stripePriceId,
                     quantity: 1
                 }
             ],
@@ -104,6 +104,13 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                 purchaseId: String(purchaseId),
                 serverId: String(server.id),
                 planType
+            },
+            subscription_data: {
+                metadata: {
+                    purchaseId: String(purchaseId),
+                    serverId: String(server.id),
+                    planType
+                }
             },
             success_url: successUrl,
             cancel_url: cancelUrl

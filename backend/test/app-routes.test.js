@@ -56,6 +56,7 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
     const app = await createTestApp(t, {
         createdSession: {
             id: "cs_test_checkout_success",
+            subscription: "sub_test_checkout_success",
             url: "https://checkout.stripe.test/success"
         }
     });
@@ -74,6 +75,8 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
     const payload = await res.json();
     assert.equal(payload.url, "https://checkout.stripe.test/success");
     assert.match(app.parseSetCookie(res), /setup_session=/);
+    assert.equal(app.stripeState.lastCreatedSessionParams.mode, "subscription");
+    assert.equal(app.stripeState.lastCreatedSessionParams.line_items[0].price, "price_test_2gb");
 
     const purchase = await getQuery("SELECT * FROM purchases WHERE stripeSessionId = ?", [
         "cs_test_checkout_success"
@@ -155,7 +158,24 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
     const app = await createTestApp(t, {
         createdSession: {
             id: "cs_test_paid_flow",
+            subscription: "sub_test_paid_flow",
             url: "https://checkout.stripe.test/paid"
+        },
+        stripe: {
+            retrieveSubscription: async id => ({
+                id,
+                status: "active",
+                cancel_at_period_end: false,
+                customer: "cus_test_paid_flow",
+                items: {
+                    data: [
+                        {
+                            current_period_end: 1_900_000_000,
+                            price: { id: "price_test_2gb" }
+                        }
+                    ]
+                }
+            })
         }
     });
     const { getQuery } = app.queries;
@@ -184,6 +204,8 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
                     serverId: String(purchase.serverId),
                     planType: "2GB"
                 },
+                subscription: "sub_test_paid_flow",
+                customer: "cus_test_paid_flow",
                 customer_details: {
                     email: "buyer@example.com"
                 }
@@ -204,6 +226,11 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
     const paidPurchase = await getQuery("SELECT * FROM purchases WHERE id = ?", [purchase.id]);
     assert.equal(paidPurchase.status, "paid");
     assert.equal(paidPurchase.email, "buyer@example.com");
+    assert.equal(paidPurchase.stripeSubscriptionId, "sub_test_paid_flow");
+    assert.equal(paidPurchase.stripeCustomerId, "cus_test_paid_flow");
+    assert.equal(paidPurchase.stripeSubscriptionStatus, "active");
+    assert.equal(paidPurchase.stripeCurrentPeriodEnd, 1_900_000_000_000);
+    assert.equal(paidPurchase.stripePriceId, "price_test_2gb");
 
     const statusRes = await app.request("/api/setup-status", {
         method: "POST",
@@ -360,6 +387,73 @@ test("webhook expired releases held inventory for abandoned checkout", async t =
     assert.equal(server.status, "available");
 });
 
+test("subscription runtime webhooks update and release fulfilled servers when subscriptions end", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeSessionId, createdAt, setupToken, setupTokenExpiresAt,
+             stripeCustomerId, stripeSubscriptionId, stripeSubscriptionStatus, stripeCurrentPeriodEnd,
+             stripeCancelAtPeriodEnd, stripePriceId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            5,
+            "sub@example.com",
+            "Subscription Server",
+            "completed",
+            "cs_test_runtime",
+            Date.now(),
+            "setup_token_runtime_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            "cus_runtime",
+            "sub_runtime",
+            "active",
+            Date.now() + 86_400_000,
+            0,
+            "price_test_2gb"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 5]);
+
+    const deleted = await app.request("/api/stripe/webhook", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            "stripe-signature": "good-signature"
+        },
+        body: JSON.stringify({
+            type: "customer.subscription.deleted",
+            data: {
+                object: {
+                    id: "sub_runtime",
+                    status: "canceled",
+                    cancel_at_period_end: false,
+                    customer: "cus_runtime",
+                    items: {
+                        data: [
+                            {
+                                current_period_end: 1_900_000_100,
+                                price: { id: "price_test_2gb" }
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+    });
+    assert.equal(deleted.status, 200);
+
+    const endedPurchase = await getQuery(
+        "SELECT stripeSubscriptionStatus FROM purchases WHERE stripeSubscriptionId = ?",
+        ["sub_runtime"]
+    );
+    assert.equal(endedPurchase.stripeSubscriptionStatus, "canceled");
+
+    const endedServer = await getQuery("SELECT status FROM servers WHERE id = ?", [5]);
+    assert.equal(endedServer.status, "available");
+});
+
 test("admin auth, completion, reconcile, and audit trail work", async t => {
     const app = await createTestApp(t, {
         stripe: {
@@ -424,7 +518,23 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
                 id,
                 status: "complete",
                 payment_status: "paid",
+                customer: "cus_test_admin_complete",
+                subscription: "sub_test_admin_complete",
                 customer_details: { email: "operator-check@example.com" }
+            }),
+            retrieveSubscription: async id => ({
+                id,
+                status: "active",
+                cancel_at_period_end: false,
+                customer: "cus_test_admin_complete",
+                items: {
+                    data: [
+                        {
+                            current_period_end: 1_900_000_200,
+                            price: { id: "price_test_2gb" }
+                        }
+                    ]
+                }
             })
         }
     });
@@ -488,8 +598,14 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     });
     assert.equal(completeRes.status, 200);
 
-    const purchase = await getQuery("SELECT status FROM purchases WHERE id = 1");
+    const purchase = await getQuery(
+        `SELECT status, stripeSubscriptionId, stripeSubscriptionStatus, stripeCurrentPeriodEnd
+         FROM purchases WHERE id = 1`
+    );
     assert.equal(purchase.status, "completed");
+    assert.equal(purchase.stripeSubscriptionId, "sub_test_admin_complete");
+    assert.equal(purchase.stripeSubscriptionStatus, "active");
+    assert.equal(purchase.stripeCurrentPeriodEnd, 1_900_000_200_000);
 
     const server = await getQuery("SELECT status FROM servers WHERE id = 4");
     assert.equal(server.status, "allocated");
