@@ -60,7 +60,7 @@ function createPlanCard(plan, options = {}) {
     header.innerHTML = `
         <div>
             <p class="plan-card__eyebrow">${plan.type}</p>
-            <h3>${plan.type} Paper Minecraft Server</h3>
+            <h3>${plan.type} Paper Server</h3>
         </div>
         <span class="plan-card__availability ${plan.available === 0 ? "sold-out" : ""}">
             ${getAvailabilityCopy(plan)}
