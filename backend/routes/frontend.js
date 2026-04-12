@@ -11,6 +11,18 @@ router.get("/pricing", (req, res) => {
     res.sendFile(path.join(__dirname, "../../frontend/pricing.html"));
 });
 
+router.get("/support", (req, res) => {
+    res.sendFile(path.join(__dirname, "../../frontend/support.html"));
+});
+
+router.get("/billing", (req, res) => {
+    res.sendFile(path.join(__dirname, "../../frontend/billing.html"));
+});
+
+router.get("/guidelines", (req, res) => {
+    res.sendFile(path.join(__dirname, "../../frontend/guidelines.html"));
+});
+
 router.get("/success", (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(__dirname, "../../frontend/success.html"));
