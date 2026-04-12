@@ -2,28 +2,45 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Plans</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft Hosting Plans | Oberynn Hosting</title>
+    <meta
+        name="description"
+        content="Choose a remote Minecraft hosting plan with live availability and fast checkout. Host without relying on your own machine."
+    >
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+<div class="site-frame">
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand__mark">OH</span>
+            <span class="brand__copy">
+                <strong>Oberynn Hosting</strong>
+                <small>Remote Minecraft hosting</small>
+            </span>
+        </a>
 
-<header>
-    <h2>Oberynn Hosting</h2>
-    <nav>
-        <a href="/">Home</a>
-        <a href="/pricing">Servers</a>
-    </nav>
-</header>
+        <nav class="topnav" aria-label="Primary">
+            <a href="/">Home</a>
+            <a href="/pricing">Pricing</a>
+        </nav>
+    </header>
 
-<section class="pricing">
-    <h1>Choose Your Plan</h1>
+    <main class="pricing-wrap">
+        <section class="pricing-card">
+            <div class="pricing-intro">
+                <p class="eyebrow">Pricing</p>
+                <h1>Choose a plan and get to remote hosting quickly.</h1>
+                <p>
+                    Live availability and a direct checkout flow keep the buying experience clear and simple.
+                </p>
+            </div>
 
-    <div id="plans" class="pricing-container"></div>
-</section>
-
-<footer>
-    <p>© 2026 Oberynn</p>
-</footer>
+            <div id="plans" class="plan-grid" aria-live="polite"></div>
+        </section>
+    </main>
+</div>
 
 <script src="/js/app.js"></script>
 </body>

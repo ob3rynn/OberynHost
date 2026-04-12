@@ -2,25 +2,68 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Success</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Complete Server Setup | Oberynn Hosting</title>
+    <meta
+        name="description"
+        content="Finish post-purchase setup for your Minecraft server by confirming payment status and submitting your server name."
+    >
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+<div class="site-shell">
+    <header class="site-header">
+        <a class="brand-mark" href="/">
+            <span class="brand-mark__badge">OH</span>
+            <span>
+                <strong>Oberynn Hosting</strong>
+                <small>Post-purchase setup</small>
+            </span>
+        </a>
+    </header>
 
-<header>
-    <h2>Oberynn Hosting</h2>
-</header>
+    <main>
+        <section class="hero-panel hero-panel--compact">
+            <div class="hero-copy">
+                <p class="eyebrow">Setup</p>
+                <h1>Finish the last step so your server can move into fulfillment.</h1>
+                <p id="lead" class="hero-lead">We are checking your purchase status.</p>
+            </div>
 
-<section style="text-align:center; margin-top:50px; padding: 0 20px;">
-    <h1>Finish Your Setup</h1>
-    <p id="lead">We are checking your purchase status.</p>
+            <aside class="hero-aside">
+                <div class="hero-stat-card">
+                    <p class="eyebrow">What happens here</p>
+                    <ul class="feature-list">
+                        <li>Payment status is checked first</li>
+                        <li>Server naming unlocks after verification</li>
+                        <li>The page retries automatically if Stripe is still confirming payment</li>
+                    </ul>
+                </div>
+            </aside>
+        </section>
 
-    <input id="serverName" placeholder="My Server" disabled />
-    <br><br>
-    <button id="completeBtn" onclick="complete()" disabled>Complete Setup</button>
+        <section class="section-block section-block--dense">
+            <div class="setup-panel">
+                <div class="setup-panel__intro">
+                    <h2>Choose your server name</h2>
+                    <p id="status" class="status-text">Waiting for verification.</p>
+                </div>
 
-    <p id="status"></p>
-</section>
+                <label class="field-group" for="serverName">
+                    <span>Server name</span>
+                    <input id="serverName" placeholder="My Server" disabled>
+                </label>
+
+                <div class="hero-actions">
+                    <button id="completeBtn" class="button button--primary" onclick="complete()" disabled>
+                        Save Setup
+                    </button>
+                    <a class="button button--ghost" href="/pricing">Back to pricing</a>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
 
 <script>
 const serverNameInput = document.getElementById("serverName");
@@ -118,7 +161,7 @@ async function complete() {
 
     if (data.success) {
         lead.innerText = "Server name saved.";
-        statusEl.innerText = "Setup complete!";
+        statusEl.innerText = "Setup complete.";
         setReadyState(false);
         stopPolling();
     } else {
@@ -129,6 +172,5 @@ async function complete() {
 
 refreshSetupStatus();
 </script>
-
 </body>
 </html>
