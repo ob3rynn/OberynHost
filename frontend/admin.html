@@ -449,6 +449,43 @@
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
+        .bulk-toolbar {
+            display: grid;
+            gap: 14px;
+            margin-bottom: 18px;
+            padding: 18px;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .bulk-toolbar__header,
+        .selection-tools {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .selection-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--muted-strong);
+            font-size: 0.95rem;
+        }
+
+        .bulk-toolbar__actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
         .section-heading {
             display: flex;
             justify-content: space-between;
@@ -519,7 +556,8 @@
 
         .order-card {
             border-radius: 26px;
-            padding: 22px;
+            padding: 0;
+            overflow: hidden;
         }
 
         .order-card.is-pending {
@@ -538,13 +576,35 @@
             border-left: 4px solid #9d5f58;
         }
 
-        .order-header {
+        .order-summary {
+            list-style: none;
             display: flex;
             justify-content: space-between;
             gap: 16px;
             align-items: center;
             flex-wrap: wrap;
-            margin-bottom: 16px;
+            padding: 18px 22px;
+            cursor: pointer;
+        }
+
+        .order-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .order-summary::marker {
+            content: "";
+        }
+
+        .order-summary:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .order-summary-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
         }
 
         .order-title-group {
@@ -554,9 +614,68 @@
             flex-wrap: wrap;
         }
 
+        .order-select {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted-strong);
+            font-size: 0.92rem;
+        }
+
+        .order-select input,
+        .guard-check input {
+            width: auto;
+            margin: 0;
+            accent-color: var(--accent-strong);
+        }
+
         .order-title {
             font-size: 1.5rem;
             color: var(--text);
+        }
+
+        .order-summary-glance {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .summary-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--muted-strong);
+            font-size: 12px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .summary-pill strong {
+            color: var(--text);
+            font-weight: 700;
+        }
+
+        .summary-chevron {
+            color: var(--muted);
+            font-size: 0.92rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .order-card[open] .summary-chevron::after {
+            content: "Hide";
+        }
+
+        .order-card:not([open]) .summary-chevron::after {
+            content: "Expand";
+        }
+
+        .order-body {
+            padding: 0 22px 22px;
         }
 
         .status-pill,
@@ -665,6 +784,39 @@
             flex-wrap: wrap;
             gap: 10px;
             margin-top: 16px;
+        }
+
+        .guarded-action {
+            display: grid;
+            gap: 10px;
+        }
+
+        .guard-panel {
+            display: none;
+            min-width: min(100%, 340px);
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .guard-panel.visible {
+            display: grid;
+            gap: 10px;
+        }
+
+        .guard-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted-strong);
+            font-size: 0.92rem;
+        }
+
+        .guard-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         details.advanced {
@@ -792,10 +944,6 @@
                 <input type="checkbox" id="autoRefreshToggle">
                 Auto refresh
             </label>
-            <label class="toggle-chip">
-                <input type="checkbox" id="overrideToggle">
-                Manual override mode
-            </label>
             <button class="danger" onclick="logout()">Logout</button>
         </div>
     </header>
@@ -845,6 +993,12 @@ const TAB_CONFIG = [
         subtitle: "Orders that started checkout but have not been confirmed by Stripe yet."
     },
     {
+        key: "stale",
+        label: "Stale",
+        title: "Stale Checkouts",
+        subtitle: "Open checkouts that have been held long enough to deserve manual review."
+    },
+    {
         key: "completed",
         label: "Completed",
         title: "Completed Orders",
@@ -870,10 +1024,10 @@ const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"])
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
 const state = {
     purchases: [],
-    manualOverride: localStorage.getItem("admin.overrideMode") === "true",
     autoRefresh: localStorage.getItem("admin.autoRefresh") !== "false",
     activeTab: localStorage.getItem("admin.activeTab") || "overview",
-    refreshTimer: null
+    refreshTimer: null,
+    selectedPurchaseIds: new Set()
 };
 
 function formatTimestamp(ts) {
@@ -901,9 +1055,45 @@ function hasLiveSubscription(purchase) {
     );
 }
 
+function isStaleCheckout(purchase) {
+    return Boolean(purchase.diagnostics?.stalePendingCheckout);
+}
+
+function hasNonStaleIssues(purchase) {
+    const issueCount = purchase.diagnostics?.issueCount || 0;
+    const staleOffset = isStaleCheckout(purchase) ? 1 : 0;
+    return (issueCount - staleOffset) > 0;
+}
+
 function formatSubscriptionStatus(status) {
     if (!status) return "Not synced";
     return status.replace(/_/g, " ");
+}
+
+function getPolicyState(purchase) {
+    return purchase.diagnostics?.policy || {};
+}
+
+function formatPolicyState(purchase) {
+    const policy = getPolicyState(purchase);
+
+    if (policy.purgeRequired) {
+        return "Purge Due";
+    }
+
+    if (policy.suspendedAt) {
+        return "Suspended";
+    }
+
+    if (policy.suspensionRequired) {
+        return "Suspend Now";
+    }
+
+    if (policy.inGracePeriod) {
+        return "Grace Period";
+    }
+
+    return "Normal";
 }
 
 function getStatusView(status) {
@@ -926,10 +1116,11 @@ function groupPurchases(data) {
         overview: data,
         subscriptions: data.filter(p => hasLiveSubscription(p)),
         ready: data.filter(p => p.status === "paid"),
-        pending: data.filter(p => p.status === "checkout_pending"),
+        pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)),
+        stale: data.filter(p => isStaleCheckout(p)),
         completed: data.filter(p => p.status === "completed"),
         archived: data.filter(p => p.status === "expired" || p.status === "cancelled"),
-        issues: data.filter(p => (p.diagnostics?.issueCount || 0) > 0)
+        issues: data.filter(p => hasNonStaleIssues(p))
     };
 }
 
@@ -989,7 +1180,6 @@ function showAdmin() {
     document.getElementById("adminPanel").style.display = "block";
     document.getElementById("error").innerText = "";
     document.getElementById("autoRefreshToggle").checked = state.autoRefresh;
-    document.getElementById("overrideToggle").checked = state.manualOverride;
 }
 
 function createElement(tag, className, text) {
@@ -1035,18 +1225,88 @@ function getOperatorNote(input) {
     return (input?.value || "").trim();
 }
 
-function buildConfirmPhrase(purchaseId) {
-    return `ORDER-${purchaseId}`;
+function isPurchaseSelected(purchaseId) {
+    return state.selectedPurchaseIds.has(purchaseId);
 }
 
-function confirmDangerousAction(purchaseId, actionLabel) {
-    const phrase = buildConfirmPhrase(purchaseId);
-    const value = window.prompt(
-        `${actionLabel} is a manual override.\nType ${phrase} to continue.`,
-        ""
-    );
+function togglePurchaseSelection(purchaseId, selected) {
+    if (selected) {
+        state.selectedPurchaseIds.add(purchaseId);
+    } else {
+        state.selectedPurchaseIds.delete(purchaseId);
+    }
+}
 
-    return value === phrase;
+function clearSelection() {
+    state.selectedPurchaseIds.clear();
+}
+
+function createGuardedAction(label, tone, confirmLabel, onConfirm, disabled = false) {
+    const wrapper = createElement("div", "guarded-action");
+    const trigger = createActionButton(label, tone, () => {
+        panel.classList.add("visible");
+        checkbox.checked = false;
+        confirmButton.disabled = true;
+    }, disabled);
+    wrapper.appendChild(trigger);
+
+    const panel = createElement("div", "guard-panel");
+    panel.appendChild(createElement(
+        "div",
+        "helper-text",
+        `Manual override protection is active for ${label.toLowerCase()}.`
+    ));
+
+    const checkLabel = createElement("label", "guard-check");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkLabel.appendChild(checkbox);
+    checkLabel.appendChild(document.createTextNode("Are you sure?"));
+    panel.appendChild(checkLabel);
+
+    const actions = createElement("div", "guard-actions");
+    const confirmButton = createActionButton(confirmLabel, tone, async () => {
+        try {
+            await onConfirm();
+        } finally {
+            panel.classList.remove("visible");
+            checkbox.checked = false;
+            confirmButton.disabled = true;
+        }
+    }, true);
+    const cancelButton = createActionButton("Cancel", "neutral", () => {
+        panel.classList.remove("visible");
+        checkbox.checked = false;
+        confirmButton.disabled = true;
+    });
+    checkbox.addEventListener("change", () => {
+        confirmButton.disabled = !checkbox.checked;
+    });
+    actions.appendChild(confirmButton);
+    actions.appendChild(cancelButton);
+    panel.appendChild(actions);
+
+    wrapper.appendChild(panel);
+    return wrapper;
+}
+
+async function runBulkAction(items, runner, successMessage) {
+    clearBanner();
+
+    try {
+        for (const item of items) {
+            await runner(item);
+        }
+
+        clearSelection();
+        if (successMessage) {
+            showBanner(successMessage, "success");
+        }
+        await load();
+    } catch (err) {
+        showBanner(err.message || "Bulk action failed.", "error");
+        throw err;
+    }
 }
 
 function renderTabs(data) {
@@ -1077,10 +1337,11 @@ function renderSummaryGrid(data) {
         total: data.length,
         subscriptions: data.filter(p => hasLiveSubscription(p)).length,
         paid: data.filter(p => p.status === "paid").length,
-        pending: data.filter(p => p.status === "checkout_pending").length,
+        pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)).length,
+        stale: data.filter(p => isStaleCheckout(p)).length,
         completed: data.filter(p => p.status === "completed").length,
         archived: data.filter(p => p.status === "expired" || p.status === "cancelled").length,
-        issues: data.filter(p => (p.diagnostics?.issueCount || 0) > 0).length
+        issues: data.filter(p => hasNonStaleIssues(p)).length
     };
 
     const grid = createElement("div", "summary-grid");
@@ -1089,6 +1350,7 @@ function renderSummaryGrid(data) {
         ["Active Subscriptions", counts.subscriptions],
         ["Ready", counts.paid],
         ["Pending", counts.pending],
+        ["Stale", counts.stale],
         ["Completed", counts.completed],
         ["Issues", counts.issues]
     ].forEach(([label, value]) => {
@@ -1146,9 +1408,15 @@ function renderOverview(data) {
     ));
     overviewGrid.appendChild(renderOverviewCard(
         "Awaiting Payment",
-        "Checkouts that may need Stripe reconciliation.",
+        "Fresh checkouts that are still within the normal wait window.",
         grouped.pending,
         "No orders are waiting on payment."
+    ));
+    overviewGrid.appendChild(renderOverviewCard(
+        "Stale Checkouts",
+        "Pending sessions that have been holding inventory long enough to review.",
+        grouped.stale,
+        "No stale checkout holds right now."
     ));
     wrapper.appendChild(overviewGrid);
     return wrapper;
@@ -1165,10 +1433,11 @@ function getViewIntroContent(tabKey, items, grouped) {
     if (tabKey === "subscriptions") {
         return {
             body: "These customer servers have live Stripe subscription runtime attached to them and should be treated as active service.",
-            note: "Use this view for renewals, period-end cancellations, failed-payment follow-up, and runtime checks.",
+            note: "Use this view for renewals, period-end cancellations, failed-payment follow-up, grace-period review, and suspension timing.",
             stats: [
                 ["Active", items.length],
-                ["Canceling", items.filter(item => Boolean(item.stripeCancelAtPeriodEnd)).length]
+                ["Canceling", items.filter(item => Boolean(item.stripeCancelAtPeriodEnd)).length],
+                ["In Grace", items.filter(item => item.diagnostics?.policy?.inGracePeriod).length]
             ]
         };
     }
@@ -1187,9 +1456,20 @@ function getViewIntroContent(tabKey, items, grouped) {
     if (tabKey === "pending") {
         return {
             body: "These checkouts exist locally, but payment has not been confirmed yet.",
-            note: "Fresh pending checkouts stay here. Re-check Stripe only if the customer says they paid or the hold starts looking stale.",
+            note: "This view stays focused on fresh checkouts that are still inside the normal wait window.",
             stats: [
                 ["Pending", items.length],
+                ["Stripe Sessions", items.filter(item => Boolean(item.stripeSessionId)).length]
+            ]
+        };
+    }
+
+    if (tabKey === "stale") {
+        return {
+            body: "These checkout sessions have held inventory long enough that they should no longer hide among fresh pending orders.",
+            note: "Use this queue to decide whether to re-check Stripe, wait a bit longer, or clean up abandoned holds.",
+            stats: [
+                ["Stale", items.length],
                 ["Stripe Sessions", items.filter(item => Boolean(item.stripeSessionId)).length]
             ]
         };
@@ -1243,6 +1523,160 @@ function renderViewIntro(tabKey, items, grouped) {
     });
     intro.appendChild(stats);
     return intro;
+}
+
+function renderBulkToolbar(items) {
+    const toolbar = createElement("section", "bulk-toolbar");
+    const selectedItems = items.filter(item => isPurchaseSelected(item.id));
+    const selectedCount = selectedItems.length;
+
+    const header = createElement("div", "bulk-toolbar__header");
+    const copy = createElement("div", "");
+    copy.appendChild(createElement("h3", "", "Bulk Overrides"));
+    copy.appendChild(createElement(
+        "p",
+        "",
+        "Select multiple orders in this view, then run guarded admin actions with one confirmation flow."
+    ));
+    header.appendChild(copy);
+    header.appendChild(createElement(
+        "div",
+        "selection-chip",
+        selectedCount ? `${selectedCount} selected in this view` : "No orders selected"
+    ));
+    toolbar.appendChild(header);
+
+    const tools = createElement("div", "selection-tools");
+    tools.appendChild(createActionButton("Select All Visible", "secondary", () => {
+        items.forEach(item => togglePurchaseSelection(item.id, true));
+        renderAdmin();
+    }, !items.length));
+    tools.appendChild(createActionButton("Clear Selection", "neutral", () => {
+        items.forEach(item => togglePurchaseSelection(item.id, false));
+        renderAdmin();
+    }, !selectedCount));
+
+    const noteInput = document.createElement("textarea");
+    noteInput.placeholder = "Bulk note for the audit trail.";
+    toolbar.appendChild(tools);
+    toolbar.appendChild(noteInput);
+
+    const actions = createElement("div", "bulk-toolbar__actions");
+    actions.appendChild(createActionButton("Bulk Re-check Stripe", "secondary", async () => {
+        await runBulkAction(
+            selectedItems.filter(item => item.stripeSessionId),
+            item => requestJson(`/api/admin/purchases/${item.id}/reconcile-stripe`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ adminNote: getOperatorNote(noteInput) })
+            }),
+            `Re-checked Stripe for ${selectedItems.filter(item => item.stripeSessionId).length} selected order(s).`
+        );
+    }, !selectedItems.some(item => item.stripeSessionId)));
+
+    actions.appendChild(createActionButton("Bulk Mark Complete", "primary", async () => {
+        await runBulkAction(
+            selectedItems.filter(item => item.status === "paid"),
+            item => requestJson("/api/complete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ purchaseId: item.id, adminNote: getOperatorNote(noteInput) })
+            }),
+            `Marked ${selectedItems.filter(item => item.status === "paid").length} selected order(s) complete.`
+        );
+    }, !selectedItems.some(item => item.status === "paid")));
+
+    actions.appendChild(createActionButton("Bulk Repair State", "warning", async () => {
+        const repairable = selectedItems.filter(item =>
+            item.diagnostics?.recommendedServerStatus &&
+            item.serverStatus !== item.diagnostics.recommendedServerStatus
+        );
+        await runBulkAction(
+            repairable,
+            item => requestJson(`/api/admin/purchases/${item.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    serverStatus: item.diagnostics.recommendedServerStatus,
+                    adminNote: getOperatorNote(noteInput)
+                })
+            }),
+            `Repaired server state for ${repairable.length} selected order(s).`
+        );
+    }, !selectedItems.some(item =>
+        item.diagnostics?.recommendedServerStatus &&
+        item.serverStatus !== item.diagnostics.recommendedServerStatus
+    )));
+
+    actions.appendChild(createGuardedAction(
+        "Bulk Suspend Service",
+        "warning",
+        "Confirm Suspension",
+        async () => {
+            const suspendable = selectedItems.filter(item => item.diagnostics?.policy?.suspensionRequired);
+            await runBulkAction(
+                suspendable,
+                item => requestJson(`/api/admin/purchases/${item.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        serviceAccessAction: "suspend",
+                        adminNote: getOperatorNote(noteInput)
+                    })
+                }),
+                `Suspended service for ${suspendable.length} selected order(s).`
+            );
+        },
+        !selectedItems.some(item => item.diagnostics?.policy?.suspensionRequired)
+    ));
+
+    actions.appendChild(createGuardedAction(
+        "Bulk Mark Expired",
+        "danger",
+        "Confirm Expire",
+        async () => {
+            const expireable = selectedItems.filter(item => item.status === "checkout_pending");
+            await runBulkAction(
+                expireable,
+                item => requestJson(`/api/admin/purchases/${item.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        status: "expired",
+                        serverStatus: "available",
+                        adminNote: getOperatorNote(noteInput)
+                    })
+                }),
+                `Marked ${expireable.length} selected order(s) expired and released inventory.`
+            );
+        },
+        !selectedItems.some(item => item.status === "checkout_pending")
+    ));
+
+    actions.appendChild(createGuardedAction(
+        "Bulk Reset Pending",
+        "danger",
+        "Confirm Reset",
+        async () => {
+            await runBulkAction(
+                selectedItems,
+                item => requestJson(`/api/admin/purchases/${item.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        status: "checkout_pending",
+                        serverStatus: "held",
+                        adminNote: getOperatorNote(noteInput)
+                    })
+                }),
+                `Reset ${selectedItems.length} selected order(s) to pending.`
+            );
+        },
+        !selectedCount
+    ));
+
+    toolbar.appendChild(actions);
+    return toolbar;
 }
 
 async function withCardAction(action, successMessage) {
@@ -1381,12 +1815,41 @@ function renderDiagnostics(purchase) {
         container.appendChild(createElement("div", "helper-text", runtime));
     }
 
+    const policy = getPolicyState(purchase);
+    const policyParts = [];
+
+    if (policy.preFulfillmentRefundEligible) {
+        policyParts.push("Refundable before fulfillment");
+    } else if (policy.originalPurchaseRefundEligible) {
+        policyParts.push(`Original-order refund window until ${formatTimestamp(policy.refundWindowEndsAt)}`);
+    }
+
+    if (policy.inGracePeriod) {
+        policyParts.push(`Grace period until ${formatTimestamp(policy.gracePeriodEndsAt)}`);
+    } else if (policy.suspensionRequired) {
+        policyParts.push("Suspend service now for nonpayment");
+    }
+
+    if (policy.suspendedAt) {
+        policyParts.push(`Suspended ${formatTimestamp(policy.suspendedAt)}`);
+    }
+
+    if (policy.purgeRequired) {
+        policyParts.push("30-day suspension retention reached");
+    } else if (policy.purgeEligibleAt) {
+        policyParts.push(`Purge eligible ${formatTimestamp(policy.purgeEligibleAt)}`);
+    }
+
+    if (policyParts.length) {
+        container.appendChild(createElement("div", "helper-text", policyParts.join(" • ")));
+    }
+
     return container;
 }
 
 function renderAdvancedControls(purchase, advancedNoteInput) {
     const advanced = document.createElement("details");
-    advanced.className = state.manualOverride ? "advanced" : "advanced hidden";
+    advanced.className = "advanced";
     const summary = document.createElement("summary");
     summary.textContent = "Advanced Controls";
     advanced.appendChild(summary);
@@ -1471,13 +1934,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
 
     const actions = createElement("div", "advanced-actions");
 
-    actions.appendChild(createActionButton("Save Overrides", "primary", async () => {
-        const statusChanged = statusSelect.value !== purchase.status;
-        const serverStatusChanged = serverStatusSelect.value !== purchase.serverStatus;
-        if ((statusChanged || serverStatusChanged) && !confirmDangerousAction(purchase.id, "Save Overrides")) {
-            return;
-        }
-
+    actions.appendChild(createGuardedAction("Save Overrides", "primary", "Confirm Save", async () => {
         await applyOverride(purchase.id, {
             email: emailInput.value,
             serverName: serverNameInput.value,
@@ -1489,8 +1946,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
         }, `Saved overrides for order #${purchase.id}.`);
     }));
 
-    actions.appendChild(createActionButton("Mark Paid", "secondary", async () => {
-        if (!confirmDangerousAction(purchase.id, "Mark Paid")) return;
+    actions.appendChild(createGuardedAction("Mark Paid", "secondary", "Confirm Paid", async () => {
         await applyOverride(purchase.id, {
             status: "paid",
             serverStatus: "held",
@@ -1498,8 +1954,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
         }, `Order #${purchase.id} manually marked paid.`);
     }));
 
-    actions.appendChild(createActionButton("Reset Pending", "warning", async () => {
-        if (!confirmDangerousAction(purchase.id, "Reset Pending")) return;
+    actions.appendChild(createGuardedAction("Reset Pending", "warning", "Confirm Reset", async () => {
         await applyOverride(purchase.id, {
             status: "checkout_pending",
             serverStatus: "held",
@@ -1507,8 +1962,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
         }, `Order #${purchase.id} reset to pending.`);
     }));
 
-    actions.appendChild(createActionButton("Mark Expired", "danger", async () => {
-        if (!confirmDangerousAction(purchase.id, "Mark Expired")) return;
+    actions.appendChild(createGuardedAction("Mark Expired", "danger", "Confirm Expired", async () => {
         await applyOverride(purchase.id, {
             status: "expired",
             serverStatus: "available",
@@ -1516,8 +1970,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
         }, `Order #${purchase.id} marked expired.`);
     }));
 
-    actions.appendChild(createActionButton("Cancel Order", "danger", async () => {
-        if (!confirmDangerousAction(purchase.id, "Cancel Order")) return;
+    actions.appendChild(createGuardedAction("Cancel Order", "danger", "Confirm Cancel", async () => {
         await applyOverride(purchase.id, {
             status: "cancelled",
             serverStatus: "available",
@@ -1525,8 +1978,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
         }, `Order #${purchase.id} cancelled.`);
     }));
 
-    actions.appendChild(createActionButton("Release Server", "neutral", async () => {
-        if (!confirmDangerousAction(purchase.id, "Release Server")) return;
+    actions.appendChild(createGuardedAction("Release Server", "neutral", "Confirm Release", async () => {
         await applyOverride(purchase.id, {
             serverStatus: "available",
             adminNote: getOperatorNote(advancedNoteInput)
@@ -1540,8 +1992,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
         }, `Server held for order #${purchase.id}.`);
     }));
 
-    actions.appendChild(createActionButton("Allocate Server", "neutral", async () => {
-        if (!confirmDangerousAction(purchase.id, "Allocate Server")) return;
+    actions.appendChild(createGuardedAction("Allocate Server", "neutral", "Confirm Allocate", async () => {
         await applyOverride(purchase.id, {
             serverStatus: "allocated",
             adminNote: getOperatorNote(advancedNoteInput)
@@ -1555,10 +2006,22 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
 function renderPurchaseCard(purchase) {
     const price = getPrice(purchase);
     const status = getStatusView(purchase.status);
-    const card = createElement("article", `order-card is-${status.tone}`);
+    const card = document.createElement("details");
+    card.className = `order-card is-${status.tone}`;
 
-    const header = createElement("div", "order-header");
+    const summary = createElement("summary", "order-summary");
     const titleGroup = createElement("div", "order-title-group");
+    const selectLabel = createElement("label", "order-select");
+    const selectInput = document.createElement("input");
+    selectInput.type = "checkbox";
+    selectInput.checked = isPurchaseSelected(purchase.id);
+    selectInput.addEventListener("change", () => {
+        togglePurchaseSelection(purchase.id, selectInput.checked);
+        renderAdmin();
+    });
+    selectLabel.appendChild(selectInput);
+    selectLabel.appendChild(document.createTextNode("Select"));
+    titleGroup.appendChild(selectLabel);
     titleGroup.appendChild(createElement("div", "order-title", `Order #${purchase.id}`));
     if ((purchase.diagnostics?.issueCount || 0) > 0) {
         titleGroup.appendChild(createElement(
@@ -1567,9 +2030,30 @@ function renderPurchaseCard(purchase) {
             `${purchase.diagnostics.issueCount} issue${purchase.diagnostics.issueCount === 1 ? "" : "s"}`
         ));
     }
-    header.appendChild(titleGroup);
-    header.appendChild(createElement("span", `status-pill ${status.tone}`, status.label));
-    card.appendChild(header);
+
+    const summaryMeta = createElement("div", "order-summary-meta");
+    summaryMeta.appendChild(titleGroup);
+
+    const glance = createElement("div", "order-summary-glance");
+    glance.appendChild(createElement("span", `status-pill ${status.tone}`, status.label));
+    glance.appendChild(createElement("span", "summary-pill", `Slot ${purchase.serverId ?? "-"}`));
+    glance.appendChild(createElement(
+        "span",
+        "summary-pill",
+        `Subscription ${formatSubscriptionStatus(purchase.stripeSubscriptionStatus)}`
+    ));
+    glance.appendChild(createElement(
+        "span",
+        "summary-pill",
+        `Policy ${formatPolicyState(purchase)}`
+    ));
+    glance.appendChild(createElement("span", "summary-chevron"));
+    summaryMeta.appendChild(glance);
+
+    summary.appendChild(summaryMeta);
+    card.appendChild(summary);
+
+    const body = createElement("div", "order-body");
 
     const metaGrid = createElement("div", "meta-grid");
     metaGrid.appendChild(createMetaBlock("Slot", String(purchase.serverId ?? "-")));
@@ -1588,17 +2072,22 @@ function renderPurchaseCard(purchase) {
         "Renewal",
         purchase.stripeCancelAtPeriodEnd ? "Ends at period end" : "Renews"
     ));
+    metaGrid.appendChild(createMetaBlock("Policy State", formatPolicyState(purchase)));
+    metaGrid.appendChild(createMetaBlock(
+        "Service Access",
+        purchase.serviceSuspendedAt ? "Suspended" : "Live"
+    ));
     metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(purchase.createdAt)));
-    card.appendChild(metaGrid);
+    body.appendChild(metaGrid);
 
-    card.appendChild(createDetailLine("Email", purchase.email));
-    card.appendChild(createDetailLine("Server Name", purchase.serverName));
-    card.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
-    card.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
-    card.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
-    card.appendChild(createDetailLine("Stripe Price", purchase.stripePriceId));
-    card.appendChild(createDetailLine("Setup Token Expires", formatTimestamp(purchase.setupTokenExpiresAt)));
-    card.appendChild(renderDiagnostics(purchase));
+    body.appendChild(createDetailLine("Email", purchase.email));
+    body.appendChild(createDetailLine("Server Name", purchase.serverName));
+    body.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
+    body.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
+    body.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
+    body.appendChild(createDetailLine("Stripe Price", purchase.stripePriceId));
+    body.appendChild(createDetailLine("Setup Token Expires", formatTimestamp(purchase.setupTokenExpiresAt)));
+    body.appendChild(renderDiagnostics(purchase));
 
     const noteBlock = createElement("div", "note-block");
     noteBlock.appendChild(createElement("label", "note-label", "Operator Note"));
@@ -1610,7 +2099,7 @@ function renderPurchaseCard(purchase) {
         "helper-text",
         "Any action triggered from this card will store this note in the audit trail."
     ));
-    card.appendChild(noteBlock);
+    body.appendChild(noteBlock);
 
     const actions = createElement("div", "action-row");
 
@@ -1626,6 +2115,24 @@ function renderPurchaseCard(purchase) {
         }));
     }
 
+    if (purchase.diagnostics?.policy?.suspensionRequired) {
+        actions.appendChild(createGuardedAction("Suspend Service", "warning", "Confirm Suspension", async () => {
+            await applyOverride(purchase.id, {
+                serviceAccessAction: "suspend",
+                adminNote: getOperatorNote(noteInput)
+            }, `Suspended service for order #${purchase.id}.`);
+        }));
+    }
+
+    if (purchase.serviceSuspendedAt && !purchase.diagnostics?.policy?.purgeRequired) {
+        actions.appendChild(createActionButton("Reinstate Service", "secondary", async () => {
+            await applyOverride(purchase.id, {
+                serviceAccessAction: "reinstate",
+                adminNote: getOperatorNote(noteInput)
+            }, `Reinstated service for order #${purchase.id}.`);
+        }));
+    }
+
     if (
         purchase.diagnostics?.recommendedServerStatus &&
         purchase.serverStatus !== purchase.diagnostics.recommendedServerStatus
@@ -1638,31 +2145,27 @@ function renderPurchaseCard(purchase) {
         }));
     }
 
-    if (state.manualOverride) {
-        if (purchase.status !== "paid") {
-            actions.appendChild(createActionButton("Manual Mark Paid", "secondary", async () => {
-                if (!confirmDangerousAction(purchase.id, "Manual Mark Paid")) return;
-                await applyOverride(purchase.id, {
-                    status: "paid",
-                    serverStatus: "held",
-                    adminNote: getOperatorNote(noteInput)
-                }, `Order #${purchase.id} manually marked paid.`);
-            }));
-        }
-
-        if (purchase.status !== "checkout_pending") {
-            actions.appendChild(createActionButton("Reset Pending", "warning", async () => {
-                if (!confirmDangerousAction(purchase.id, "Reset Pending")) return;
-                await applyOverride(purchase.id, {
-                    status: "checkout_pending",
-                    serverStatus: "held",
-                    adminNote: getOperatorNote(noteInput)
-                }, `Order #${purchase.id} reset to pending.`);
-            }));
-        }
+    if (purchase.status !== "paid") {
+        actions.appendChild(createGuardedAction("Manual Mark Paid", "secondary", "Confirm Paid", async () => {
+            await applyOverride(purchase.id, {
+                status: "paid",
+                serverStatus: "held",
+                adminNote: getOperatorNote(noteInput)
+            }, `Order #${purchase.id} manually marked paid.`);
+        }));
     }
 
-    card.appendChild(actions);
+    if (purchase.status !== "checkout_pending") {
+        actions.appendChild(createGuardedAction("Reset Pending", "warning", "Confirm Reset", async () => {
+            await applyOverride(purchase.id, {
+                status: "checkout_pending",
+                serverStatus: "held",
+                adminNote: getOperatorNote(noteInput)
+            }, `Order #${purchase.id} reset to pending.`);
+        }));
+    }
+
+    body.appendChild(actions);
 
     const advancedNoteBlock = createElement("div", "note-block");
     advancedNoteBlock.appendChild(createElement("label", "note-label", "Override Note"));
@@ -1675,12 +2178,11 @@ function renderPurchaseCard(purchase) {
         "Use this note when manually changing payment or server state."
     ));
 
-    if (state.manualOverride) {
-        card.appendChild(advancedNoteBlock);
-    }
-    card.appendChild(renderAdvancedControls(purchase, advancedNoteInput));
+    body.appendChild(advancedNoteBlock);
+    body.appendChild(renderAdvancedControls(purchase, advancedNoteInput));
 
-    card.appendChild(renderAuditLog(purchase));
+    body.appendChild(renderAuditLog(purchase));
+    card.appendChild(body);
     return card;
 }
 
@@ -1689,9 +2191,13 @@ function renderListView(items, emptyText) {
         return createElement("div", "empty", emptyText);
     }
 
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(renderBulkToolbar(items));
+
     const grid = createElement("div", "order-grid");
     items.forEach(item => grid.appendChild(renderPurchaseCard(item)));
-    return grid;
+    wrapper.appendChild(grid);
+    return wrapper;
 }
 
 function renderAdmin() {
@@ -1721,6 +2227,7 @@ function renderAdmin() {
         subscriptions: "No active subscriptions are visible yet.",
         ready: "No verified orders are waiting right now.",
         pending: "No orders are currently waiting on payment.",
+        stale: "No stale checkout holds right now.",
         completed: "No orders have been completed yet.",
         archived: "No expired or cancelled orders right now.",
         issues: "No orders currently need manual review."
@@ -1798,12 +2305,6 @@ async function load({ silent = false } = {}) {
         clearBanner();
     }
 }
-
-document.getElementById("overrideToggle").addEventListener("change", event => {
-    state.manualOverride = event.target.checked;
-    localStorage.setItem("admin.overrideMode", String(state.manualOverride));
-    renderAdmin();
-});
 
 document.getElementById("autoRefreshToggle").addEventListener("change", event => {
     state.autoRefresh = event.target.checked;

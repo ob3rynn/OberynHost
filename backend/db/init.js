@@ -131,6 +131,14 @@ const ready = (async () => {
             await runStatement("ALTER TABLE purchases ADD COLUMN stripePriceId TEXT");
         }
 
+        if (!columnNames.has("subscriptionDelinquentAt")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN subscriptionDelinquentAt INTEGER");
+        }
+
+        if (!columnNames.has("serviceSuspendedAt")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN serviceSuspendedAt INTEGER");
+        }
+
         await runStatement(`
             CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_stripe_session_id
             ON purchases(stripeSessionId)

@@ -15,11 +15,14 @@ const {
     isOpaqueToken,
     timingSafeEqualString
 } = require("../../utils/tokens");
+const {
+    ACTIVE_SUBSCRIPTION_STATUSES,
+    TERMINAL_SUBSCRIPTION_STATUSES,
+    getPurchasePolicyState
+} = require("../../services/policyRules");
 
 const stripe = new Stripe(config.stripeSecretKey);
 const router = express.Router();
-const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
-const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"]);
 const STALE_PENDING_CHECKOUT_MS = 1000 * 60 * 30;
 const loginLimiter = createRateLimiter({
     windowMs: 1000 * 60 * 15,
@@ -71,6 +74,7 @@ function buildDiagnostics(purchase) {
         purchase.setupTokenExpiresAt &&
         Number(purchase.setupTokenExpiresAt) < Date.now()
     );
+    const policy = getPurchasePolicyState(purchase);
     const stalePendingCheckout = Boolean(
         purchase.status === PURCHASE_STATUS.CHECKOUT_PENDING &&
         purchase.stripeSessionId &&
@@ -140,6 +144,21 @@ function buildDiagnostics(purchase) {
         stalePendingCheckout,
         "Pending checkout has been held for over 30 minutes without payment confirmation."
     );
+    addIssue(
+        issues,
+        policy.inGracePeriod,
+        `Renewal is in the 7-day grace period until ${new Date(policy.gracePeriodEndsAt).toLocaleString()}.`
+    );
+    addIssue(
+        issues,
+        policy.suspensionRequired,
+        "Nonpayment grace period has expired. Suspend service before keeping this subscription live."
+    );
+    addIssue(
+        issues,
+        policy.purgeRequired,
+        "Suspended service has reached the 30-day retention limit and is ready for purge handling."
+    );
 
     return {
         issues,
@@ -155,7 +174,8 @@ function buildDiagnostics(purchase) {
         terminalSubscription: Boolean(
             purchase.stripeSubscriptionStatus &&
             TERMINAL_SUBSCRIPTION_STATUSES.has(purchase.stripeSubscriptionStatus)
-        )
+        ),
+        policy
     };
 }
 
@@ -453,6 +473,9 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
     const setupTokenAction = typeof req.body?.setupTokenAction === "string"
         ? req.body.setupTokenAction.trim()
         : "keep";
+    const serviceAccessAction = typeof req.body?.serviceAccessAction === "string"
+        ? req.body.serviceAccessAction.trim()
+        : "keep";
 
     if (nextStatus !== undefined && !PURCHASE_STATUSES.has(nextStatus)) {
         return res.status(400).json({ error: "Invalid purchase status override" });
@@ -466,6 +489,10 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
         return res.status(400).json({ error: "Invalid setup token action" });
     }
 
+    if (!["keep", "suspend", "reinstate"].includes(serviceAccessAction)) {
+        return res.status(400).json({ error: "Invalid service access action" });
+    }
+
     try {
         await runQuery("BEGIN IMMEDIATE TRANSACTION");
 
@@ -476,8 +503,10 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
             return res.status(404).json({ error: "Purchase not found" });
         }
 
+        const policy = getPurchasePolicyState(purchase);
+
         const status = nextStatus || purchase.status;
-        const serverStatus = nextServerStatus || inferServerStatus({
+        let serverStatus = nextServerStatus || inferServerStatus({
             ...purchase,
             status
         });
@@ -489,6 +518,7 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
 
         let setupToken = purchase.setupToken || null;
         let setupTokenExpiresAt = purchase.setupTokenExpiresAt || null;
+        let serviceSuspendedAt = purchase.serviceSuspendedAt || null;
 
         if (setupTokenAction === "clear") {
             setupToken = null;
@@ -505,6 +535,54 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
             return res.status(400).json({ error: "Generated setup token was invalid" });
         }
 
+        if (
+            (status === PURCHASE_STATUS.CANCELLED || status === PURCHASE_STATUS.EXPIRED) &&
+            policy.requiresStripeCancellation
+        ) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Live subscriptions must be ended in Stripe first or set to cancel at period end."
+            });
+        }
+
+        if (
+            serverStatus === SERVER_STATUS.AVAILABLE &&
+            status === PURCHASE_STATUS.COMPLETED &&
+            !policy.canReleaseInventory
+        ) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Active or recoverable subscriptions cannot release inventory from the admin panel."
+            });
+        }
+
+        if (serviceAccessAction === "suspend") {
+            if (status !== PURCHASE_STATUS.COMPLETED) {
+                await rollbackTransaction();
+                return res.status(400).json({
+                    error: "Only fulfilled subscriptions can be marked suspended."
+                });
+            }
+
+            serviceSuspendedAt = Date.now();
+            serverStatus = SERVER_STATUS.HELD;
+        }
+
+        if (serviceAccessAction === "reinstate") {
+            if (policy.isTerminalSubscription) {
+                await rollbackTransaction();
+                return res.status(400).json({
+                    error: "Terminal subscriptions cannot be reinstated."
+                });
+            }
+
+            serviceSuspendedAt = null;
+
+            if (status === PURCHASE_STATUS.COMPLETED) {
+                serverStatus = SERVER_STATUS.ALLOCATED;
+            }
+        }
+
         await runQuery(
             `UPDATE purchases
              SET status = ?,
@@ -512,7 +590,8 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
                  serverName = ?,
                  stripeSessionId = ?,
                  setupToken = ?,
-                 setupTokenExpiresAt = ?
+                 setupTokenExpiresAt = ?,
+                 serviceSuspendedAt = ?
              WHERE id = ?`,
             [
                 status,
@@ -521,6 +600,7 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
                 stripeSessionId,
                 setupToken,
                 setupTokenExpiresAt,
+                serviceSuspendedAt,
                 purchaseId
             ]
         );
@@ -539,7 +619,8 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
                 email: purchase.email || "",
                 serverName: purchase.serverName || "",
                 stripeSessionId: purchase.stripeSessionId || "",
-                setupTokenPresent: Boolean(purchase.setupToken)
+                setupTokenPresent: Boolean(purchase.setupToken),
+                serviceSuspendedAt: purchase.serviceSuspendedAt || null
             },
             to: {
                 status,
@@ -547,7 +628,9 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
                 email,
                 serverName,
                 stripeSessionId: stripeSessionId || "",
-                setupTokenAction
+                setupTokenAction,
+                serviceAccessAction,
+                serviceSuspendedAt
             }
         });
 

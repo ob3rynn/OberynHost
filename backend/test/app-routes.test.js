@@ -602,6 +602,87 @@ test("subscription runtime webhooks update and release fulfilled servers when su
     assert.equal(endedServer.status, "available");
 });
 
+test("failed renewal enters grace period and paid invoice clears delinquency", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeSessionId, createdAt, setupToken, setupTokenExpiresAt,
+             stripeCustomerId, stripeSubscriptionId, stripeSubscriptionStatus, stripeCurrentPeriodEnd,
+             stripeCancelAtPeriodEnd, stripePriceId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            6,
+            "renewal@example.com",
+            "Renewal Server",
+            "completed",
+            "cs_test_renewal_runtime",
+            Date.now(),
+            "setup_token_renewal_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            "cus_renewal",
+            "sub_renewal",
+            "active",
+            Date.now() + 86_400_000,
+            0,
+            "price_test_2gb"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 6]);
+
+    const failedRes = await app.request("/api/stripe/webhook", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            "stripe-signature": "good-signature"
+        },
+        body: JSON.stringify({
+            type: "invoice.payment_failed",
+            data: {
+                object: {
+                    subscription: "sub_renewal",
+                    customer: "cus_renewal",
+                    lines: { data: [{ price: { id: "price_test_2gb" } }] }
+                }
+            }
+        })
+    });
+    assert.equal(failedRes.status, 200);
+
+    const delinquentPurchase = await getQuery(
+        "SELECT subscriptionDelinquentAt FROM purchases WHERE stripeSubscriptionId = ?",
+        ["sub_renewal"]
+    );
+    assert.ok(Number(delinquentPurchase.subscriptionDelinquentAt) > 0);
+
+    const paidRes = await app.request("/api/stripe/webhook", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            "stripe-signature": "good-signature"
+        },
+        body: JSON.stringify({
+            type: "invoice.paid",
+            data: {
+                object: {
+                    subscription: "sub_renewal",
+                    customer: "cus_renewal",
+                    lines: { data: [{ price: { id: "price_test_2gb" } }] }
+                }
+            }
+        })
+    });
+    assert.equal(paidRes.status, 200);
+
+    const recoveredPurchase = await getQuery(
+        "SELECT subscriptionDelinquentAt, serviceSuspendedAt FROM purchases WHERE stripeSubscriptionId = ?",
+        ["sub_renewal"]
+    );
+    assert.equal(recoveredPurchase.subscriptionDelinquentAt, null);
+    assert.equal(recoveredPurchase.serviceSuspendedAt, null);
+});
+
 test("admin auth, completion, reconcile, and audit trail work", async t => {
     const app = await createTestApp(t, {
         stripe: {
@@ -779,4 +860,95 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
         headers: { cookie: adminCookie }
     });
     assert.equal(afterLogout.status, 401);
+});
+
+test("admin guardrails block cancelling or releasing a live subscription, but allow suspension", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeSessionId, createdAt, setupToken, setupTokenExpiresAt,
+             stripeCustomerId, stripeSubscriptionId, stripeSubscriptionStatus, stripeCurrentPeriodEnd,
+             stripeCancelAtPeriodEnd, stripePriceId, subscriptionDelinquentAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            7,
+            "guardrail@example.com",
+            "Guardrail Server",
+            "completed",
+            "cs_test_guardrails",
+            Date.now(),
+            "setup_token_guardrails_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            "cus_guardrails",
+            "sub_guardrails",
+            "past_due",
+            Date.now() + 86_400_000,
+            0,
+            "price_test_2gb",
+            Date.now() - (1000 * 60 * 60 * 24 * 8)
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 7]);
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const cancelRes = await app.request("/api/admin/purchases/1", {
+        method: "PATCH",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            status: "cancelled",
+            adminNote: "Testing guardrails"
+        })
+    });
+    assert.equal(cancelRes.status, 400);
+
+    const releaseRes = await app.request("/api/admin/purchases/1", {
+        method: "PATCH",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverStatus: "available",
+            adminNote: "Testing guardrails"
+        })
+    });
+    assert.equal(releaseRes.status, 400);
+
+    const suspendRes = await app.request("/api/admin/purchases/1", {
+        method: "PATCH",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serviceAccessAction: "suspend",
+            adminNote: "Grace expired"
+        })
+    });
+    assert.equal(suspendRes.status, 200);
+
+    const suspendedPurchase = await getQuery(
+        "SELECT serviceSuspendedAt FROM purchases WHERE id = 1"
+    );
+    assert.ok(Number(suspendedPurchase.serviceSuspendedAt) > 0);
+
+    const suspendedServer = await getQuery("SELECT status FROM servers WHERE id = ?", [7]);
+    assert.equal(suspendedServer.status, "held");
 });

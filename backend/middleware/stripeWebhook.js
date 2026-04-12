@@ -42,7 +42,13 @@ module.exports = async (req, res) => {
                     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
                     await syncPurchaseSubscription(subscription, {
                         stripeCustomerId: getStripeObjectId(invoice.customer),
-                        stripePriceId: invoice.lines?.data?.[0]?.price?.id || null
+                        stripePriceId: invoice.lines?.data?.[0]?.price?.id || null,
+                        subscriptionDelinquentAt: event.type === "invoice.payment_failed"
+                            ? Date.now()
+                            : null,
+                        serviceSuspendedAt: event.type === "invoice.paid"
+                            ? null
+                            : undefined
                     });
                 }
                 break;

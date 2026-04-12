@@ -7,6 +7,7 @@ const path = require("path");
 const { parseCookies, serializeCookie, clearCookie } = require("../utils/cookies");
 const { generateOpaqueToken, isOpaqueToken, timingSafeEqualString } = require("../utils/tokens");
 const { createRateLimiter } = require("../middleware/rateLimit");
+const { getPurchasePolicyState } = require("../services/policyRules");
 const BACKEND_ROOT = path.resolve(__dirname, "..");
 
 test("cookie helpers parse, serialize, and clear cookies", () => {
@@ -121,4 +122,45 @@ test("relative DATABASE_PATH resolves from the backend directory, not cwd", asyn
 
     assert.equal(fs.existsSync(databaseFile), true);
     fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("policy rules compute refund, grace, suspension, and purge windows", () => {
+    const now = 1_800_000_000_000;
+
+    const preFulfillment = getPurchasePolicyState({
+        status: "paid",
+        createdAt: now - 1_000
+    }, now);
+    assert.equal(preFulfillment.preFulfillmentRefundEligible, true);
+    assert.equal(preFulfillment.originalPurchaseRefundEligible, false);
+
+    const refundWindow = getPurchasePolicyState({
+        status: "completed",
+        createdAt: now - (1000 * 60 * 60 * 24)
+    }, now);
+    assert.equal(refundWindow.originalPurchaseRefundEligible, true);
+
+    const grace = getPurchasePolicyState({
+        status: "completed",
+        stripeSubscriptionStatus: "past_due",
+        subscriptionDelinquentAt: now - (1000 * 60 * 60 * 24)
+    }, now);
+    assert.equal(grace.inGracePeriod, true);
+    assert.equal(grace.suspensionRequired, false);
+
+    const suspend = getPurchasePolicyState({
+        status: "completed",
+        stripeSubscriptionStatus: "past_due",
+        subscriptionDelinquentAt: now - (1000 * 60 * 60 * 24 * 8)
+    }, now);
+    assert.equal(suspend.inGracePeriod, false);
+    assert.equal(suspend.suspensionRequired, true);
+
+    const purge = getPurchasePolicyState({
+        status: "completed",
+        stripeSubscriptionStatus: "past_due",
+        subscriptionDelinquentAt: now - (1000 * 60 * 60 * 24 * 40),
+        serviceSuspendedAt: now - (1000 * 60 * 60 * 24 * 31)
+    }, now);
+    assert.equal(purge.purgeRequired, true);
 });

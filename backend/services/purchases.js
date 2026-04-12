@@ -90,6 +90,8 @@ async function savePurchaseRuntime(purchase, values) {
              stripeCurrentPeriodEnd = ?,
              stripeCancelAtPeriodEnd = ?,
              stripePriceId = ?,
+             subscriptionDelinquentAt = ?,
+             serviceSuspendedAt = ?,
              email = ?,
              setupToken = ?,
              setupTokenExpiresAt = ?
@@ -103,6 +105,8 @@ async function savePurchaseRuntime(purchase, values) {
             values.stripeCurrentPeriodEnd,
             values.stripeCancelAtPeriodEnd,
             values.stripePriceId,
+            values.subscriptionDelinquentAt,
+            values.serviceSuspendedAt,
             values.email,
             values.setupToken,
             values.setupTokenExpiresAt,
@@ -147,6 +151,8 @@ async function markPurchasePaid(session, subscription = null) {
             ? runtime.stripeCancelAtPeriodEnd
             : Number(purchase.stripeCancelAtPeriodEnd || 0),
         stripePriceId: runtime.stripePriceId || purchase.stripePriceId || null,
+        subscriptionDelinquentAt: null,
+        serviceSuspendedAt: null,
         email: email || purchase.email || "",
         setupToken: purchase.setupToken || fallbackSetupToken,
         setupTokenExpiresAt
@@ -167,6 +173,8 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
 
     const runtime = buildSubscriptionRuntime(subscription, overrides);
     const isTerminal = TERMINAL_SUBSCRIPTION_STATUSES.has(runtime.stripeSubscriptionStatus);
+    const isDelinquent = runtime.stripeSubscriptionStatus === "past_due" ||
+        runtime.stripeSubscriptionStatus === "unpaid";
     let nextStatus = purchase.status;
 
     if (isTerminal && (
@@ -187,6 +195,16 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
             ? runtime.stripeCancelAtPeriodEnd
             : Number(purchase.stripeCancelAtPeriodEnd || 0),
         stripePriceId: runtime.stripePriceId || purchase.stripePriceId || null,
+        subscriptionDelinquentAt: overrides.subscriptionDelinquentAt !== undefined
+            ? overrides.subscriptionDelinquentAt
+            : isDelinquent
+                ? purchase.subscriptionDelinquentAt || Date.now()
+                : null,
+        serviceSuspendedAt: overrides.serviceSuspendedAt !== undefined
+            ? overrides.serviceSuspendedAt
+            : isDelinquent
+                ? purchase.serviceSuspendedAt || null
+                : null,
         email: overrides.email || purchase.email || "",
         setupToken: purchase.setupToken || generateOpaqueToken(),
         setupTokenExpiresAt: purchase.setupTokenExpiresAt || (Date.now() + config.setupTokenTtlMs)
