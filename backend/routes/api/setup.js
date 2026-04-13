@@ -1,12 +1,15 @@
 const express = require("express");
+const Stripe = require("stripe");
 const config = require("../../config");
 const { PURCHASE_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { getQuery, runQuery } = require("../../db/queries");
-const { parseCookies } = require("../../utils/cookies");
+const { parseCookies, serializeCookie } = require("../../utils/cookies");
 const { isOpaqueToken } = require("../../utils/tokens");
+const { markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
 
 const router = express.Router();
+const stripe = new Stripe(config.stripeSecretKey);
 const setupStatusLimiter = createRateLimiter({
     windowMs: 1000 * 60,
     max: 20,
@@ -31,30 +34,90 @@ function getSetupToken(req) {
     return cookieToken || bodyToken;
 }
 
-router.post("/setup-status", setupStatusLimiter, async (req, res) => {
-    const setupToken = getSetupToken(req);
+function getCheckoutSessionId(req) {
+    const bodySessionId = typeof req.body?.sessionId === "string"
+        ? req.body.sessionId.trim()
+        : "";
+    const querySessionId = typeof req.query?.session_id === "string"
+        ? req.query.session_id.trim()
+        : "";
+    const sessionId = bodySessionId || querySessionId;
 
-    if (!isOpaqueToken(setupToken)) {
-        return res.status(400).json({
-            ready: false,
-            editable: false,
-            status: "invalid",
-            message: "We couldn't find an active setup session for this browser."
-        });
+    return /^cs_[A-Za-z0-9_]+$/.test(sessionId) ? sessionId : "";
+}
+
+function isRecoverableCheckoutSession(session) {
+    return session?.status === "complete" &&
+        (session?.payment_status === "paid" || session?.payment_status === "no_payment_required");
+}
+
+async function recoverPurchaseFromSessionId(req, res) {
+    const sessionId = getCheckoutSessionId(req);
+
+    if (!sessionId) {
+        return null;
     }
 
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (!isRecoverableCheckoutSession(session)) {
+        return null;
+    }
+
+    const subscriptionId = getStripeObjectId(session.subscription);
+    const subscription = subscriptionId
+        ? await stripe.subscriptions.retrieve(subscriptionId)
+        : null;
+
+    await markPurchasePaid(session, subscription);
+
+    const purchaseId = Number(session.metadata?.purchaseId);
+    const purchase = await getQuery(
+        `SELECT id, status, serverName, setupToken, setupTokenExpiresAt
+         FROM purchases
+         WHERE stripeSessionId = ?
+            OR id = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [session.id, purchaseId || 0]
+    );
+
+    if (!purchase || !isOpaqueToken(purchase.setupToken)) {
+        return null;
+    }
+
+    res.setHeader("Set-Cookie", serializeCookie(config.setupSessionCookieName, purchase.setupToken, {
+        httpOnly: true,
+        maxAgeMs: config.setupTokenTtlMs,
+        path: "/",
+        priority: "High",
+        sameSite: "Lax",
+        secure: config.secureCookies
+    }));
+
+    return purchase;
+}
+
+router.post("/setup-status", setupStatusLimiter, async (req, res) => {
     try {
-        const purchase = await getQuery(
-            "SELECT id, status, serverName, setupTokenExpiresAt FROM purchases WHERE setupToken = ?",
-            [setupToken]
-        );
+        const setupToken = getSetupToken(req);
+        let purchase = null;
+
+        if (isOpaqueToken(setupToken)) {
+            purchase = await getQuery(
+                "SELECT id, status, serverName, setupTokenExpiresAt FROM purchases WHERE setupToken = ?",
+                [setupToken]
+            );
+        } else {
+            purchase = await recoverPurchaseFromSessionId(req, res);
+        }
 
         if (!purchase) {
-            return res.status(404).json({
+            return res.status(400).json({
                 ready: false,
                 editable: false,
-                status: "missing",
-                message: "We could not find a purchase for this setup link."
+                status: "invalid",
+                message: "We couldn't find an active setup session for this browser."
             });
         }
 

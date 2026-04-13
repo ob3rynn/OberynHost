@@ -405,6 +405,84 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
     assert.equal(statusData.ready, true);
 });
 
+test("setup status can recover a paid purchase from Stripe session id when the setup cookie is missing", async t => {
+    const app = await createTestApp(t, {
+        createdSession: {
+            id: "cs_test_recover_cookie",
+            subscription: "sub_test_recover_cookie",
+            url: "https://checkout.stripe.test/recover-cookie"
+        },
+        stripe: {
+            retrieveSession: async id => ({
+                id,
+                status: "complete",
+                payment_status: "paid",
+                subscription: "sub_test_recover_cookie",
+                customer: "cus_test_recover_cookie",
+                customer_details: {
+                    email: "buyer@example.com"
+                },
+                metadata: {
+                    purchaseId: "1",
+                    serverId: "1",
+                    planType: "2GB"
+                }
+            }),
+            retrieveSubscription: async id => ({
+                id,
+                status: "active",
+                cancel_at_period_end: false,
+                customer: "cus_test_recover_cookie",
+                items: {
+                    data: [
+                        {
+                            current_period_end: 1_900_000_100,
+                            price: { id: "price_test_2gb" }
+                        }
+                    ]
+                }
+            })
+        }
+    });
+    const { getQuery } = app.queries;
+
+    const checkoutRes = await app.request("/api/create-checkout", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ planType: "2GB" })
+    });
+    assert.equal(checkoutRes.status, 200);
+
+    const statusRes = await app.request("/api/setup-status", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            sessionId: "cs_test_recover_cookie"
+        })
+    });
+
+    assert.equal(statusRes.status, 200);
+    const statusData = await statusRes.json();
+    assert.equal(statusData.ready, true);
+
+    const setupCookie = app.parseSetCookie(statusRes);
+    assert.match(setupCookie, /setup_session=/);
+
+    const purchase = await getQuery("SELECT * FROM purchases WHERE stripeSessionId = ?", [
+        "cs_test_recover_cookie"
+    ]);
+    assert.equal(purchase.status, "paid");
+    assert.equal(purchase.email, "buyer@example.com");
+    assert.equal(purchase.stripeSubscriptionId, "sub_test_recover_cookie");
+    assert.equal(purchase.stripeSubscriptionStatus, "active");
+});
+
 test("webhook rejects invalid signatures", async t => {
     const app = await createTestApp(t);
 

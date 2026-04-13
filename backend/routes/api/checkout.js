@@ -314,7 +314,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
 
                 purchaseId = purchase.lastID;
 
-                const successUrl = `${config.baseUrl}/success`;
+        const successUrl = `${config.baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`;
                 const cancelUrl = `${config.baseUrl}/pricing`;
 
                 session = await stripe.checkout.sessions.create({

@@ -96,6 +96,7 @@ const statusEl = document.getElementById("status");
 
 let canSubmit = false;
 let pollTimer = null;
+const recoverySessionId = new URLSearchParams(window.location.search).get("session_id") || "";
 
 function setReadyState(ready) {
     canSubmit = ready;
@@ -116,7 +117,9 @@ async function refreshSetupStatus() {
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({})
+            body: JSON.stringify({
+                sessionId: recoverySessionId
+            })
         });
         const data = await res.json();
 
