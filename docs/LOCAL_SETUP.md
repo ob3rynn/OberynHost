@@ -40,6 +40,36 @@ cd backend
 npm run dev:server
 ```
 
+## Live Stripe testing
+
+Once `npm run dev` is running, the repo now includes two local Stripe sandbox scripts:
+
+```bash
+cd backend
+npm run test:stripe:install
+npm run test:stripe:live
+npm run test:stripe:abuse
+```
+
+What they do:
+
+- `npm run test:stripe:install`
+  Installs the Chromium browser that Playwright uses for the local Stripe flow.
+- `npm run test:stripe:live`
+  Runs a real sandbox subscription checkout, returns to `/success`, submits server details, and prints the resulting purchase/subscription state.
+- `npm run test:stripe:abuse`
+  Tries confusing customer behavior against the live sandbox flow, including abandoned checkout setup attempts, resume conflicts, parallel tabs, double-submit setup, and success-page access without the original browser cookie.
+
+The Stripe form is filled with the current sandbox card data baked into the test harness:
+
+- Email: `stripe@test.com`
+- Card: `4242 4242 4242 4242`
+- Expiry: `09 / 29`
+- CVC: `000`
+- Name: `autotest`
+- Country: `United States`
+- ZIP: `99999`
+
 ## Why this exists
 
 On this machine, `npm` may be visible before `node`, which can make the repo feel broken even though the correct Node version is already installed under `nvm`.

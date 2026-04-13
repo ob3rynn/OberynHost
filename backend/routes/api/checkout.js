@@ -19,6 +19,13 @@ const checkoutLimiter = createRateLimiter({
     max: 10,
     message: "Too many checkout attempts. Please wait a moment and try again."
 });
+let checkoutCreationQueue = Promise.resolve();
+
+function queueCheckoutCreation(work) {
+    const next = checkoutCreationQueue.then(work, work);
+    checkoutCreationQueue = next.then(() => undefined, () => undefined);
+    return next;
+}
 
 function getSetupTokenFromCookie(req) {
     const cookies = parseCookies(req.headers.cookie);
@@ -29,15 +36,25 @@ function getSetupTokenFromCookie(req) {
     return isOpaqueToken(setupToken) ? setupToken : "";
 }
 
+function getBrowserSessionId(req) {
+    const cookies = parseCookies(req.headers.cookie);
+    const browserSessionId = typeof cookies[config.browserSessionCookieName] === "string"
+        ? cookies[config.browserSessionCookieName].trim()
+        : "";
+
+    return isOpaqueToken(browserSessionId) ? browserSessionId : "";
+}
+
 function isSuccessfulCheckoutSession(session) {
     return session?.status === "complete" &&
         (session?.payment_status === "paid" || session?.payment_status === "no_payment_required");
 }
 
 async function findPendingBrowserCheckout(req) {
+    const browserSessionId = getBrowserSessionId(req);
     const setupToken = getSetupTokenFromCookie(req);
 
-    if (!setupToken) {
+    if (!browserSessionId && !setupToken) {
         return null;
     }
 
@@ -45,10 +62,11 @@ async function findPendingBrowserCheckout(req) {
         `SELECT purchases.*, servers.type AS serverType, servers.status AS serverStatus
          FROM purchases
          JOIN servers ON servers.id = purchases.serverId
-         WHERE purchases.setupToken = ?
+         WHERE purchases.browserSessionId = ?
+            OR purchases.setupToken = ?
          ORDER BY purchases.id DESC
          LIMIT 1`,
-        [setupToken]
+        [browserSessionId, setupToken]
     );
 
     if (!purchase || purchase.status !== PURCHASE_STATUS.CHECKOUT_PENDING) {
@@ -186,105 +204,178 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
         return res.status(500).json({ error: "Could not resume the existing checkout" });
     }
 
+    const setupToken = generateOpaqueToken();
+    const browserSessionId = getBrowserSessionId(req);
+    const setupTokenExpiresAt = Date.now() + config.setupTokenTtlMs;
     let purchaseId = null;
     let server = null;
-    const setupToken = generateOpaqueToken();
-    const setupTokenExpiresAt = Date.now() + config.setupTokenTtlMs;
+    let session = null;
 
     try {
-        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+        const result = await queueCheckoutCreation(async () => {
+            const existingCheckout = await resolveExistingCheckout(req);
 
-        server = await getQuery(
-            "SELECT id, price FROM servers WHERE type = ? AND status = ? LIMIT 1",
-            [planType, SERVER_STATUS.AVAILABLE]
-        );
-
-        if (!server) {
-            await rollbackTransaction();
-            return res.status(400).json({ error: "No servers available" });
-        }
-
-        const reserve = await runQuery(
-            "UPDATE servers SET status = ? WHERE id = ? AND status = ?",
-            [SERVER_STATUS.HELD, server.id, SERVER_STATUS.AVAILABLE]
-        );
-
-        if (reserve.changes === 0) {
-            await rollbackTransaction();
-            return res.status(400).json({ error: "Server taken, try again" });
-        }
-
-        const purchase = await runQuery(
-            `INSERT INTO purchases
-                (serverId, email, serverName, status, stripeSessionId, createdAt, setupToken, setupTokenExpiresAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                server.id,
-                "",
-                "",
-                PURCHASE_STATUS.CHECKOUT_PENDING,
-                null,
-                Date.now(),
-                setupToken,
-                setupTokenExpiresAt
-            ]
-        );
-
-        purchaseId = purchase.lastID;
-        await runQuery("COMMIT");
-    } catch (err) {
-        await rollbackTransaction();
-        console.error("Failed to reserve inventory:", err);
-        return res.status(500).json({ error: "Could not reserve a server" });
-    }
-
-    try {
-        const successUrl = `${config.baseUrl}/success`;
-        const cancelUrl = `${config.baseUrl}/pricing`;
-
-        const session = await stripe.checkout.sessions.create({
-            mode: "subscription",
-            payment_method_types: ["card"],
-            line_items: [
-                {
-                    price: stripePriceId,
-                    quantity: 1
+            if (existingCheckout.kind === "open") {
+                if (existingCheckout.purchase.serverType !== planType) {
+                return {
+                    kind: "conflict",
+                    status: 409,
+                    setupToken: existingCheckout.purchase.setupToken || "",
+                    body: {
+                        error: `You already have a ${existingCheckout.purchase.serverType} server checkout in progress. Resume that checkout or wait for it to expire before choosing another server.`,
+                        resumeUrl: existingCheckout.url,
+                            existingPlanType: existingCheckout.purchase.serverType
+                        }
+                    };
                 }
-            ],
-            metadata: {
-                purchaseId: String(purchaseId),
-                serverId: String(server.id),
-                planType
-            },
-            subscription_data: {
-                metadata: {
-                    purchaseId: String(purchaseId),
-                    serverId: String(server.id),
-                    planType
+
+                return {
+                    kind: "resume",
+                    status: 200,
+                    setupToken: existingCheckout.purchase.setupToken || "",
+                    body: {
+                        url: existingCheckout.url,
+                        resumed: true,
+                        planType: existingCheckout.purchase.serverType
+                    }
+                };
+            }
+
+            if (existingCheckout.kind === "completed") {
+                return {
+                    kind: "completed",
+                    status: 409,
+                    setupToken: existingCheckout.purchase.setupToken || "",
+                    body: {
+                        error: "Your previous payment is already processing. Continue to setup instead.",
+                        redirectUrl: existingCheckout.url
+                    }
+                };
+            }
+
+            if (existingCheckout.kind === "blocked") {
+                return {
+                    kind: "blocked",
+                    status: 409,
+                    setupToken: existingCheckout.purchase.setupToken || "",
+                    body: {
+                        error: "Your previous checkout is still being processed. Please finish that order or wait for it to expire."
+                    }
+                };
+            }
+
+            await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+            try {
+                server = await getQuery(
+                    "SELECT id, price FROM servers WHERE type = ? AND status = ? LIMIT 1",
+                    [planType, SERVER_STATUS.AVAILABLE]
+                );
+
+                if (!server) {
+                    await rollbackTransaction();
+                    return {
+                        kind: "noneAvailable",
+                        status: 400,
+                        body: { error: "No servers available" }
+                    };
                 }
-            },
-            success_url: successUrl,
-            cancel_url: cancelUrl
+
+                const reserve = await runQuery(
+                    "UPDATE servers SET status = ? WHERE id = ? AND status = ?",
+                    [SERVER_STATUS.HELD, server.id, SERVER_STATUS.AVAILABLE]
+                );
+
+                if (reserve.changes === 0) {
+                    await rollbackTransaction();
+                    return {
+                        kind: "taken",
+                        status: 400,
+                        body: { error: "Server taken, try again" }
+                    };
+                }
+
+                const purchase = await runQuery(
+                    `INSERT INTO purchases
+                        (serverId, email, serverName, status, stripeSessionId, createdAt, setupToken, setupTokenExpiresAt, browserSessionId)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        server.id,
+                        "",
+                        "",
+                        PURCHASE_STATUS.CHECKOUT_PENDING,
+                        null,
+                        Date.now(),
+                        setupToken,
+                        setupTokenExpiresAt,
+                        browserSessionId || null
+                    ]
+                );
+
+                purchaseId = purchase.lastID;
+
+                const successUrl = `${config.baseUrl}/success`;
+                const cancelUrl = `${config.baseUrl}/pricing`;
+
+                session = await stripe.checkout.sessions.create({
+                    mode: "subscription",
+                    payment_method_types: ["card"],
+                    line_items: [
+                        {
+                            price: stripePriceId,
+                            quantity: 1
+                        }
+                    ],
+                    metadata: {
+                        purchaseId: String(purchaseId),
+                        serverId: String(server.id),
+                        planType
+                    },
+                    subscription_data: {
+                        metadata: {
+                            purchaseId: String(purchaseId),
+                            serverId: String(server.id),
+                            planType
+                        }
+                    },
+                    success_url: successUrl,
+                    cancel_url: cancelUrl
+                });
+
+                const link = await runQuery(
+                    "UPDATE purchases SET stripeSessionId = ? WHERE id = ? AND status = ? AND stripeSessionId IS NULL",
+                    [session.id, purchaseId, PURCHASE_STATUS.CHECKOUT_PENDING]
+                );
+
+                if (link.changes === 0) {
+                    throw new Error("Failed to link checkout session to purchase");
+                }
+
+                await runQuery("COMMIT");
+                return {
+                    kind: "created",
+                    status: 200,
+                    setupToken,
+                    body: { url: session.url }
+                };
+            } catch (err) {
+                await rollbackTransaction();
+                throw err;
+            }
         });
 
-        const link = await runQuery(
-            "UPDATE purchases SET stripeSessionId = ? WHERE id = ? AND status = ? AND stripeSessionId IS NULL",
-            [session.id, purchaseId, PURCHASE_STATUS.CHECKOUT_PENDING]
-        );
-
-        if (link.changes === 0) {
-            throw new Error("Failed to link checkout session to purchase");
+        if (result.setupToken) {
+            res.setHeader("Set-Cookie", serializeCookie(config.setupSessionCookieName, result.setupToken, {
+                httpOnly: true,
+                maxAgeMs: config.setupTokenTtlMs,
+                path: "/",
+                priority: "High",
+                sameSite: "Lax",
+                secure: config.secureCookies
+            }));
         }
 
-        res.setHeader("Set-Cookie", serializeCookie(config.setupSessionCookieName, setupToken, {
-            httpOnly: true,
-            maxAgeMs: config.setupTokenTtlMs,
-            path: "/",
-            priority: "High",
-            sameSite: "Lax",
-            secure: config.secureCookies
-        }));
-        res.json({ url: session.url });
+        return res.status(result.status).json(result.body);
     } catch (err) {
         console.error("Checkout creation failed:", err);
 

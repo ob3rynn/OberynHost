@@ -33,6 +33,9 @@ const config = {
     adminSessionCookieName: parsedBaseUrl && parsedBaseUrl.protocol === "https:"
         ? "__Host-admin_session"
         : "admin_session",
+    browserSessionCookieName: parsedBaseUrl && parsedBaseUrl.protocol === "https:"
+        ? "__Host-browser_session"
+        : "browser_session",
     setupSessionCookieName: parsedBaseUrl && parsedBaseUrl.protocol === "https:"
         ? "__Host-setup_session"
         : "setup_session",

@@ -8,7 +8,10 @@
     "dev": "node scripts/dev-with-stripe.js --watch",
     "dev:server": "node --watch server.js",
     "start:stripe": "node scripts/dev-with-stripe.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:stripe:install": "playwright install chromium",
+    "test:stripe:live": "node scripts/live-stripe-checkout.js",
+    "test:stripe:abuse": "node scripts/live-stripe-abuse.js"
   },
   "keywords": [],
   "author": "",
@@ -20,5 +23,8 @@
     "express": "^5.2.1",
     "sqlite3": "^6.0.1",
     "stripe": "^22.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.54.2"
   }
 }

@@ -103,6 +103,10 @@ const ready = (async () => {
             await runStatement("ALTER TABLE purchases ADD COLUMN setupToken TEXT");
         }
 
+        if (!columnNames.has("browserSessionId")) {
+            await runStatement("ALTER TABLE purchases ADD COLUMN browserSessionId TEXT");
+        }
+
         if (!columnNames.has("setupTokenExpiresAt")) {
             await runStatement("ALTER TABLE purchases ADD COLUMN setupTokenExpiresAt INTEGER");
         }
@@ -155,6 +159,12 @@ const ready = (async () => {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_setup_token
             ON purchases(setupToken)
             WHERE setupToken IS NOT NULL
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_purchases_browser_session
+            ON purchases(browserSessionId, createdAt DESC)
+            WHERE browserSessionId IS NOT NULL
         `);
 
         await runStatement(`

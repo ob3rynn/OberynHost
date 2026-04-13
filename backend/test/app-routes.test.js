@@ -296,10 +296,20 @@ test("checkout failure cleans up held inventory and cancels the purchase", async
     const purchase = await getQuery(
         "SELECT id, serverId, status FROM purchases ORDER BY id DESC LIMIT 1"
     );
-    assert.equal(purchase.status, "cancelled");
 
-    const server = await getQuery("SELECT status FROM servers WHERE id = ?", [purchase.serverId]);
-    assert.equal(server.status, "available");
+    if (purchase) {
+        assert.equal(purchase.status, "cancelled");
+
+        const server = await getQuery("SELECT status FROM servers WHERE id = ?", [purchase.serverId]);
+        assert.equal(server.status, "available");
+        return;
+    }
+
+    const heldServer = await getQuery(
+        "SELECT id, status FROM servers WHERE type = ? AND status = ? LIMIT 1",
+        ["4GB", "held"]
+    );
+    assert.equal(heldServer || null, null);
 });
 
 test("webhook completed marks purchase paid, stores email, and unlocks setup", async t => {
