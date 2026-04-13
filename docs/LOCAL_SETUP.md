@@ -70,6 +70,23 @@ The Stripe form is filled with the current sandbox card data baked into the test
 - Country: `United States`
 - ZIP: `99999`
 
+The repo also includes a repeatable live ops suite that runs the most important post-checkout drills in the right environment order:
+
+```bash
+cd backend
+npm run test:stripe:ops:all
+```
+
+What it covers:
+
+- webhook outage followed by admin reconcile
+- real mobile checkout and setup flow
+- failed renewal / grace / suspension / purge policy evaluation
+- checkout session expiry releasing inventory
+- cancellation at period end syncing to the admin/runtime view
+
+This suite intentionally restarts the backend between backend-only mode and listener-backed dev mode so you do not have to run those scenarios by hand.
+
 ## Why this exists
 
 On this machine, `npm` may be visible before `node`, which can make the repo feel broken even though the correct Node version is already installed under `nvm`.

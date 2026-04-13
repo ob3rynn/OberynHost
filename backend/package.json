@@ -11,7 +11,13 @@
     "test": "node --test test/*.test.js",
     "test:stripe:install": "playwright install chromium",
     "test:stripe:live": "node scripts/live-stripe-checkout.js",
-    "test:stripe:abuse": "node scripts/live-stripe-abuse.js"
+    "test:stripe:abuse": "node scripts/live-stripe-abuse.js",
+    "test:stripe:ops:outage": "node scripts/live-stripe-ops.js outage-reconcile",
+    "test:stripe:ops:policy": "node scripts/live-stripe-ops.js subscription-policy",
+    "test:stripe:ops:expiry": "node scripts/live-stripe-ops.js expiry-release",
+    "test:stripe:ops:cancel": "node scripts/live-stripe-ops.js cancel-at-period-end",
+    "test:stripe:mobile": "node scripts/live-stripe-ops.js mobile-pass",
+    "test:stripe:ops:all": "bash scripts/live-stripe-ops-suite.sh"
   },
   "keywords": [],
   "author": "",
