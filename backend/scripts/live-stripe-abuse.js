@@ -236,11 +236,57 @@ async function scenarioSuccessWithoutCookie(browser, baseUrl, evidenceDir) {
             await submitServerDetails(primaryPage, serverName);
 
             return {
-                name: "success_without_cookie_is_blocked",
+                name: "success_without_cookie_and_without_session_id_is_blocked",
                 ok: blocked,
                 details: {
                     leadText,
                     statusText
+                }
+            };
+        } finally {
+            await secondContext.close();
+        }
+    } finally {
+        await primaryContext.close();
+    }
+}
+
+async function scenarioSuccessWithSessionIdRecovers(browser, baseUrl, evidenceDir) {
+    const primaryContext = await createContext(browser);
+    const primaryPage = await primaryContext.newPage();
+    const serverName = makeRunId("autotest-recovered");
+
+    try {
+        await startCheckoutThroughUi(primaryPage, baseUrl, "2GB");
+        await fillHostedCheckout(primaryPage, FORM_VALUES);
+        await submitHostedCheckout(primaryPage, baseUrl);
+        await waitForSetupReady(primaryPage);
+
+        const successUrl = primaryPage.url();
+        const secondContext = await createContext(browser);
+        const secondPage = await secondContext.newPage();
+
+        try {
+            await secondPage.goto(successUrl, { waitUntil: "domcontentloaded" });
+            await waitForSetupReady(secondPage);
+            await snap(secondPage, evidenceDir, "success-with-session-id-recovered");
+            await submitServerDetails(secondPage, serverName);
+
+            const purchase = await findPurchaseByServerName(serverName);
+
+            return {
+                name: "success_with_session_id_recovers_missing_cookie",
+                ok: Boolean(purchase),
+                details: {
+                    successUrl,
+                    purchase: purchase
+                        ? {
+                            id: purchase.id,
+                            status: purchase.status,
+                            serverName: purchase.serverName,
+                            stripeSubscriptionStatus: purchase.stripeSubscriptionStatus
+                        }
+                        : null
                 }
             };
         } finally {
@@ -268,6 +314,7 @@ async function main() {
         results.push(await scenarioParallelTabsDuplicateHold(browser, baseUrl));
         results.push(await scenarioSetupDoubleSubmitLocked(browser, baseUrl));
         results.push(await scenarioSuccessWithoutCookie(browser, baseUrl, evidenceDir));
+        results.push(await scenarioSuccessWithSessionIdRecovers(browser, baseUrl, evidenceDir));
 
         const failed = results.filter(result => !result.ok);
 
