@@ -87,6 +87,16 @@ What it covers:
 
 This suite intentionally restarts the backend between backend-only mode and listener-backed dev mode so you do not have to run those scenarios by hand.
 
+## Read-only audits
+
+For production-adjacent diagnostics that must not change app state, run:
+
+```bash
+bash scripts/run-read-only-audits.sh
+```
+
+That wrapper loads the repo's Node runtime and executes the backend read-only audit suite. For guardrails and reporting rules, see [docs/CODEX_READ_ONLY_AUDITS.md](/home/oberynn/store-site/docs/CODEX_READ_ONLY_AUDITS.md).
+
 ## Why this exists
 
 On this machine, `npm` may be visible before `node`, which can make the repo feel broken even though the correct Node version is already installed under `nvm`.
