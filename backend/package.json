@@ -12,6 +12,7 @@
     "audit:config": "node scripts/audit-config.js",
     "audit:runtime": "node scripts/audit-runtime.js",
     "audit:read-only": "node scripts/audit-read-only.js",
+    "audit:updates": "node scripts/audit-updates.js",
     "test:stripe:install": "playwright install chromium",
     "test:stripe:live": "node scripts/live-stripe-checkout.js",
     "test:stripe:abuse": "node scripts/live-stripe-abuse.js",
