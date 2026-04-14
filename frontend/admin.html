@@ -1181,6 +1181,12 @@ const TAB_CONFIG = [
         subtitle: "Current customer servers and active subscription relationships."
     },
     {
+        key: "canceling",
+        label: "Canceling",
+        title: "Ending At Period End",
+        subtitle: "Active subscriptions that are already set to end and need follow-through when their billing period closes."
+    },
+    {
         key: "ready",
         label: "Ready",
         title: "Ready To Fulfill",
@@ -1270,6 +1276,10 @@ function hasLiveSubscription(purchase) {
     );
 }
 
+function isCancelingSubscription(purchase) {
+    return hasLiveSubscription(purchase) && Boolean(purchase.stripeCancelAtPeriodEnd);
+}
+
 function isStaleCheckout(purchase) {
     return Boolean(purchase.diagnostics?.stalePendingCheckout);
 }
@@ -1330,6 +1340,7 @@ function groupPurchases(data) {
     return {
         overview: data,
         subscriptions: data.filter(p => hasLiveSubscription(p)),
+        canceling: data.filter(p => isCancelingSubscription(p)),
         ready: data.filter(p => p.status === "paid"),
         pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)),
         stale: data.filter(p => isStaleCheckout(p)),
@@ -1578,6 +1589,7 @@ function renderSummaryGrid(data) {
     const counts = {
         total: data.length,
         subscriptions: data.filter(p => hasLiveSubscription(p)).length,
+        canceling: data.filter(p => isCancelingSubscription(p)).length,
         paid: data.filter(p => p.status === "paid").length,
         pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)).length,
         stale: data.filter(p => isStaleCheckout(p)).length,
@@ -1589,6 +1601,7 @@ function renderSummaryGrid(data) {
     [
         ["Total Orders", counts.total],
         ["Active Subscriptions", counts.subscriptions],
+        ["Canceling", counts.canceling],
         ["Ready", counts.paid],
         ["Pending", counts.pending],
         ["Stale", counts.stale],
@@ -1635,6 +1648,12 @@ function renderOverview(data) {
         "No active subscriptions are visible yet."
     ));
     overviewGrid.appendChild(renderOverviewCard(
+        "Ending At Period End",
+        "Subscriptions that are already set to cancel and need a cleanup handoff when Stripe reaches the end of the term.",
+        grouped.canceling,
+        "No subscriptions are currently set to end at period close."
+    ));
+    overviewGrid.appendChild(renderOverviewCard(
         "Ready To Fulfill",
         "Verified orders waiting for action.",
         grouped.ready,
@@ -1678,6 +1697,17 @@ function getViewIntroContent(tabKey, items, grouped) {
                 ["Active", items.length],
                 ["Canceling", items.filter(item => Boolean(item.stripeCancelAtPeriodEnd)).length],
                 ["In Grace", items.filter(item => item.diagnostics?.policy?.inGracePeriod).length]
+            ]
+        };
+    }
+
+    if (tabKey === "canceling") {
+        return {
+            body: "These subscriptions are still live right now, but Stripe is already set to end them at period close.",
+            note: "Keep service live until the current period ends, then release the matching Pelican allocation and inventory slot shown on the order.",
+            stats: [
+                ["Canceling", items.length],
+                ["Ends This Period", items.filter(item => Boolean(item.stripeCurrentPeriodEnd)).length]
             ]
         };
     }
@@ -2033,6 +2063,7 @@ async function applyOverride(id, payload, successMessage) {
 function renderDiagnostics(purchase) {
     const diagnostics = purchase.diagnostics || {};
     const policy = getPolicyState(purchase);
+    const hasCancellationNotice = isCancelingSubscription(purchase);
     const hasActionablePolicy = Boolean(
         policy.inGracePeriod ||
         policy.suspensionRequired ||
@@ -2040,7 +2071,7 @@ function renderDiagnostics(purchase) {
         policy.purgeRequired
     );
 
-    if (!diagnostics.issueCount && !diagnostics.stripe && !hasActionablePolicy) {
+    if (!diagnostics.issueCount && !diagnostics.stripe && !hasActionablePolicy && !hasCancellationNotice) {
         return null;
     }
 
@@ -2088,6 +2119,21 @@ function renderDiagnostics(purchase) {
         ].filter(Boolean).join(" • ");
 
         container.appendChild(createElement("div", "helper-text", runtime));
+    }
+
+    if (hasCancellationNotice) {
+        const releaseLabel = purchase.serverName
+            ? `Pelican server "${purchase.serverName}"`
+            : `slot ${purchase.serverId ?? "-"}`;
+        const timingLabel = purchase.stripeCurrentPeriodEnd
+            ? `after ${formatTimestamp(purchase.stripeCurrentPeriodEnd)}`
+            : "when Stripe marks the subscription ended";
+
+        container.appendChild(createElement(
+            "div",
+            "helper-text",
+            `Scheduled cancellation: keep service live for now, then release ${releaseLabel} ${timingLabel}.`
+        ));
     }
 
     const policyParts = [];
@@ -2523,6 +2569,7 @@ function renderAdmin() {
 
     const emptyText = {
         subscriptions: "No active subscriptions are visible yet.",
+        canceling: "No subscriptions are currently scheduled to end at period close.",
         ready: "No verified orders are waiting right now.",
         pending: "No orders are currently waiting on payment.",
         stale: "No stale checkout holds right now.",
