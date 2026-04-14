@@ -91,6 +91,7 @@ async function createTestApp(t, options = {}) {
         "PORT",
         "ADMIN_KEY",
         "STRIPE_SECRET_KEY",
+        "STRIPE_API_VERSION",
         "STRIPE_WEBHOOK_SECRET",
         "STRIPE_PRICE_2GB",
         "STRIPE_PRICE_4GB",
@@ -102,12 +103,14 @@ async function createTestApp(t, options = {}) {
     process.env.PORT = String(port);
     process.env.ADMIN_KEY = options.adminKey || "test-admin-key";
     process.env.STRIPE_SECRET_KEY = options.stripeSecretKey || "sk_test_mocked";
+    process.env.STRIPE_API_VERSION = options.stripeApiVersion || "2026-02-25.clover";
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
     process.env.STRIPE_PRICE_2GB = options.stripePrice2GB || "price_test_2gb";
     process.env.STRIPE_PRICE_4GB = options.stripePrice4GB || "price_test_4gb";
     process.env.DATABASE_PATH = databasePath;
 
     const stripeState = {
+        constructors: [],
         lastCreatedSessionParams: null,
         createSession: async params => ({
             id: `cs_test_${Date.now()}`,
@@ -158,7 +161,8 @@ async function createTestApp(t, options = {}) {
     Module._load = function patchedLoad(request, parent, isMain) {
         if (request === "stripe") {
             return class MockStripe {
-                constructor() {
+                constructor(apiKey, options) {
+                    stripeState.constructors.push({ apiKey, options });
                     return {
                         checkout: {
                             sessions: {

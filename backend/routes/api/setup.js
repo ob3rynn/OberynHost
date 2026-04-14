@@ -1,15 +1,15 @@
 const express = require("express");
-const Stripe = require("stripe");
 const config = require("../../config");
 const { PURCHASE_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { getQuery, runQuery } = require("../../db/queries");
+const { createStripeClient } = require("../../lib/stripeClient");
 const { parseCookies, serializeCookie } = require("../../utils/cookies");
 const { isOpaqueToken } = require("../../utils/tokens");
 const { markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
 
 const router = express.Router();
-const stripe = new Stripe(config.stripeSecretKey);
+const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 const setupStatusLimiter = createRateLimiter({
     windowMs: 1000 * 60,
     max: 20,

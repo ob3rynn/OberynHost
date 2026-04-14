@@ -40,6 +40,7 @@ const config = {
         ? "__Host-setup_session"
         : "setup_session",
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+    stripeApiVersion: (process.env.STRIPE_API_VERSION || "").trim(),
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
     stripePriceIds: {
         "2GB": (process.env.STRIPE_PRICE_2GB || "price_1TLNS1AHxmSgftnMGKoN5LnI").trim(),
@@ -52,6 +53,7 @@ const missingConfig = [
     ["BASE_URL", config.baseUrl],
     ["ADMIN_KEY", config.adminKey],
     ["STRIPE_SECRET_KEY", config.stripeSecretKey],
+    ["STRIPE_API_VERSION", config.stripeApiVersion],
     ["STRIPE_WEBHOOK_SECRET", config.stripeWebhookSecret],
     ["STRIPE_PRICE_2GB", config.stripePriceIds["2GB"]],
     ["STRIPE_PRICE_4GB", config.stripePriceIds["4GB"]]

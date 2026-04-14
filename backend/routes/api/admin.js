@@ -1,10 +1,10 @@
 const express = require("express");
-const Stripe = require("stripe");
 
 const requireAdmin = require("../../middleware/auth");
 const config = require("../../config");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { PURCHASE_STATUS, SERVER_STATUS } = require("../../constants/status");
+const { createStripeClient } = require("../../lib/stripeClient");
 const { createAdminSession, destroyAdminSession } = require("../../services/adminSessions");
 const { markPurchasePaid, expirePurchase } = require("../../services/purchases");
 const { clearCookie, parseCookies, serializeCookie } = require("../../utils/cookies");
@@ -21,7 +21,7 @@ const {
     getPurchasePolicyState
 } = require("../../services/policyRules");
 
-const stripe = new Stripe(config.stripeSecretKey);
+const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 const router = express.Router();
 const STALE_PENDING_CHECKOUT_MS = 1000 * 60 * 30;
 const loginLimiter = createRateLimiter({

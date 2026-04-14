@@ -1,8 +1,8 @@
-const Stripe = require("stripe");
 const config = require("../config");
+const { createStripeClient } = require("../lib/stripeClient");
 const { markPurchasePaid, expirePurchase, syncPurchaseSubscription, getStripeObjectId } = require("../services/purchases");
 
-const stripe = new Stripe(config.stripeSecretKey);
+const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 
 module.exports = async (req, res) => {
     const signature = req.headers["stripe-signature"];

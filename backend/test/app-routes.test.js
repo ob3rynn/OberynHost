@@ -77,6 +77,8 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
     assert.match(app.parseSetCookie(res), /setup_session=/);
     assert.equal(app.stripeState.lastCreatedSessionParams.mode, "subscription");
     assert.equal(app.stripeState.lastCreatedSessionParams.line_items[0].price, "price_test_2gb");
+    assert.ok(app.stripeState.constructors.length > 0);
+    assert.ok(app.stripeState.constructors.every(({ options }) => options?.apiVersion === "2026-02-25.clover"));
 
     const purchase = await getQuery("SELECT * FROM purchases WHERE stripeSessionId = ?", [
         "cs_test_checkout_success"

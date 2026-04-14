@@ -1,7 +1,7 @@
 const path = require("path");
-const Stripe = require("stripe");
 const dotenv = require("dotenv");
 
+const { createStripeClient } = require("../lib/stripeClient");
 const {
     createContext,
     dbGet,
@@ -20,7 +20,10 @@ const { getPurchasePolicyState } = require("../services/policyRules");
 
 dotenv.config({ path: path.join(__dirname, "../.env") });
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = createStripeClient(
+    process.env.STRIPE_SECRET_KEY,
+    (process.env.STRIPE_API_VERSION || "").trim()
+);
 const baseUrl = getBaseUrl();
 const adminKey = process.env.ADMIN_KEY;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;

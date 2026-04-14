@@ -1,9 +1,9 @@
 const express = require("express");
-const Stripe = require("stripe");
 
 const config = require("../../config");
 const { runQuery, getQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
+const { createStripeClient } = require("../../lib/stripeClient");
 const { cancelPurchaseAndRelease, expirePurchase, markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
 const { VALID_PLAN_TYPES } = require("../../config/plans");
 const { SERVER_STATUS, PURCHASE_STATUS } = require("../../constants/status");
@@ -11,7 +11,7 @@ const { createRateLimiter } = require("../../middleware/rateLimit");
 const { parseCookies, serializeCookie } = require("../../utils/cookies");
 const { generateOpaqueToken, isOpaqueToken } = require("../../utils/tokens");
 
-const stripe = new Stripe(config.stripeSecretKey);
+const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 
 const router = express.Router();
 const checkoutLimiter = createRateLimiter({
