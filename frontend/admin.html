@@ -1119,13 +1119,15 @@
         <p class="eyebrow">Admin</p>
         <h1>Sign in to manage orders.</h1>
         <p>Review live queues, repair payment states, and move between focused admin views.</p>
-        <div class="field">
-            <label for="keyInput">Admin key</label>
-            <input type="password" id="keyInput" placeholder="Enter admin key">
-        </div>
-        <div class="hero-actions" style="justify-content:flex-start;">
-            <button class="primary" onclick="login()">Enter Admin Panel</button>
-        </div>
+        <form onsubmit="event.preventDefault(); login()">
+            <div class="field">
+                <label for="keyInput">Admin key</label>
+                <input type="password" id="keyInput" placeholder="Enter admin key">
+            </div>
+            <div class="hero-actions" style="justify-content:flex-start;">
+                <button class="primary" type="submit">Enter Admin Panel</button>
+            </div>
+        </form>
         <div id="error"></div>
     </div>
 </div>
@@ -1239,7 +1241,8 @@ const DETAIL_HELP = {
 const state = {
     purchases: [],
     activeTab: localStorage.getItem("admin.activeTab") || "overview",
-    selectedPurchaseIds: new Set()
+    selectedPurchaseIds: new Set(),
+    bulkToolbarOpen: false
 };
 
 function formatTimestamp(ts) {
@@ -1754,6 +1757,10 @@ function renderViewIntro(tabKey, items, grouped) {
 function renderBulkToolbar(items) {
     const toolbar = document.createElement("details");
     toolbar.className = "bulk-toolbar";
+    toolbar.open = state.bulkToolbarOpen;
+    toolbar.addEventListener("toggle", () => {
+        state.bulkToolbarOpen = toolbar.open;
+    });
     const selectedItems = items.filter(item => isPurchaseSelected(item.id));
     const selectedCount = selectedItems.length;
 
