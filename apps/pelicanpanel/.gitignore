@@ -1,0 +1,16 @@
+.env
+
+.data/*
+!.data/.gitkeep
+!.data/logs/
+!.data/storage/
+
+.data/logs/*
+!.data/logs/.gitkeep
+!.data/logs/panel/
+
+.data/logs/panel/*
+!.data/logs/panel/.gitkeep
+
+.data/storage/*
+!.data/storage/.gitkeep

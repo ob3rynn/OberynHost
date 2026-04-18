@@ -1,0 +1,181 @@
+services:
+  mariadb:
+    image: ${MARIADB_IMAGE}
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=mysql_native_password
+    ports:
+      - "127.0.0.1:3307:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_DATABASE}
+      MARIADB_USER: ${DB_USERNAME}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pelicanpanel-mariadb-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mariadb-admin ping -h 127.0.0.1 -u root -p$$MARIADB_ROOT_PASSWORD --silent
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: ${REDIS_IMAGE}
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  panel-init:
+    image: ${PELICAN_IMAGE}
+    user: "0:0"
+    restart: "no"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      XDG_DATA_HOME: /pelican-data
+      BEHIND_PROXY: "true"
+      APP_URL: ${APP_URL}
+      APP_ENV: ${APP_ENV}
+      APP_DEBUG: ${APP_DEBUG}
+      DB_CONNECTION: ${DB_CONNECTION}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      CACHE_STORE: ${CACHE_STORE}
+      QUEUE_CONNECTION: ${QUEUE_CONNECTION}
+      SESSION_DRIVER: ${SESSION_DRIVER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_USERNAME: ${REDIS_USERNAME}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      DEV_ADMIN_USERNAME: ${DEV_ADMIN_USERNAME}
+      DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL}
+      DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD}
+    volumes:
+      - ./.data/storage:/pelican-data
+      - ./.data/logs/panel:/var/www/html/storage/logs
+      - ../../packages/pelican/oberynhost-theme:/plugin-source/oberynhosttheme:ro
+    command:
+      - sh
+      - -ec
+      - |
+        until nc -z mariadb 3306; do
+          echo "Waiting for MariaDB..."
+          sleep 1
+        done
+
+        until nc -z redis 6379; do
+          echo "Waiting for Redis..."
+          sleep 1
+        done
+
+        seed_oberynhost_plugin() {
+          if [ ! -f /plugin-source/oberynhosttheme/plugin.json ]; then
+            echo "OberynHost plugin source is missing."
+            exit 1
+          fi
+
+          mkdir -p /pelican-data/plugins
+
+          if [ ! -f /pelican-data/plugins/oberynhosttheme/plugin.json ]; then
+            echo "Seeding OberynHost plugin into runtime storage."
+            cp -R /plugin-source/oberynhosttheme /pelican-data/plugins/oberynhosttheme
+          fi
+        }
+
+        plugin_status() {
+          php artisan tinker --execute="try { echo \\App\\Models\\Plugin::query()->where('id', 'oberynhosttheme')->value('status') ?? 'missing'; } catch (\\Throwable $$e) { echo 'missing'; }" \
+            | tail -n 1 \
+            | tr -d '\r'
+        }
+
+        set_app_installed() {
+          if grep -q '^APP_INSTALLED=' /pelican-data/.env; then
+            sed -i 's/^APP_INSTALLED=.*/APP_INSTALLED=true/' /pelican-data/.env
+          else
+            printf '\nAPP_INSTALLED=true\n' >> /pelican-data/.env
+          fi
+        }
+
+        seed_oberynhost_plugin
+
+        admin_exists="$$(
+          php artisan tinker --execute="try { echo (\\Illuminate\\Support\\Facades\\Schema::hasTable('users') && \\App\\Models\\User::query()->where('email', getenv('DEV_ADMIN_EMAIL'))->exists()) ? 'yes' : 'no'; } catch (\\Throwable $$e) { echo 'no'; }" \
+            | tail -n 1 \
+            | tr -d '\r'
+        )"
+
+        if [ "$${admin_exists}" = "yes" ]; then
+          if [ "$$(plugin_status)" != "enabled" ]; then
+            echo "Installing OberynHost plugin."
+            php artisan p:plugin:install oberynhosttheme
+          fi
+          echo "Dev admin already exists; marking runtime as installed."
+          set_app_installed
+          exit 0
+        fi
+
+        echo "Running first-time panel initialization."
+        php artisan migrate --seed --force
+        php artisan p:user:make \
+          --admin=1 \
+          --email="${DEV_ADMIN_EMAIL}" \
+          --username="${DEV_ADMIN_USERNAME}" \
+          --password="${DEV_ADMIN_PASSWORD}"
+
+        echo "Installing OberynHost plugin."
+        php artisan p:plugin:install oberynhosttheme
+
+        set_app_installed
+        echo "Pelican local dev initialization completed."
+
+  panel:
+    image: ${PELICAN_IMAGE}
+    user: "0:0"
+    restart: unless-stopped
+    depends_on:
+      panel-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8081:80"
+    environment:
+      XDG_DATA_HOME: /pelican-data
+      BEHIND_PROXY: "true"
+      APP_URL: ${APP_URL}
+      APP_ENV: ${APP_ENV}
+      APP_DEBUG: ${APP_DEBUG}
+      DB_CONNECTION: ${DB_CONNECTION}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      CACHE_STORE: ${CACHE_STORE}
+      QUEUE_CONNECTION: ${QUEUE_CONNECTION}
+      SESSION_DRIVER: ${SESSION_DRIVER}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_USERNAME: ${REDIS_USERNAME}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ./.data/storage:/pelican-data
+      - ./.data/logs/panel:/var/www/html/storage/logs
+
+volumes:
+  pelicanpanel-mariadb-data:
+    name: pelicanpanel-mariadb-data
