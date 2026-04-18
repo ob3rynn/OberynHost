@@ -4,7 +4,7 @@ Use this checklist any time we change the Stripe SDK version, `STRIPE_API_VERSIO
 
 ## Baseline rules
 
-- Keep the backend dependency pinned exactly in [backend/package.json](/home/oberynn/store-site/backend/package.json) and deploy with `npm ci`.
+- Keep the backend dependency pinned exactly in [`apps/storefront/backend/package.json`](../apps/storefront/backend/package.json) and deploy with `npm ci`.
 - Keep `STRIPE_API_VERSION` explicit in every environment. The app fails fast if it is missing.
 - Upgrade the app request version and the webhook endpoint version as separate steps.
 - Treat the live sandbox scripts as part of the release gate, not optional smoke tests.
@@ -13,28 +13,28 @@ Use this checklist any time we change the Stripe SDK version, `STRIPE_API_VERSIO
 
 1. Read the Stripe changelog for the target SDK/API version.
 2. List the flows affected in this repo:
-   - checkout session creation in [backend/routes/api/checkout.js](/home/oberynn/store-site/backend/routes/api/checkout.js)
-   - setup recovery in [backend/routes/api/setup.js](/home/oberynn/store-site/backend/routes/api/setup.js)
-   - webhook processing in [backend/middleware/stripeWebhook.js](/home/oberynn/store-site/backend/middleware/stripeWebhook.js)
-   - admin reconcile in [backend/routes/api/admin.js](/home/oberynn/store-site/backend/routes/api/admin.js)
+   - checkout session creation in [`apps/storefront/backend/routes/api/checkout.js`](../apps/storefront/backend/routes/api/checkout.js)
+   - setup recovery in [`apps/storefront/backend/routes/api/setup.js`](../apps/storefront/backend/routes/api/setup.js)
+   - webhook processing in [`apps/storefront/backend/middleware/stripeWebhook.js`](../apps/storefront/backend/middleware/stripeWebhook.js)
+   - admin reconcile in [`apps/storefront/backend/routes/api/admin.js`](../apps/storefront/backend/routes/api/admin.js)
 3. Confirm the target API version value that will be pinned in `STRIPE_API_VERSION`.
 
 ## App-side upgrade
 
-1. Change the exact `stripe` package version in [backend/package.json](/home/oberynn/store-site/backend/package.json).
+1. Change the exact `stripe` package version in [`apps/storefront/backend/package.json`](../apps/storefront/backend/package.json).
 2. Update `STRIPE_API_VERSION` in env files and deployment secrets.
 3. Run:
 
 ```bash
-cd backend
+cd apps/storefront/backend
 npm ci
 npm test
 ```
 
-4. Run live sandbox drills from [docs/LOCAL_SETUP.md](/home/oberynn/store-site/docs/LOCAL_SETUP.md):
+4. Run live sandbox drills from [docs/LOCAL_SETUP.md](./LOCAL_SETUP.md):
 
 ```bash
-cd backend
+cd apps/storefront/backend
 npm run test:stripe:live
 npm run test:stripe:abuse
 npm run test:stripe:ops:all
@@ -73,6 +73,6 @@ npm run test:stripe:ops:all
 
 ## Repo-specific notes
 
-- Most automated tests mock Stripe in [backend/test/helpers/testApp.js](/home/oberynn/store-site/backend/test/helpers/testApp.js), so unit tests protect our state transitions more than Stripe response compatibility.
+- Most automated tests mock Stripe in [`apps/storefront/backend/test/helpers/testApp.js`](../apps/storefront/backend/test/helpers/testApp.js), so unit tests protect our state transitions more than Stripe response compatibility.
 - The live sandbox scripts are what catch real hosted checkout and webhook behavior changes.
 - The admin reconcile endpoint provides an operational fallback when webhooks are delayed or missed.

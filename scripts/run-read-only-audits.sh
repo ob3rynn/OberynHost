@@ -13,5 +13,5 @@ if [[ -s "${nvm_script}" ]]; then
     nvm use "${required_major}" >/dev/null
 fi
 
-cd "${repo_root}/backend"
+cd "${repo_root}/apps/storefront/backend"
 node scripts/audit-read-only.js "$@"

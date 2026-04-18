@@ -15,11 +15,11 @@ These commands are intended to be safe and read-only for routine use:
 ```bash
 bash scripts/run-read-only-audits.sh
 bash scripts/run-update-review.sh
-cd backend && npm run audit:config
-cd backend && npm run audit:runtime
-cd backend && npm run audit:read-only
-cd backend && npm run audit:updates
-cd backend && node scripts/audit-read-only.js --json
+cd apps/storefront/backend && npm run audit:config
+cd apps/storefront/backend && npm run audit:runtime
+cd apps/storefront/backend && npm run audit:read-only
+cd apps/storefront/backend && npm run audit:updates
+cd apps/storefront/backend && node scripts/audit-read-only.js --json
 git status --short
 git log --oneline -n 20
 ```
@@ -29,7 +29,7 @@ What the audit scripts inspect:
 - required environment/config presence
 - pinned Stripe package and API version settings
 - whether Stripe clients are centralized through the shared helper
-- available npm package updates in the backend workspace
+- available npm package updates in the storefront backend workspace
 - current branch and worktree cleanliness
 - read-only SQLite health checks for checkout, setup, subscription, and policy drift
 
@@ -49,9 +49,9 @@ Codex must not do any of the following unless a human explicitly asks for that e
 ## Expected audit workflow
 
 1. Run `bash scripts/run-read-only-audits.sh`.
-2. Run `cd backend && npm run audit:updates` to inventory dependency updates.
+2. Run `cd apps/storefront/backend && npm run audit:updates` to inventory dependency updates.
 3. For each update candidate, browse official changelogs, release notes, migration guides, and security advisories before recommending action.
-4. Use [docs/CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md](/home/oberynn/store-site/docs/CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md) for the final human-facing answer.
+4. Use [docs/CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md](./CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md) for the final human-facing answer.
 5. Summarize findings under four buckets:
    - upgrade now
    - safe to defer
@@ -77,7 +77,7 @@ Each audit report should include:
 
 - Stripe SDK upgrades and `STRIPE_API_VERSION` changes must be treated as planned releases.
 - Webhook endpoint version changes must be handled separately from app deploys.
-- Live sandbox Stripe drills are required before production upgrades. See [docs/STRIPE_UPGRADES.md](/home/oberynn/store-site/docs/STRIPE_UPGRADES.md).
+- Live sandbox Stripe drills are required before production upgrades. See [docs/STRIPE_UPGRADES.md](./STRIPE_UPGRADES.md).
 - Read-only audits may recommend changes, but they must not apply them.
 - Recommendations should prefer official sources: vendor docs, changelogs, release notes, migration guides, and security advisories.
 - If the online research is inconclusive, the recommendation should explicitly say so and default to `safe to defer` unless there is a security or deprecation signal.

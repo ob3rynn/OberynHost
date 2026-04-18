@@ -13,7 +13,7 @@ if [[ -s "${nvm_script}" ]]; then
     nvm use "${required_major}" >/dev/null
 fi
 
-cd "${repo_root}/backend"
+cd "${repo_root}/apps/storefront/backend"
 
 echo "=== READ-ONLY AUDIT ==="
 node scripts/audit-read-only.js || true
@@ -21,5 +21,5 @@ echo
 echo "=== AVAILABLE UPDATES ==="
 node scripts/audit-updates.js
 echo
-echo "=== CODEx NEXT STEP ==="
+echo "=== CODEX NEXT STEP ==="
 echo "Browse official changelogs/release notes for each available update, then answer using docs/CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md"

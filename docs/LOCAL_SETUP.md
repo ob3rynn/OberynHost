@@ -13,39 +13,39 @@ bash scripts/setup-node.sh
 bash scripts/setup-git.sh
 ```
 
-## Starting the backend
+## Starting the storefront backend
 
 From the repo root:
 
 ```bash
 source "$HOME/.nvm/nvm.sh"
 bash scripts/setup-node.sh
-cd backend
+cd apps/storefront/backend
 npm install
 npm run dev
 ```
 
-`npm run dev` now starts both the local Stripe listener and the backend server for checkout testing.
-It reads `BASE_URL` from `backend/.env`, forwards Stripe webhooks to `/api/stripe/webhook`, captures the temporary `whsec_...` secret from the Stripe CLI, and injects it into the backend process automatically.
+`npm run dev` now starts both the local Stripe listener and the storefront backend server for checkout testing.
+It reads `BASE_URL` from `apps/storefront/backend/.env`, forwards Stripe webhooks to `/api/stripe/webhook`, captures the temporary `whsec_...` secret from the Stripe CLI, and injects it into the backend process automatically.
 
 Requirements:
 
 - Stripe CLI must be installed and logged in
-- `BASE_URL` in `backend/.env` must match the URL you are testing, such as `http://localhost:3000`
+- `BASE_URL` in `apps/storefront/backend/.env` must match the URL you are testing, such as `http://localhost:3000`
 
 If you want the backend without Stripe forwarding, use:
 
 ```bash
-cd backend
+cd apps/storefront/backend
 npm run dev:server
 ```
 
 ## Live Stripe testing
 
-Once `npm run dev` is running, the repo now includes two local Stripe sandbox scripts:
+Once `npm run dev` is running, the repo includes local Stripe sandbox scripts:
 
 ```bash
-cd backend
+cd apps/storefront/backend
 npm run test:stripe:install
 npm run test:stripe:live
 npm run test:stripe:abuse
@@ -73,7 +73,7 @@ The Stripe form is filled with the current sandbox card data baked into the test
 The repo also includes a repeatable live ops suite that runs the most important post-checkout drills in the right environment order:
 
 ```bash
-cd backend
+cd apps/storefront/backend
 npm run test:stripe:ops:all
 ```
 
@@ -95,7 +95,7 @@ For production-adjacent diagnostics that must not change app state, run:
 bash scripts/run-read-only-audits.sh
 ```
 
-That wrapper loads the repo's Node runtime and executes the backend read-only audit suite. For guardrails and reporting rules, see [docs/CODEX_READ_ONLY_AUDITS.md](/home/oberynn/store-site/docs/CODEX_READ_ONLY_AUDITS.md).
+That wrapper loads the repo's Node runtime and executes the storefront backend read-only audit suite. For guardrails and reporting rules, see [docs/CODEX_READ_ONLY_AUDITS.md](./CODEX_READ_ONLY_AUDITS.md).
 
 ## Why this exists
 
