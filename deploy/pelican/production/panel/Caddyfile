@@ -1,0 +1,14 @@
+# Replace panel.example.com with your real panel FQDN before installing on the host.
+# Keep the upstream target aligned with PANEL_HOST_PORT from /etc/oberyn/pelican/panel.env.
+
+panel.example.com {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    reverse_proxy 127.0.0.1:8080
+}

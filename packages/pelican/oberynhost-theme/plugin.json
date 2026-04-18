@@ -1,0 +1,16 @@
+{
+  "id": "oberynhosttheme",
+  "name": "OberynHost Theme",
+  "author": "OberynHost",
+  "version": "0.1.0",
+  "description": "Light OberynHost branding for Pelican auth and shell surfaces.",
+  "category": "plugin",
+  "namespace": "OberynHostTheme",
+  "class": "OberynHostThemePlugin",
+  "panels": [
+    "admin",
+    "app",
+    "server"
+  ],
+  "panel_version": "^1.0.0-beta33"
+}
