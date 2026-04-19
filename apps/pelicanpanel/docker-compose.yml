@@ -37,6 +37,9 @@ services:
 
   panel-init:
     image: ${PELICAN_IMAGE}
+    # The upstream image defaults to www-data. We keep init as root because this
+    # stack uses bind-mounted runtime paths that need first-boot writes and
+    # ownership fixes under .data/.
     user: "0:0"
     restart: "no"
     depends_on:
@@ -63,6 +66,9 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_USERNAME: ${REDIS_USERNAME}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MAIL_MAILER: ${MAIL_MAILER}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME}
       DEV_ADMIN_USERNAME: ${DEV_ADMIN_USERNAME}
       DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL}
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD}
@@ -84,24 +90,46 @@ services:
           sleep 1
         done
 
-        seed_oberynhost_plugin() {
+        LOCAL_INIT_MARKER=/pelican-data/.oberynhost-local-init
+        PLUGIN_HASH_FILE=/pelican-data/plugins/.oberynhosttheme.source-sha256
+        PLUGIN_SOURCE_HASH=""
+
+        plugin_source_hash() {
+          find /plugin-source/oberynhosttheme -type f | sort | while read -r path; do
+            printf '%s\n' "$$path"
+            sha256sum "$$path"
+          done | sha256sum | awk '{print $$1}'
+        }
+
+        sync_oberynhost_plugin() {
           if [ ! -f /plugin-source/oberynhosttheme/plugin.json ]; then
             echo "OberynHost plugin source is missing."
             exit 1
           fi
 
           mkdir -p /pelican-data/plugins
+          PLUGIN_SOURCE_HASH="$$(plugin_source_hash)"
+          current_hash=""
+          if [ -f "$${PLUGIN_HASH_FILE}" ]; then
+            current_hash="$$(tr -d '\r\n' < "$${PLUGIN_HASH_FILE}")"
+          fi
 
-          if [ ! -f /pelican-data/plugins/oberynhosttheme/plugin.json ]; then
-            echo "Seeding OberynHost plugin into runtime storage."
+          if [ ! -f /pelican-data/plugins/oberynhosttheme/plugin.json ] || [ "$${PLUGIN_SOURCE_HASH}" != "$${current_hash}" ]; then
+            echo "Syncing OberynHost plugin into runtime storage."
+            rm -rf /pelican-data/plugins/oberynhosttheme
             cp -R /plugin-source/oberynhosttheme /pelican-data/plugins/oberynhosttheme
+            printf '%s\n' "$${PLUGIN_SOURCE_HASH}" > "$${PLUGIN_HASH_FILE}"
           fi
         }
 
         plugin_status() {
-          php artisan tinker --execute="try { echo \\App\\Models\\Plugin::query()->where('id', 'oberynhosttheme')->value('status') ?? 'missing'; } catch (\\Throwable $$e) { echo 'missing'; }" \
+          php artisan tinker --execute="try { echo \\App\\Models\\Plugin::query()->where('id', 'oberynhosttheme')->first()?->status?->value ?? 'missing'; } catch (\\Throwable $$e) { echo 'missing'; }" \
             | tail -n 1 \
             | tr -d '\r'
+        }
+
+        app_installed_true() {
+          grep -q '^APP_INSTALLED=true$' /pelican-data/.env 2>/dev/null
         }
 
         set_app_installed() {
@@ -112,21 +140,44 @@ services:
           fi
         }
 
-        seed_oberynhost_plugin
+        local_init_marker_current() {
+          [ -f "$${LOCAL_INIT_MARKER}" ] || return 1
+          grep -q "^admin_email=$${DEV_ADMIN_EMAIL}\$$" "$${LOCAL_INIT_MARKER}" || return 1
+          grep -q "^plugin_source_hash=$${PLUGIN_SOURCE_HASH}\$$" "$${LOCAL_INIT_MARKER}" || return 1
+        }
+
+        write_local_init_marker() {
+          cat > "$${LOCAL_INIT_MARKER}" <<EOF
+        admin_email=$${DEV_ADMIN_EMAIL}
+        plugin_source_hash=$${PLUGIN_SOURCE_HASH}
+        EOF
+        }
+
+        sync_oberynhost_plugin
 
         admin_exists="$$(
           php artisan tinker --execute="try { echo (\\Illuminate\\Support\\Facades\\Schema::hasTable('users') && \\App\\Models\\User::query()->where('email', getenv('DEV_ADMIN_EMAIL'))->exists()) ? 'yes' : 'no'; } catch (\\Throwable $$e) { echo 'no'; }" \
             | tail -n 1 \
             | tr -d '\r'
         )"
+        plugin_state="$$(plugin_status)"
+
+        if [ "$${admin_exists}" = "yes" ] && [ "$${plugin_state}" = "enabled" ] && app_installed_true && local_init_marker_current; then
+          echo "Local init already reconciled."
+          exit 0
+        fi
 
         if [ "$${admin_exists}" = "yes" ]; then
-          if [ "$$(plugin_status)" != "enabled" ]; then
+          if [ "$${plugin_state}" != "enabled" ]; then
             echo "Installing OberynHost plugin."
             php artisan p:plugin:install oberynhosttheme
           fi
-          echo "Dev admin already exists; marking runtime as installed."
-          set_app_installed
+          if ! app_installed_true; then
+            echo "Marking runtime as installed."
+            set_app_installed
+          fi
+          write_local_init_marker
+          echo "Local init state reconciled."
           exit 0
         fi
 
@@ -134,18 +185,22 @@ services:
         php artisan migrate --seed --force
         php artisan p:user:make \
           --admin=1 \
-          --email="${DEV_ADMIN_EMAIL}" \
-          --username="${DEV_ADMIN_USERNAME}" \
-          --password="${DEV_ADMIN_PASSWORD}"
+          --email="$${DEV_ADMIN_EMAIL}" \
+          --username="$${DEV_ADMIN_USERNAME}" \
+          --password="$${DEV_ADMIN_PASSWORD}"
 
         echo "Installing OberynHost plugin."
         php artisan p:plugin:install oberynhosttheme
 
         set_app_installed
+        write_local_init_marker
         echo "Pelican local dev initialization completed."
 
   panel:
     image: ${PELICAN_IMAGE}
+    # The upstream image defaults to www-data. We keep the long-running service
+    # as root here because the entrypoint and bundled services still need write
+    # access to bind-mounted runtime paths under .data/.
     user: "0:0"
     restart: unless-stopped
     depends_on:
@@ -153,8 +208,20 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:8081:80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /bin/ash /healthcheck.sh
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 5s
     environment:
       XDG_DATA_HOME: /pelican-data
+      # This mirrors how the upstream image expects to behave when an external
+      # reverse proxy owns the public URL. Locally we still keep it true so the
+      # container always serves on internal :80 while the host bind stays on
+      # 127.0.0.1:8081.
       BEHIND_PROXY: "true"
       APP_URL: ${APP_URL}
       APP_ENV: ${APP_ENV}
@@ -172,6 +239,9 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_USERNAME: ${REDIS_USERNAME}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MAIL_MAILER: ${MAIL_MAILER}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME}
     volumes:
       - ./.data/storage:/pelican-data
       - ./.data/logs/panel:/var/www/html/storage/logs

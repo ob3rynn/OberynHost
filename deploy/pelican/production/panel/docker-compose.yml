@@ -36,12 +36,18 @@ services:
       start_period: 5s
 
   panel:
+    # Pre-CI contract: `docker compose build panel` builds the wrapper locally
+    # and tags it as PANEL_IMAGE. Later CI should publish the same immutable
+    # PANEL_IMAGE reference so the host can skip the local build step.
     image: ${PANEL_IMAGE}
     build:
       context: ../../../..
       dockerfile: deploy/pelican/production/panel/Dockerfile
       args:
         PELICAN_BASE_IMAGE: ${PANEL_BASE_IMAGE}
+    # The upstream image defaults to www-data. We keep the wrapper as root
+    # because it normalizes ownership on bind-mounted host paths before the
+    # upstream services drop to www-data.
     user: "0:0"
     restart: unless-stopped
     depends_on:
@@ -51,6 +57,14 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${PANEL_HOST_PORT}:80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /bin/ash /healthcheck.sh
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 5s
     environment:
       XDG_DATA_HOME: /pelican-data
       APP_NAME: ${APP_NAME}

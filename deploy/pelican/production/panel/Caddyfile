@@ -1,5 +1,7 @@
-# Replace panel.example.com with your real panel FQDN before installing on the host.
-# Keep the upstream target aligned with PANEL_HOST_PORT from /etc/oberyn/pelican/panel.env.
+# Sample output for panel.example.com and PANEL_HOST_PORT=8080.
+# Prefer generating the real host config with:
+#   ./bin/render-caddy-site.sh /etc/oberyn/pelican/panel.env
+# That keeps the site host and reverse_proxy target aligned with panel.env.
 
 panel.example.com {
     encode zstd gzip

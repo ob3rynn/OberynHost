@@ -17,7 +17,9 @@ Use this checklist before enabling the first production node.
 
 - `80/tcp` open for panel HTTPS bootstrap/ACME
 - `443/tcp` open for the public panel
-- Wings public node API and SFTP ports opened only after the live node config defines them
+- Wings node API port from `/etc/pelican/config.yml` opened only after the live node config defines it
+- Wings SFTP port from `/etc/pelican/config.yml` opened only after the live node config defines it
+- customer server allocation ports opened only after those allocations exist in the live panel
 
 ## Private / Local-Only Ports
 
@@ -30,6 +32,7 @@ Use this checklist before enabling the first production node.
 - Docker CE installed and enabled
 - Caddy installed and reloaded successfully
 - Wings binary installed at `/usr/local/bin/wings`
+- Wings binary downloaded from the pinned repo version, not `latest`
 
 ## Host Paths
 
@@ -37,22 +40,25 @@ Use this checklist before enabling the first production node.
 - `/srv/oberyn/pelican/runtime` exists
 - `/srv/oberyn/pelican/logs/panel` exists
 - `/srv/oberyn/pelican/mariadb` exists
-- `/srv/oberyn/pelican/backups` exists
 - `/etc/pelican` exists
 - `/var/run/wings` exists
+- any server-data and backup directories referenced by the live node config exist or will be created by the chosen Wings storage layout
 
 ## Panel Readiness
 
 - production panel stack is running
 - `APP_KEY` backed up from `/srv/oberyn/pelican/runtime/.env`
 - web installer completed
+- panel service restarted once after installer completion so `/installer` is closed
 - first admin created intentionally through the installer
 - `oberynhosttheme` plugin installed and enabled
+- panel reachable through Caddy on the public FQDN
 
 ## Wings Readiness
 
 - first node created in the live panel
 - generated node config copied to `/etc/pelican/config.yml`
+- `/etc/pelican/config.yml` reviewed for `remote`, `api.port`, `system.sftp.bind_port`, and SSL paths
 - SSL certificate for the node hostname provisioned if the panel uses HTTPS
 - `sudo wings --debug` runs cleanly
 - `sudo systemctl enable --now wings` succeeds

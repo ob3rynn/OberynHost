@@ -2,12 +2,26 @@
 
 This path prepares the real Wings installation the production VM will eventually need. Wings is intentionally not containerized here and does not belong in the local-dev panel folder.
 
+For the first real VM deployment, start with [`../FIRST_HOST_RUNBOOK.md`](../FIRST_HOST_RUNBOOK.md). Use this file as the Wings-specific reference behind that linear runbook.
+
 ## Expected Host Paths
 
 - Wings binary: `/usr/local/bin/wings`
 - Wings config: `/etc/pelican/config.yml`
 - Wings runtime directory: `/var/run/wings`
 - systemd unit: `/etc/systemd/system/wings.service`
+
+## Versioning Contract
+
+This repo intentionally pins the Wings binary download instead of following `latest` on the first real host rollout. Pelican's docs allow any `1.0.0+` Wings release with a `1.0.0+` panel, but this repo keeps the host path reproducible by choosing and reviewing a specific binary version.
+
+Current pinned target:
+
+```bash
+WINGS_VERSION=v1.0.0-beta24
+```
+
+When the panel image pin moves, re-check the current Wings release and only bump this value deliberately.
 
 ## Ubuntu 24.04 Runbook
 
@@ -33,7 +47,9 @@ sudo systemctl enable --now docker
 
 ```bash
 sudo mkdir -p /etc/pelican /var/run/wings
-sudo curl -L -o /usr/local/bin/wings "https://github.com/pelican-dev/wings/releases/latest/download/wings_linux_$([[ \"$(uname -m)\" == \"x86_64\" ]] && echo \"amd64\" || echo \"arm64\")"
+WINGS_VERSION=v1.0.0-beta24
+ARCH=$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")
+sudo curl -L -o /usr/local/bin/wings "https://github.com/pelican-dev/wings/releases/download/${WINGS_VERSION}/wings_linux_${ARCH}"
 sudo chmod u+x /usr/local/bin/wings
 ```
 
@@ -45,6 +61,7 @@ After the production panel is installed:
 2. Create the first node.
 3. Open that node’s **Configuration** tab.
 4. Copy the generated config into `/etc/pelican/config.yml`.
+5. Review `api.host`, `api.port`, `system.sftp.bind_port`, `remote`, and any SSL paths before first start.
 
 Do not invent a static config in git. The live panel is the source of truth for node config.
 
@@ -68,7 +85,7 @@ Only continue after Wings starts cleanly with the copied config.
 
 ### 7. Install the systemd unit
 
-Copy [wings.service](/home/oberynn/OberynHost/deploy/pelican/production/wings/wings.service) into place, then:
+Copy [`./wings.service`](./wings.service) into place, then:
 
 ```bash
 sudo systemctl daemon-reload
@@ -77,9 +94,12 @@ sudo systemctl enable --now wings
 
 ## Firewall and Network Notes
 
-- Open the public node API and SFTP ports that the live panel-generated node config expects
+- Open the exact node API port defined by `api.port` in `/etc/pelican/config.yml`
+- Open the exact SFTP port defined by `system.sftp.bind_port` in `/etc/pelican/config.yml`
+- Open customer server allocation ports only after those allocations exist in the live panel
 - Keep Docker’s internal bridge traffic available for Wings
 - Keep the panel’s local-only port, MariaDB, and Redis inaccessible from the public internet
+- If panel and Wings share the same first VM, still treat panel and node hostnames as separate operator inputs (`panel.<domain>` and `node1.<domain>`)
 
 ## Storage Notes
 

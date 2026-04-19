@@ -52,3 +52,7 @@ uploads/
 
 # Monorepo-specific machine-local junk
 apps/storefront/backend/node_modules.windows-backup/
+
+# Pelican production operator files
+deploy/pelican/production/panel/*.env
+!deploy/pelican/production/panel/*.env.example

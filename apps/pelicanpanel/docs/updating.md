@@ -2,7 +2,7 @@
 
 This local dev stack uses manually pinned image versions. Do not casually switch to moving tags such as `main` or `latest`.
 
-Current pins live in [apps/pelicanpanel/.env.example](/home/oberynn/OberynHost/apps/pelicanpanel/.env.example):
+Current pins live in [`../.env.example`](../.env.example):
 
 - `PELICAN_IMAGE`
 - `MARIADB_IMAGE`
@@ -16,7 +16,7 @@ Current pins live in [apps/pelicanpanel/.env.example](/home/oberynn/OberynHost/a
 
 ## Expected Update Flow
 
-1. Edit [apps/pelicanpanel/.env.example](/home/oberynn/OberynHost/apps/pelicanpanel/.env.example).
+1. Edit [`../.env.example`](../.env.example).
 2. Refresh your local `.env` from the new example values.
 3. Test locally with `docker compose up -d`.
 4. Confirm `panel-init` behavior, runtime startup, and local access still work.
@@ -26,3 +26,4 @@ Current pins live in [apps/pelicanpanel/.env.example](/home/oberynn/OberynHost/a
 
 - This directory is still local dev only.
 - Updating these pins does not add Wings, production deployment logic, or storefront integration.
+- If you change [`../../../packages/pelican/oberynhost-theme`](../../../packages/pelican/oberynhost-theme), rerun `docker compose up -d --force-recreate panel-init panel` so the local runtime plugin copy is refreshed and rechecked.

@@ -1,6 +1,6 @@
 # Pelican Production Prep
 
-This path is the repo-owned production source of truth for the first real Pelican rollout. It is intentionally separate from [apps/pelicanpanel](/home/oberynn/OberynHost/apps/pelicanpanel), which remains local-dev-only.
+This path is the repo-owned production source of truth for the first real Pelican rollout. It is intentionally separate from [`../../apps/pelicanpanel`](../../apps/pelicanpanel), which remains a locally bound, production-adjacent stack rather than the real host deployment path.
 
 ## Architecture
 
@@ -20,14 +20,21 @@ This path is the repo-owned production source of truth for the first real Pelica
 
 ## Layout
 
-- [panel](/home/oberynn/OberynHost/deploy/pelican/production/panel): production compose stack, wrapper image, env contract, host Caddy config, and manual deploy guide
-- [wings](/home/oberynn/OberynHost/deploy/pelican/production/wings): host Wings install runbook, systemd unit template, and host checklist
+- [`./FIRST_HOST_RUNBOOK.md`](./FIRST_HOST_RUNBOOK.md): single first-VM rollout checklist with stop/go verification gates
+- [`./panel`](./panel): production compose stack, wrapper image, env contract, host Caddy config, and manual deploy guide
+- [`./wings`](./wings): host Wings install runbook, systemd unit template, and host checklist
+
+## Recommended Starting Point
+
+Use [`./FIRST_HOST_RUNBOOK.md`](./FIRST_HOST_RUNBOOK.md) for the first real VM deployment.
+
+It combines the panel and Wings steps into one operator sequence with explicit verification gates and the required post-installer `panel` restart.
 
 ## Manual Rollout Order
 
 1. Prepare the VM, DNS, firewall, and host directories.
 2. Install Caddy on the host and apply the panel Caddy config.
-3. Build and start the panel stack from [panel/docker-compose.yml](/home/oberynn/OberynHost/deploy/pelican/production/panel/docker-compose.yml).
+3. Build and start the panel stack from [`./panel/docker-compose.yml`](./panel/docker-compose.yml).
 4. Back up `APP_KEY` from the generated runtime `.env`.
 5. Complete the Pelican web installer at `/installer`.
 6. Install and enable the OberynHost plugin.
