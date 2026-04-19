@@ -59,8 +59,6 @@ This repo ships with:
 Run this once on each machine after cloning or copying the repo:
 
 ```bash
-source "$HOME/.nvm/nvm.sh"
-bash scripts/setup-node.sh
 bash scripts/setup-git.sh
 ```
 
@@ -71,4 +69,4 @@ bash scripts/setup-git.sh
 - Before risky changes, commit first.
 - When moving the project to another machine, copy the whole repo including `.git/`.
 - Keep secrets out of Git even though the repo is local-first.
-- Use the setup scripts in [`docs/LOCAL_SETUP.md`](./LOCAL_SETUP.md) when bringing the repo up on a new shell or machine.
+- Use the Docker-first setup in [`docs/LOCAL_SETUP.md`](./LOCAL_SETUP.md) when bringing the storefront up on a new WSL/Linux shell or machine.

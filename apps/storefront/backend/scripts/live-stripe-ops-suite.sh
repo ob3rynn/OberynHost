@@ -2,25 +2,9 @@
 set -euo pipefail
 
 BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_DIR="$(cd "$BACKEND_DIR/.." && pwd)"
 LOG_DIR="$(mktemp -d /tmp/oberynn-stripe-ops.XXXXXX)"
 ACTIVE_PGID=""
 CURRENT_LOG=""
-
-load_node() {
-  if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
-    # shellcheck disable=SC1090
-    source "$HOME/.nvm/nvm.sh"
-    if [[ -f "$REPO_DIR/.nvmrc" ]]; then
-      nvm use --silent "$(cat "$REPO_DIR/.nvmrc")" >/dev/null
-    fi
-  fi
-
-  if ! command -v node >/dev/null 2>&1; then
-    echo "Node is not available on PATH. Run scripts/setup-node.sh first." >&2
-    exit 1
-  fi
-}
 
 cleanup_background() {
   if [[ -n "$ACTIVE_PGID" ]]; then
@@ -28,7 +12,7 @@ cleanup_background() {
       kill "$ACTIVE_PGID" >/dev/null 2>&1 || true
     fi
     pkill -P "$ACTIVE_PGID" >/dev/null 2>&1 || true
-    pkill -f 'node scripts/dev-with-stripe.js|node --watch server.js|node server.js|stripe.exe listen' >/dev/null 2>&1 || true
+    pkill -f 'node scripts/dev-with-stripe.js|node --watch server.js|node server.js|stripe listen' >/dev/null 2>&1 || true
     wait "$ACTIVE_PGID" 2>/dev/null || true
     sleep 1
   fi
@@ -36,7 +20,7 @@ cleanup_background() {
 }
 
 reset_existing_services() {
-  pkill -f 'node scripts/dev-with-stripe.js|node --watch server.js|node server.js|stripe.exe listen' >/dev/null 2>&1 || true
+  pkill -f 'node scripts/dev-with-stripe.js|node --watch server.js|node server.js|stripe listen' >/dev/null 2>&1 || true
 }
 
 wait_for_server() {
@@ -99,7 +83,11 @@ on_exit() {
 
 trap on_exit EXIT
 
-load_node
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "This script must run inside the storefront devtools container." >&2
+  exit 1
+fi
+
 reset_existing_services
 
 echo "Starting backend-only mode for webhook outage drill..."

@@ -4,10 +4,11 @@ Use this checklist any time we change the Stripe SDK version, `STRIPE_API_VERSIO
 
 ## Baseline rules
 
-- Keep the backend dependency pinned exactly in [`apps/storefront/backend/package.json`](../apps/storefront/backend/package.json) and deploy with `npm ci`.
+- Keep the backend dependency pinned exactly in [`apps/storefront/backend/package.json`](../apps/storefront/backend/package.json) and let the Docker build/devtools flow install from the committed lockfile.
 - Keep `STRIPE_API_VERSION` explicit in every environment. The app fails fast if it is missing.
 - Upgrade the app request version and the webhook endpoint version as separate steps.
 - Treat the live sandbox scripts as part of the release gate, not optional smoke tests.
+- Run storefront validation through Docker from the WSL/Linux checkout, not from host `npm` or Windows tooling.
 
 ## Before changing anything
 
@@ -26,18 +27,18 @@ Use this checklist any time we change the Stripe SDK version, `STRIPE_API_VERSIO
 3. Run:
 
 ```bash
-cd apps/storefront/backend
-npm ci
-npm test
+cd ~/OberynHost
+bash scripts/storefront-docker.sh test
 ```
 
 4. Run live sandbox drills from [docs/LOCAL_SETUP.md](./LOCAL_SETUP.md):
 
 ```bash
-cd apps/storefront/backend
-npm run test:stripe:live
-npm run test:stripe:abuse
-npm run test:stripe:ops:all
+cd ~/OberynHost
+bash scripts/storefront-docker.sh stripe:login
+bash scripts/storefront-docker.sh stripe:live
+bash scripts/storefront-docker.sh stripe:abuse
+bash scripts/storefront-docker.sh stripe:ops
 ```
 
 5. Verify these outcomes:
@@ -76,3 +77,4 @@ npm run test:stripe:ops:all
 - Most automated tests mock Stripe in [`apps/storefront/backend/test/helpers/testApp.js`](../apps/storefront/backend/test/helpers/testApp.js), so unit tests protect our state transitions more than Stripe response compatibility.
 - The live sandbox scripts are what catch real hosted checkout and webhook behavior changes.
 - The admin reconcile endpoint provides an operational fallback when webhooks are delayed or missed.
+- The supported storefront release-gate workflow is Docker-only through [`scripts/storefront-docker.sh`](../scripts/storefront-docker.sh).

@@ -24,10 +24,7 @@ const REQUIRED_ENV_NAMES = [
     "ADMIN_KEY",
     "STRIPE_SECRET_KEY",
     "STRIPE_API_VERSION",
-    "STRIPE_WEBHOOK_SECRET"
-];
-
-const RECOMMENDED_ENV_NAMES = [
+    "STRIPE_WEBHOOK_SECRET",
     "STRIPE_PRICE_2GB",
     "STRIPE_PRICE_4GB"
 ];
@@ -141,6 +138,50 @@ function resolveDatabasePath() {
         : path.resolve(BACKEND_ROOT, configuredDatabasePath);
 }
 
+function inspectDatabasePath(databasePath) {
+    const databaseDirectory = path.dirname(databasePath);
+
+    if (fs.existsSync(databasePath) && fs.statSync(databasePath).isDirectory()) {
+        return {
+            level: "fail",
+            summary: "DATABASE_PATH points to a directory, not a SQLite file",
+            details: databasePath
+        };
+    }
+
+    if (!fs.existsSync(databaseDirectory)) {
+        return {
+            level: "fail",
+            summary: "SQLite database directory does not exist",
+            details: databaseDirectory
+        };
+    }
+
+    if (!fs.statSync(databaseDirectory).isDirectory()) {
+        return {
+            level: "fail",
+            summary: "SQLite database parent path is not a directory",
+            details: databaseDirectory
+        };
+    }
+
+    try {
+        fs.accessSync(databaseDirectory, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (err) {
+        return {
+            level: "fail",
+            summary: "SQLite database directory is not readable and writable",
+            details: `${databaseDirectory}: ${err.message}`
+        };
+    }
+
+    return {
+        level: "pass",
+        summary: "SQLite database directory is readable and writable",
+        details: databaseDirectory
+    };
+}
+
 function openReadOnlyDatabase(databasePath) {
     return new Promise((resolve, reject) => {
         const database = new sqlite3.Database(
@@ -211,7 +252,7 @@ function walkJavaScriptFiles(rootPath, files = []) {
     const entries = fs.readdirSync(rootPath, { withFileTypes: true });
 
     for (const entry of entries) {
-        if (entry.name === "node_modules" || entry.name === "node_modules.windows-backup") {
+        if (entry.name === "node_modules") {
             continue;
         }
 
@@ -280,18 +321,13 @@ async function buildConfigAuditReport() {
     }
 
     const missingEnv = REQUIRED_ENV_NAMES.filter(name => !(process.env[name] || "").trim());
-    const missingRecommendedEnv = RECOMMENDED_ENV_NAMES.filter(name => !(process.env[name] || "").trim());
-    const placeholderEnv = [...REQUIRED_ENV_NAMES, ...RECOMMENDED_ENV_NAMES]
+    const placeholderEnv = REQUIRED_ENV_NAMES
         .filter(name => maskablePlaceholder((process.env[name] || "").trim()));
 
     if (missingEnv.length === 0) {
-        addResult(report, "config", "pass", "Required Stripe and admin environment variables are present");
+        addResult(report, "config", "pass", "Required Stripe, admin, and pricing environment variables are present");
     } else {
         addResult(report, "config", "fail", "Required environment variables are missing", missingEnv.join(", "));
-    }
-
-    if (missingRecommendedEnv.length > 0) {
-        addResult(report, "config", "warn", "Some recommended environment variables are relying on code defaults", missingRecommendedEnv.join(", "));
     }
 
     if (placeholderEnv.length > 0) {
@@ -312,6 +348,58 @@ async function buildConfigAuditReport() {
             addResult(report, "config", "fail", "BASE_URL is not a valid absolute URL", baseUrl);
         }
     }
+
+    const rawAllowedOrigins = (process.env.ALLOWED_ORIGINS || "").trim();
+    if (rawAllowedOrigins) {
+        try {
+            const normalizedOrigins = rawAllowedOrigins
+                .split(",")
+                .map(origin => origin.trim())
+                .filter(Boolean)
+                .map(origin => new URL(origin).origin);
+            addResult(
+                report,
+                "config",
+                "pass",
+                "ALLOWED_ORIGINS entries are valid absolute URLs",
+                normalizedOrigins.join(", ")
+            );
+        } catch {
+            addResult(
+                report,
+                "config",
+                "fail",
+                "ALLOWED_ORIGINS contains an invalid absolute URL",
+                rawAllowedOrigins
+            );
+        }
+    } else {
+        addResult(
+            report,
+            "config",
+            "info",
+            "ALLOWED_ORIGINS is unset, so only BASE_URL origin is allowed for state-changing requests"
+        );
+    }
+
+    const databasePath = resolveDatabasePath();
+    addResult(
+        report,
+        "database",
+        process.env.DATABASE_PATH ? "pass" : "info",
+        process.env.DATABASE_PATH
+            ? "DATABASE_PATH is set explicitly"
+            : "DATABASE_PATH is unset and will default to backend/data.db",
+        databasePath
+    );
+    const databasePathInspection = inspectDatabasePath(databasePath);
+    addResult(
+        report,
+        "database",
+        databasePathInspection.level,
+        databasePathInspection.summary,
+        databasePathInspection.details
+    );
 
     const stripeApiVersion = (process.env.STRIPE_API_VERSION || "").trim();
 

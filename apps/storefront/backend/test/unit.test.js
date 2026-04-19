@@ -79,11 +79,13 @@ test("relative DATABASE_PATH resolves from the backend directory, not cwd", asyn
     const relativeToBackend = path.relative(BACKEND_ROOT, databaseFile);
     const previousCwd = process.cwd();
     const previousDatabasePath = process.env.DATABASE_PATH;
+    const previousNodeEnv = process.env.NODE_ENV;
     const dbModulePath = require.resolve("../db");
 
     delete require.cache[dbModulePath];
 
     process.env.DATABASE_PATH = relativeToBackend;
+    process.env.NODE_ENV = "test";
     process.chdir(os.tmpdir());
 
     const db = require("../db");
@@ -118,10 +120,52 @@ test("relative DATABASE_PATH resolves from the backend directory, not cwd", asyn
         process.env.DATABASE_PATH = previousDatabasePath;
     }
 
+    if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+    } else {
+        process.env.NODE_ENV = previousNodeEnv;
+    }
+
     delete require.cache[dbModulePath];
 
     assert.equal(fs.existsSync(databaseFile), true);
     fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("DATABASE_PATH fails fast when the parent directory does not exist", () => {
+    const missingDatabaseFile = path.join(
+        os.tmpdir(),
+        `oberynn-db-missing-${Date.now()}`,
+        "nested",
+        "missing.db"
+    );
+    const relativeToBackend = path.relative(BACKEND_ROOT, missingDatabaseFile);
+    const previousDatabasePath = process.env.DATABASE_PATH;
+    const previousNodeEnv = process.env.NODE_ENV;
+    const dbModulePath = require.resolve("../db");
+
+    delete require.cache[dbModulePath];
+    process.env.DATABASE_PATH = relativeToBackend;
+    process.env.NODE_ENV = "test";
+
+    assert.throws(
+        () => require("../db"),
+        /SQLite database directory does not exist/
+    );
+
+    if (previousDatabasePath === undefined) {
+        delete process.env.DATABASE_PATH;
+    } else {
+        process.env.DATABASE_PATH = previousDatabasePath;
+    }
+
+    if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+    } else {
+        process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    delete require.cache[dbModulePath];
 });
 
 test("policy rules compute refund, grace, suspension, and purge windows", () => {

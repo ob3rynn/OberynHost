@@ -13,7 +13,8 @@ const parsedEnv = fs.existsSync(envPath)
 const baseUrl = (process.env.BASE_URL || parsedEnv.BASE_URL || "").trim();
 
 if (!baseUrl) {
-    console.error("BASE_URL is required in backend/.env to start Stripe forwarding.");
+    console.error("BASE_URL is required in backend/.env to start local Stripe forwarding.");
+    console.error("This helper is development-only. Container and production runtimes must inject STRIPE_WEBHOOK_SECRET directly.");
     process.exit(1);
 }
 
@@ -55,8 +56,8 @@ function resolveStripeCommand() {
     }
 
     const lookup = spawnSync(
-        "bash",
-        ["-lc", "command -v stripe || command -v stripe.exe"],
+        "sh",
+        ["-lc", "command -v stripe"],
         { encoding: "utf8" }
     );
 
@@ -100,7 +101,7 @@ function startServer() {
         stdio: "inherit"
     });
 
-    console.log(`Starting backend with forwarded webhook secret for ${webhookUrl}`);
+    console.log(`Starting backend with a temporary development webhook secret for ${webhookUrl}`);
 
     serverProcess.on("exit", code => {
         if (!shuttingDown) {
@@ -119,7 +120,7 @@ function handleStripeOutput(chunk) {
 
     if (match) {
         stripeSecret = match[1];
-        console.log("Captured Stripe webhook signing secret from local listener.");
+        console.log("Captured a temporary Stripe webhook signing secret from the local listener.");
         startServer();
     }
 }
@@ -137,6 +138,7 @@ stripeProcess.on("error", err => {
     if (err.code === "ENOENT") {
         console.error("Stripe CLI is not installed or not on PATH.");
         console.error(`Run this manually once installed: stripe listen --forward-to ${webhookUrl}`);
+        console.error("Use this only for local development inside the storefront devtools container.");
     } else {
         console.error("Failed to start Stripe listener:", err.message);
     }

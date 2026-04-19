@@ -15,11 +15,11 @@ These commands are intended to be safe and read-only for routine use:
 ```bash
 bash scripts/run-read-only-audits.sh
 bash scripts/run-update-review.sh
-cd apps/storefront/backend && npm run audit:config
-cd apps/storefront/backend && npm run audit:runtime
-cd apps/storefront/backend && npm run audit:read-only
-cd apps/storefront/backend && npm run audit:updates
-cd apps/storefront/backend && node scripts/audit-read-only.js --json
+bash scripts/storefront-docker.sh audit:config
+bash scripts/storefront-docker.sh audit:runtime
+bash scripts/storefront-docker.sh audit:read-only
+bash scripts/storefront-docker.sh audit:updates
+bash scripts/storefront-docker.sh audit:read-only --json
 git status --short
 git log --oneline -n 20
 ```
@@ -49,7 +49,7 @@ Codex must not do any of the following unless a human explicitly asks for that e
 ## Expected audit workflow
 
 1. Run `bash scripts/run-read-only-audits.sh`.
-2. Run `cd apps/storefront/backend && npm run audit:updates` to inventory dependency updates.
+2. Run `bash scripts/storefront-docker.sh audit:updates` to inventory dependency updates.
 3. For each update candidate, browse official changelogs, release notes, migration guides, and security advisories before recommending action.
 4. Use [docs/CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md](./CODEX_UPDATE_RECOMMENDATION_TEMPLATE.md) for the final human-facing answer.
 5. Summarize findings under four buckets:
@@ -86,4 +86,5 @@ Each audit report should include:
 
 - The runtime audit opens the SQLite database in read-only mode.
 - The audit scripts do not call Stripe, mutate the database, or write files.
-- For machine-readable output, use `node scripts/audit-read-only.js --json`.
+- The supported storefront audit path is Docker-only and assumes the repo is checked out on the native WSL/Linux filesystem.
+- For machine-readable output, use `bash scripts/storefront-docker.sh audit:read-only --json`.

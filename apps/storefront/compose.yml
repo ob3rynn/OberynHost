@@ -1,0 +1,70 @@
+services:
+  storefront:
+    image: oberynhost-storefront:runtime-local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - ./backend/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_PATH: /var/lib/oberynhost/storefront/storefront.sqlite3
+    ports:
+      - "127.0.0.1:${STOREFRONT_PUBLISHED_PORT:-3000}:3000"
+    volumes:
+      - storefront_data:/var/lib/oberynhost/storefront
+    restart: unless-stopped
+
+  storefront-dev:
+    image: oberynhost-storefront:devtools-local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: devtools
+    env_file:
+      - ./backend/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      BASE_URL: ${STOREFRONT_DEV_BASE_URL:-http://127.0.0.1:3000}
+      ALLOWED_ORIGINS: ${STOREFRONT_DEV_ALLOWED_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
+      DATABASE_PATH: /workspace/state/storefront.sqlite3
+    ports:
+      - "127.0.0.1:${STOREFRONT_DEV_PUBLISHED_PORT:-3000}:3000"
+    volumes:
+      - .:/workspace/apps/storefront
+      - storefront_dev_data:/workspace/state
+      - storefront_backend_node_modules:/workspace/apps/storefront/backend/node_modules
+      - storefront_stripe_config:/root/.config/stripe
+    command: ["npm", "run", "dev:server"]
+
+  storefront-stripe-dev:
+    image: oberynhost-storefront:devtools-local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: devtools
+    env_file:
+      - ./backend/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      BASE_URL: ${STOREFRONT_STRIPE_DEV_BASE_URL:-http://127.0.0.1:3000}
+      ALLOWED_ORIGINS: ${STOREFRONT_STRIPE_DEV_ALLOWED_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
+      DATABASE_PATH: /workspace/state/storefront.sqlite3
+    ports:
+      - "127.0.0.1:${STOREFRONT_STRIPE_DEV_PUBLISHED_PORT:-3000}:3000"
+    volumes:
+      - .:/workspace/apps/storefront
+      - storefront_dev_data:/workspace/state
+      - storefront_backend_node_modules:/workspace/apps/storefront/backend/node_modules
+      - storefront_stripe_config:/root/.config/stripe
+    command: ["npm", "run", "dev"]
+
+volumes:
+  storefront_data:
+  storefront_dev_data:
+  storefront_backend_node_modules:
+  storefront_stripe_config:

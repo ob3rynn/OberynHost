@@ -3,7 +3,6 @@
 **/.DS_Store
 **/Thumbs.db
 apps/storefront/backend/node_modules
-apps/storefront/backend/node_modules.windows-backup
 apps/storefront/backend/data.db
 apps/pelicanpanel/.data
 apps/pelicanpanel/.env
