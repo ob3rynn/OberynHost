@@ -8,7 +8,27 @@ const { parseCookies, serializeCookie, clearCookie } = require("../utils/cookies
 const { generateOpaqueToken, isOpaqueToken, timingSafeEqualString } = require("../utils/tokens");
 const { createRateLimiter } = require("../middleware/rateLimit");
 const { getPurchasePolicyState } = require("../services/policyRules");
+const {
+    buildRuntimeConfig,
+    findPlaceholderEnvNames
+} = require("../config/validation");
 const BACKEND_ROOT = path.resolve(__dirname, "..");
+
+function createRuntimeEnv(overrides = {}) {
+    return {
+        PORT: "3000",
+        HOST: "0.0.0.0",
+        BASE_URL: "http://127.0.0.1:3000",
+        ALLOWED_ORIGINS: "http://localhost:3000",
+        ADMIN_KEY: "test-admin-key",
+        STRIPE_SECRET_KEY: "sk_test_live_123456",
+        STRIPE_API_VERSION: "2026-02-25.clover",
+        STRIPE_WEBHOOK_SECRET: "whsec_live_123456",
+        STRIPE_PRICE_2GB: "price_live_2gb",
+        STRIPE_PRICE_4GB: "price_live_4gb",
+        ...overrides
+    };
+}
 
 test("cookie helpers parse, serialize, and clear cookies", () => {
     const header = serializeCookie("session", "abc 123", {
@@ -71,6 +91,52 @@ test("rate limiter blocks requests after the configured threshold", () => {
     assert.equal(responses[0].statusCode, 429);
     assert.equal(responses[0].payload.error, "Too many requests");
     assert.ok(Number(responses[0].headers["Retry-After"]) >= 1);
+});
+
+test("runtime config accepts localhost base and allowed origins", () => {
+    const config = buildRuntimeConfig(createRuntimeEnv());
+
+    assert.equal(config.baseUrl, "http://127.0.0.1:3000");
+    assert.deepEqual(config.allowedOrigins, [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000"
+    ]);
+    assert.equal(config.secureCookies, false);
+});
+
+test("runtime config rejects shipped placeholder values", () => {
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            BASE_URL: "https://storefront.example.com",
+            ADMIN_KEY: "replace-with-a-long-random-secret",
+            STRIPE_SECRET_KEY: "sk_test_replace_me",
+            STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
+            STRIPE_PRICE_2GB: "price_replace_me",
+            STRIPE_PRICE_4GB: "price_replace_me"
+        })),
+        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_2GB, STRIPE_PRICE_4GB/
+    );
+});
+
+test("placeholder detection flags example-domain allowed origins", () => {
+    assert.deepEqual(
+        findPlaceholderEnvNames(createRuntimeEnv({
+            ALLOWED_ORIGINS: "https://storefront.example.com, http://localhost:3000"
+        })),
+        ["ALLOWED_ORIGINS"]
+    );
+});
+
+test("runtime config preserves existing PORT and ALLOWED_ORIGINS validation", () => {
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({ PORT: "0" })),
+        /PORT must be an integer between 1 and 65535/
+    );
+
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({ ALLOWED_ORIGINS: "not-a-url" })),
+        /ALLOWED_ORIGINS must be a valid absolute URL/
+    );
 });
 
 test("relative DATABASE_PATH resolves from the backend directory, not cwd", async () => {

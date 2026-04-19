@@ -54,6 +54,8 @@ services:
       BASE_URL: ${STOREFRONT_STRIPE_DEV_BASE_URL:-http://127.0.0.1:3000}
       ALLOWED_ORIGINS: ${STOREFRONT_STRIPE_DEV_ALLOWED_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
       DATABASE_PATH: /workspace/state/storefront.sqlite3
+      # The Stripe helper owns webhook-secret injection for the backend child process.
+      STRIPE_WEBHOOK_SECRET: ""
     ports:
       - "127.0.0.1:${STOREFRONT_STRIPE_DEV_PUBLISHED_PORT:-3000}:3000"
     volumes:

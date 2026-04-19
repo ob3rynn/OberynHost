@@ -3,6 +3,10 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const sqlite3 = require("sqlite3").verbose();
 const dotenv = require("dotenv");
+const {
+    REQUIRED_RUNTIME_ENV_NAMES,
+    findPlaceholderEnvNames
+} = require("../../config/validation");
 
 const {
     ACTIVE_SUBSCRIPTION_STATUSES,
@@ -18,16 +22,6 @@ const PACKAGE_LOCK_PATH = path.join(BACKEND_ROOT, "package-lock.json");
 const ENV_PATH = path.join(BACKEND_ROOT, ".env");
 const NVMRC_PATH = path.join(REPO_ROOT, ".nvmrc");
 const SHARED_STRIPE_CLIENT_PATH = path.join(BACKEND_ROOT, "lib", "stripeClient.js");
-
-const REQUIRED_ENV_NAMES = [
-    "BASE_URL",
-    "ADMIN_KEY",
-    "STRIPE_SECRET_KEY",
-    "STRIPE_API_VERSION",
-    "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_PRICE_2GB",
-    "STRIPE_PRICE_4GB"
-];
 
 const AUDIT_SCRIPT_SUFFIXES = new Set([
     path.join("scripts", "audit-config.js"),
@@ -296,10 +290,6 @@ function findRawStripeClients() {
     return offenders.sort();
 }
 
-function maskablePlaceholder(value) {
-    return typeof value === "string" && /replace_me|price_replace_me|your-domain\.example/i.test(value);
-}
-
 async function buildConfigAuditReport() {
     loadLocalEnv();
 
@@ -320,9 +310,8 @@ async function buildConfigAuditReport() {
         addResult(report, "runtime", "info", "No .nvmrc version was found");
     }
 
-    const missingEnv = REQUIRED_ENV_NAMES.filter(name => !(process.env[name] || "").trim());
-    const placeholderEnv = REQUIRED_ENV_NAMES
-        .filter(name => maskablePlaceholder((process.env[name] || "").trim()));
+    const missingEnv = REQUIRED_RUNTIME_ENV_NAMES.filter(name => !(process.env[name] || "").trim());
+    const placeholderEnv = findPlaceholderEnvNames(process.env);
 
     if (missingEnv.length === 0) {
         addResult(report, "config", "pass", "Required Stripe, admin, and pricing environment variables are present");

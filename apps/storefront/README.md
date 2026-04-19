@@ -59,27 +59,17 @@ Runtime persistence contract:
 - admin sessions and in-memory rate limiting remain ephemeral across restart
 
 ## Environment contract
-Required env values still live in [`backend/.env`](./backend/.env):
+`backend/.env` is the operator-facing source file for Compose `env_file` injection.
+The backend server does not load `backend/.env` at runtime.
 
-- `BASE_URL`
-- `ADMIN_KEY`
-- `STRIPE_SECRET_KEY`
-- `STRIPE_API_VERSION`
-- `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PRICE_2GB`
-- `STRIPE_PRICE_4GB`
+Important source-of-truth rules:
 
-Optional runtime overrides:
-
-- `PORT`
-- `HOST`
-- `ALLOWED_ORIGINS`
-- `DATABASE_PATH`
-
-Important Docker nuance:
-
-- the production-like `storefront` service uses `backend/.env` as-is
-- the dev services intentionally override `BASE_URL` and `ALLOWED_ORIGINS` to local Docker-safe values unless you set the `STOREFRONT_DEV_*` overrides in your shell
+- Compose injects runtime env into the containers
+- `backend/.env` feeds container env through `env_file`; it does not drive `${...}` Compose interpolation
+- `apps/storefront/.dockerignore` excludes `backend/.env`, so the file is not copied into the built runtime image
+- shell `STOREFRONT_*` variables control Compose interpolation for dev-only overrides
+- `STOREFRONT_*_PUBLISHED_PORT` changes only the host bind port; the app still runs with `PORT=3000` inside the container
+- placeholders from [`backend/.env.example`](./backend/.env.example) are intentionally rejected at startup and by the config audit
 
 Create the env file once from WSL:
 
@@ -87,6 +77,39 @@ Create the env file once from WSL:
 cd ~/OberynHost
 cp apps/storefront/backend/.env.example apps/storefront/backend/.env
 ```
+
+### Per-service precedence
+
+| Variable | `storefront` | `storefront-dev` | `storefront-stripe-dev` |
+| --- | --- | --- | --- |
+| `BASE_URL` | `backend/.env` via `env_file` | Compose `environment`, interpolated from `STOREFRONT_DEV_BASE_URL` or default | Compose `environment`, interpolated from `STOREFRONT_STRIPE_DEV_BASE_URL` or default |
+| `ALLOWED_ORIGINS` | `backend/.env` via `env_file` | Compose `environment`, interpolated from `STOREFRONT_DEV_ALLOWED_ORIGINS` or default | Compose `environment`, interpolated from `STOREFRONT_STRIPE_DEV_ALLOWED_ORIGINS` or default |
+| `HOST` | Compose `environment` (`0.0.0.0`) | Compose `environment` (`0.0.0.0`) | Compose `environment` (`0.0.0.0`) |
+| `PORT` | Compose `environment` (`3000`) | Compose `environment` (`3000`) | Compose `environment` (`3000`) |
+| `DATABASE_PATH` | Compose `environment` (`/var/lib/oberynhost/storefront/storefront.sqlite3`) | Compose `environment` (`/workspace/state/storefront.sqlite3`) | Compose `environment` (`/workspace/state/storefront.sqlite3`) |
+| `ADMIN_KEY` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
+| `STRIPE_SECRET_KEY` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
+| `STRIPE_API_VERSION` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
+| `STRIPE_WEBHOOK_SECRET` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | blank in Compose for the helper process; the helper injects a temporary secret only into the backend child process |
+| `STRIPE_PRICE_2GB` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
+| `STRIPE_PRICE_4GB` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
+
+Notes:
+
+- `storefront-dev` and `storefront-stripe-dev` intentionally override `BASE_URL` and `ALLOWED_ORIGINS` so local Docker access stays on localhost-safe values by default
+- if you export `STOREFRONT_DEV_*` or `STOREFRONT_STRIPE_DEV_*` in your shell before `docker compose`, those shell values win for the matching dev service
+- `HOST`, `PORT`, and `DATABASE_PATH` values in `backend/.env.example` are only for unsupported non-Docker starts or ad hoc local experiments
+
+### What must be real before startup
+
+Replace these example values before treating the storefront as runnable:
+
+- `BASE_URL=https://storefront.example.com`
+- `ADMIN_KEY=replace-with-a-long-random-secret`
+- `STRIPE_SECRET_KEY=sk_test_replace_me`
+- `STRIPE_WEBHOOK_SECRET=whsec_replace_me`
+- `STRIPE_PRICE_2GB=price_replace_me`
+- `STRIPE_PRICE_4GB=price_replace_me`
 
 ## Supported commands
 Use the wrapper from the repo root:
@@ -142,7 +165,8 @@ How these behave:
 Local Stripe development is still intentionally separate from the production/container runtime contract:
 
 - `storefront-stripe-dev` uses the development-only helper in [`backend/scripts/dev-with-stripe.js`](./backend/scripts/dev-with-stripe.js)
-- the helper listens with Stripe CLI, captures a temporary webhook signing secret, and injects it into the backend process inside the container
+- the helper process starts with `STRIPE_WEBHOOK_SECRET` intentionally blank in Compose
+- the helper listens with Stripe CLI, captures a temporary webhook signing secret, and injects it only into the backend child process inside the container
 - the production-like `storefront` service still requires a real injected `STRIPE_WEBHOOK_SECRET`
 
 Run Docker-only Stripe auth first:

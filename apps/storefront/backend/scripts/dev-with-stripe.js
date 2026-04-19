@@ -6,6 +6,8 @@ const dotenv = require("dotenv");
 const projectRoot = path.join(__dirname, "..");
 const envPath = path.join(projectRoot, ".env");
 
+// This helper is intentionally dev-only. It can read backend/.env for BASE_URL so
+// the backend runtime itself does not need to load dotenv at startup.
 const parsedEnv = fs.existsSync(envPath)
     ? dotenv.parse(fs.readFileSync(envPath))
     : {};
@@ -13,8 +15,8 @@ const parsedEnv = fs.existsSync(envPath)
 const baseUrl = (process.env.BASE_URL || parsedEnv.BASE_URL || "").trim();
 
 if (!baseUrl) {
-    console.error("BASE_URL is required in backend/.env to start local Stripe forwarding.");
-    console.error("This helper is development-only. Container and production runtimes must inject STRIPE_WEBHOOK_SECRET directly.");
+    console.error("BASE_URL must be available through the environment or backend/.env to start local Stripe forwarding.");
+    console.error("This helper is development-only. The backend runtime does not read backend/.env at startup.");
     process.exit(1);
 }
 
