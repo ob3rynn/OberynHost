@@ -36,11 +36,10 @@ test("plans api returns seeded inventory counts", async t => {
     const plans = await res.json();
     const byType = Object.fromEntries(plans.map(plan => [plan.type, plan]));
 
-    assert.equal(byType["2GB"].available, 20);
-    assert.equal(byType["4GB"].available, 2);
-    assert.match(byType["2GB"].features.join(" "), /Paper server software/);
+    assert.equal(byType["3GB"].available, 25);
+    assert.match(byType["3GB"].features.join(" "), /Paper server software/);
 
-    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "4GB"]);
+    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "3GB"]);
 
     const soldOutRes = await app.request("/api/plans");
     assert.equal(soldOutRes.status, 200);
@@ -48,8 +47,8 @@ test("plans api returns seeded inventory counts", async t => {
     const soldOutPlans = await soldOutRes.json();
     const soldOutByType = Object.fromEntries(soldOutPlans.map(plan => [plan.type, plan]));
 
-    assert.equal(soldOutByType["4GB"].available, 0);
-    assert.equal(soldOutByType["4GB"].price, 31.98);
+    assert.equal(soldOutByType["3GB"].available, 0);
+    assert.equal(soldOutByType["3GB"].price, 11.98);
 });
 
 test("checkout creates a pending purchase, reserves inventory, and sets setup cookie", async t => {
@@ -68,7 +67,7 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
 
     assert.equal(res.status, 200);
@@ -76,7 +75,7 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
     assert.equal(payload.url, "https://checkout.stripe.test/success");
     assert.match(app.parseSetCookie(res), /setup_session=/);
     assert.equal(app.stripeState.lastCreatedSessionParams.mode, "subscription");
-    assert.equal(app.stripeState.lastCreatedSessionParams.line_items[0].price, "price_test_2gb");
+    assert.equal(app.stripeState.lastCreatedSessionParams.line_items[0].price, "price_test_3gb");
     assert.ok(app.stripeState.constructors.length > 0);
     assert.ok(app.stripeState.constructors.every(({ options }) => options?.apiVersion === "2026-02-25.clover"));
 
@@ -112,7 +111,7 @@ test("resume checkout endpoint surfaces an open pending checkout for the same br
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     const setupCookie = app.parseSetCookie(checkoutRes);
 
@@ -123,7 +122,7 @@ test("resume checkout endpoint surfaces an open pending checkout for the same br
 
     const resumeData = await resumeRes.json();
     assert.equal(resumeData.resumable, true);
-    assert.equal(resumeData.planType, "2GB");
+    assert.equal(resumeData.planType, "3GB");
     assert.equal(resumeData.url, "https://checkout.stripe.test/resume-visible");
 });
 
@@ -154,7 +153,7 @@ test("retrying the same server resumes the existing checkout instead of reservin
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     const setupCookie = app.parseSetCookie(firstRes);
 
@@ -165,7 +164,7 @@ test("retrying the same server resumes the existing checkout instead of reservin
             origin: app.baseUrl,
             cookie: setupCookie
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     assert.equal(secondRes.status, 200);
 
@@ -179,63 +178,6 @@ test("retrying the same server resumes the existing checkout instead of reservin
 
     const heldServers = await getQuery("SELECT COUNT(*) AS count FROM servers WHERE status = ?", ["held"]);
     assert.equal(heldServers.count, 1);
-});
-
-test("retrying with a different server type offers the existing checkout instead of taking a second hold", async t => {
-    let createCount = 0;
-    const app = await createTestApp(t, {
-        stripe: {
-            createSession: async () => {
-                createCount += 1;
-                return {
-                    id: "cs_test_resume_conflict",
-                    url: "https://checkout.stripe.test/resume-conflict"
-                };
-            },
-            retrieveSession: async id => ({
-                id,
-                status: "open",
-                payment_status: "unpaid",
-                url: "https://checkout.stripe.test/resume-conflict"
-            })
-        }
-    });
-    const { getQuery } = app.queries;
-
-    const firstRes = await app.request("/api/create-checkout", {
-        method: "POST",
-        headers: {
-            "content-type": "application/json",
-            origin: app.baseUrl
-        },
-        body: JSON.stringify({ planType: "2GB" })
-    });
-    const setupCookie = app.parseSetCookie(firstRes);
-
-    const secondRes = await app.request("/api/create-checkout", {
-        method: "POST",
-        headers: {
-            "content-type": "application/json",
-            origin: app.baseUrl,
-            cookie: setupCookie
-        },
-        body: JSON.stringify({ planType: "4GB" })
-    });
-    assert.equal(secondRes.status, 409);
-
-    const secondData = await secondRes.json();
-    assert.equal(secondData.existingPlanType, "2GB");
-    assert.equal(secondData.resumeUrl, "https://checkout.stripe.test/resume-conflict");
-    assert.equal(createCount, 1);
-
-    const purchaseCount = await getQuery("SELECT COUNT(*) AS count FROM purchases");
-    assert.equal(purchaseCount.count, 1);
-
-    const held4Gb = await getQuery(
-        "SELECT COUNT(*) AS count FROM servers WHERE type = ? AND status = ?",
-        ["4GB", "held"]
-    );
-    assert.equal(held4Gb.count, 0);
 });
 
 test("checkout rejects invalid plan types and foreign origins", async t => {
@@ -258,18 +200,18 @@ test("checkout rejects invalid plan types and foreign origins", async t => {
             "content-type": "application/json",
             origin: "https://evil.example"
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     assert.equal(foreignOrigin.status, 403);
 
-    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "4GB"]);
+    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "3GB"]);
     const soldOut = await app.request("/api/create-checkout", {
         method: "POST",
         headers: {
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "4GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     assert.equal(soldOut.status, 400);
 });
@@ -290,7 +232,7 @@ test("checkout failure cleans up held inventory and cancels the purchase", async
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "4GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
 
     assert.equal(res.status, 500);
@@ -309,7 +251,7 @@ test("checkout failure cleans up held inventory and cancels the purchase", async
 
     const heldServer = await getQuery(
         "SELECT id, status FROM servers WHERE type = ? AND status = ? LIMIT 1",
-        ["4GB", "held"]
+        ["3GB", "held"]
     );
     assert.equal(heldServer || null, null);
 });
@@ -331,7 +273,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
                     data: [
                         {
                             current_period_end: 1_900_000_000,
-                            price: { id: "price_test_2gb" }
+                            price: { id: "price_test_3gb" }
                         }
                     ]
                 }
@@ -346,7 +288,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     const setupCookie = app.parseSetCookie(checkoutRes);
 
@@ -362,7 +304,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
                 metadata: {
                     purchaseId: String(purchase.id),
                     serverId: String(purchase.serverId),
-                    planType: "2GB"
+                    planType: "3GB"
                 },
                 subscription: "sub_test_paid_flow",
                 customer: "cus_test_paid_flow",
@@ -390,7 +332,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
     assert.equal(paidPurchase.stripeCustomerId, "cus_test_paid_flow");
     assert.equal(paidPurchase.stripeSubscriptionStatus, "active");
     assert.equal(paidPurchase.stripeCurrentPeriodEnd, 1_900_000_000_000);
-    assert.equal(paidPurchase.stripePriceId, "price_test_2gb");
+    assert.equal(paidPurchase.stripePriceId, "price_test_3gb");
 
     const statusRes = await app.request("/api/setup-status", {
         method: "POST",
@@ -427,7 +369,7 @@ test("setup status can recover a paid purchase from Stripe session id when the s
                 metadata: {
                     purchaseId: "1",
                     serverId: "1",
-                    planType: "2GB"
+                    planType: "3GB"
                 }
             }),
             retrieveSubscription: async id => ({
@@ -439,7 +381,7 @@ test("setup status can recover a paid purchase from Stripe session id when the s
                     data: [
                         {
                             current_period_end: 1_900_000_100,
-                            price: { id: "price_test_2gb" }
+                            price: { id: "price_test_3gb" }
                         }
                     ]
                 }
@@ -454,7 +396,7 @@ test("setup status can recover a paid purchase from Stripe session id when the s
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "2GB" })
+        body: JSON.stringify({ planType: "3GB" })
     });
     assert.equal(checkoutRes.status, 200);
 
@@ -575,6 +517,218 @@ test("setup can only be submitted once through the customer flow", async t => {
     assert.equal(secondComplete.status, 400);
 });
 
+test("setup submission queues provisioning work on the same purchase", async t => {
+    const app = await createTestApp(t);
+    const { getQuery, runQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "queued@example.com",
+            "",
+            "paid",
+            Date.now(),
+            "setup_token_queue_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    const res = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_queue_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ serverName: "Queued Server" })
+    });
+    assert.equal(res.status, 200);
+
+    const purchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            lastStateOwner,
+            hostnameReservedAt
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.fulfillmentStatus, "queued");
+    assert.equal(purchase.lastStateOwner, "web_app");
+    assert.ok(Number(purchase.hostnameReservedAt) > 0);
+
+    const job = await getQuery(
+        `SELECT
+            taskType,
+            state,
+            idempotencyKey,
+            payloadJson
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.equal(job.taskType, "provision_initial_server");
+    assert.equal(job.state, "queued");
+    assert.equal(job.idempotencyKey, "purchase:1:task:provision_initial_server");
+    assert.match(job.payloadJson, /Queued Server/);
+});
+
+test("fulfillment worker leases queued setup work and escalates it to admin review", async t => {
+    const app = await createTestApp(t);
+    const { getQuery, runQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 2`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "worker@example.com",
+            "",
+            "paid",
+            Date.now(),
+            "setup_token_worker_queue_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    const setupRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_worker_queue_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ serverName: "Worker Queue Server" })
+    });
+    assert.equal(setupRes.status, 200);
+
+    const { runFulfillmentWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runFulfillmentWorkerIteration();
+
+    assert.equal(iteration.outcome, "needs_admin_review");
+    assert.equal(iteration.purchaseId, 1);
+
+    const purchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            fulfillmentFailureClass,
+            needsAdminReviewReason,
+            workerLeaseKey,
+            workerLeaseExpiresAt,
+            provisioningAttemptCount,
+            lastStateOwner
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.fulfillmentStatus, "needs_admin_review");
+    assert.equal(purchase.fulfillmentFailureClass, "manual_approval_required");
+    assert.match(purchase.needsAdminReviewReason, /Pelican provisioning contract is not configured yet/);
+    assert.equal(purchase.workerLeaseKey, null);
+    assert.equal(purchase.workerLeaseExpiresAt, null);
+    assert.equal(purchase.provisioningAttemptCount, 1);
+    assert.equal(purchase.lastStateOwner, "worker");
+
+    const job = await getQuery(
+        `SELECT
+            state,
+            attempts,
+            completedAt,
+            leaseKey,
+            leaseExpiresAt,
+            lastError
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.equal(job.state, "needs_admin_review");
+    assert.equal(job.attempts, 1);
+    assert.ok(Number(job.completedAt) > 0);
+    assert.equal(job.leaseKey, null);
+    assert.equal(job.leaseExpiresAt, null);
+    assert.match(job.lastError, /Pelican provisioning contract is not configured yet/);
+});
+
 test("webhook expired releases held inventory for abandoned checkout", async t => {
     const app = await createTestApp(t);
     const { runQuery, getQuery } = app.queries;
@@ -649,7 +803,7 @@ test("subscription runtime webhooks update and release fulfilled servers when su
             "active",
             Date.now() + 86_400_000,
             0,
-            "price_test_2gb"
+            "price_test_3gb"
         ]
     );
     await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 5]);
@@ -672,7 +826,7 @@ test("subscription runtime webhooks update and release fulfilled servers when su
                         data: [
                             {
                                 current_period_end: 1_900_000_100,
-                                price: { id: "price_test_2gb" }
+                                price: { id: "price_test_3gb" }
                             }
                         ]
                     }
@@ -716,7 +870,7 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
             "active",
             Date.now() + 86_400_000,
             0,
-            "price_test_2gb"
+            "price_test_3gb"
         ]
     );
     await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 6]);
@@ -733,7 +887,7 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
                 object: {
                     subscription: "sub_renewal",
                     customer: "cus_renewal",
-                    lines: { data: [{ price: { id: "price_test_2gb" } }] }
+                    lines: { data: [{ price: { id: "price_test_3gb" } }] }
                 }
             }
         })
@@ -758,7 +912,7 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
                 object: {
                     subscription: "sub_renewal",
                     customer: "cus_renewal",
-                    lines: { data: [{ price: { id: "price_test_2gb" } }] }
+                    lines: { data: [{ price: { id: "price_test_3gb" } }] }
                 }
             }
         })
@@ -850,7 +1004,7 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
                     data: [
                         {
                             current_period_end: 1_900_000_200,
-                            price: { id: "price_test_2gb" }
+                            price: { id: "price_test_3gb" }
                         }
                     ]
                 }
@@ -976,7 +1130,7 @@ test("admin guardrails block cancelling or releasing a live subscription, but al
             "past_due",
             Date.now() + 86_400_000,
             0,
-            "price_test_2gb",
+            "price_test_3gb",
             Date.now() - (1000 * 60 * 60 * 24 * 8)
         ]
     );

@@ -5,11 +5,12 @@ const { runQuery, getQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { cancelPurchaseAndRelease, expirePurchase, markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
-const { VALID_PLAN_TYPES } = require("../../config/plans");
+const { PLAN_DEFINITIONS, VALID_PLAN_TYPES } = require("../../config/plans");
 const { SERVER_STATUS, PURCHASE_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { parseCookies, serializeCookie } = require("../../utils/cookies");
 const { generateOpaqueToken, isOpaqueToken } = require("../../utils/tokens");
+const { mergeLifecycleState } = require("../../services/lifecycle");
 
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 
@@ -20,6 +21,7 @@ const checkoutLimiter = createRateLimiter({
     message: "Too many checkout attempts. Please wait a moment and try again."
 });
 let checkoutCreationQueue = Promise.resolve();
+const STRIPE_PRICE_PLACEHOLDER = "price_replace_me";
 
 function queueCheckoutCreation(work) {
     const next = checkoutCreationQueue.then(work, work);
@@ -50,6 +52,12 @@ function isSuccessfulCheckoutSession(session) {
         (session?.payment_status === "paid" || session?.payment_status === "no_payment_required");
 }
 
+function hasConfiguredStripePriceId(value) {
+    return typeof value === "string" &&
+        value.trim() !== "" &&
+        value.trim() !== STRIPE_PRICE_PLACEHOLDER;
+}
+
 async function findPendingBrowserCheckout(req) {
     const browserSessionId = getBrowserSessionId(req);
     const setupToken = getSetupTokenFromCookie(req);
@@ -59,7 +67,10 @@ async function findPendingBrowserCheckout(req) {
     }
 
     const purchase = await getQuery(
-        `SELECT purchases.*, servers.type AS serverType, servers.status AS serverStatus
+        `SELECT
+            purchases.*,
+            COALESCE(purchases.planType, servers.type) AS planType,
+            servers.status AS serverStatus
          FROM purchases
          JOIN servers ON servers.id = purchases.serverId
          WHERE purchases.browserSessionId = ?
@@ -133,9 +144,9 @@ router.get("/resume-checkout", async (req, res) => {
         if (existingCheckout.kind === "open") {
             return res.json({
                 resumable: true,
-                planType: existingCheckout.purchase.serverType,
+                planType: existingCheckout.purchase.planType,
                 url: existingCheckout.url,
-                message: `You already have a ${existingCheckout.purchase.serverType} server checkout in progress.`
+                message: `You already have a ${existingCheckout.purchase.planType} server checkout in progress.`
             });
         }
 
@@ -162,28 +173,31 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
         return res.status(400).json({ error: "Invalid plan type" });
     }
 
+    const planDefinition = PLAN_DEFINITIONS[planType];
     const stripePriceId = config.stripePriceIds[planType];
 
-    if (!stripePriceId) {
-        return res.status(500).json({ error: "Stripe price is not configured for this server" });
+    if (!planDefinition || !hasConfiguredStripePriceId(stripePriceId)) {
+        return res.status(503).json({
+            error: "Checkout is not configured for this product yet."
+        });
     }
 
     try {
         const existingCheckout = await resolveExistingCheckout(req);
 
         if (existingCheckout.kind === "open") {
-            if (existingCheckout.purchase.serverType !== planType) {
+            if (existingCheckout.purchase.planType !== planType) {
                 return res.status(409).json({
-                    error: `You already have a ${existingCheckout.purchase.serverType} server checkout in progress. Resume that checkout or wait for it to expire before choosing another server.`,
+                    error: `You already have a ${existingCheckout.purchase.planType} server checkout in progress. Resume that checkout or wait for it to expire before choosing another server.`,
                     resumeUrl: existingCheckout.url,
-                    existingPlanType: existingCheckout.purchase.serverType
+                    existingPlanType: existingCheckout.purchase.planType
                 });
             }
 
             return res.json({
                 url: existingCheckout.url,
                 resumed: true,
-                planType: existingCheckout.purchase.serverType
+                planType: existingCheckout.purchase.planType
             });
         }
 
@@ -207,6 +221,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
     const setupToken = generateOpaqueToken();
     const browserSessionId = getBrowserSessionId(req);
     const setupTokenExpiresAt = Date.now() + config.setupTokenTtlMs;
+    const reservationKey = setupToken;
     let purchaseId = null;
     let server = null;
     let session = null;
@@ -216,15 +231,15 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
             const existingCheckout = await resolveExistingCheckout(req);
 
             if (existingCheckout.kind === "open") {
-                if (existingCheckout.purchase.serverType !== planType) {
-                return {
-                    kind: "conflict",
-                    status: 409,
-                    setupToken: existingCheckout.purchase.setupToken || "",
-                    body: {
-                        error: `You already have a ${existingCheckout.purchase.serverType} server checkout in progress. Resume that checkout or wait for it to expire before choosing another server.`,
-                        resumeUrl: existingCheckout.url,
-                            existingPlanType: existingCheckout.purchase.serverType
+                if (existingCheckout.purchase.planType !== planType) {
+                    return {
+                        kind: "conflict",
+                        status: 409,
+                        setupToken: existingCheckout.purchase.setupToken || "",
+                        body: {
+                            error: `You already have a ${existingCheckout.purchase.planType} server checkout in progress. Resume that checkout or wait for it to expire before choosing another server.`,
+                            resumeUrl: existingCheckout.url,
+                            existingPlanType: existingCheckout.purchase.planType
                         }
                     };
                 }
@@ -236,7 +251,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                     body: {
                         url: existingCheckout.url,
                         resumed: true,
-                        planType: existingCheckout.purchase.serverType
+                        planType: existingCheckout.purchase.planType
                     }
                 };
             }
@@ -268,8 +283,21 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
 
             try {
                 server = await getQuery(
-                    "SELECT id, price FROM servers WHERE type = ? AND status = ? LIMIT 1",
-                    [planType, SERVER_STATUS.AVAILABLE]
+                    `SELECT
+                        id,
+                        price,
+                        productCode,
+                        inventoryBucketCode,
+                        nodeGroupCode,
+                        provisioningTargetCode,
+                        runtimeFamily,
+                        runtimeTemplate
+                     FROM servers
+                     WHERE productCode = ?
+                       AND status = ?
+                     ORDER BY id ASC
+                     LIMIT 1`,
+                    [planDefinition.code, SERVER_STATUS.AVAILABLE]
                 );
 
                 if (!server) {
@@ -282,8 +310,20 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                 }
 
                 const reserve = await runQuery(
-                    "UPDATE servers SET status = ? WHERE id = ? AND status = ?",
-                    [SERVER_STATUS.HELD, server.id, SERVER_STATUS.AVAILABLE]
+                    `UPDATE servers
+                     SET status = ?,
+                         reservationKey = ?,
+                         reservedAt = ?,
+                         allocatedAt = NULL
+                     WHERE id = ?
+                       AND status = ?`,
+                    [
+                        SERVER_STATUS.HELD,
+                        reservationKey,
+                        Date.now(),
+                        server.id,
+                        SERVER_STATUS.AVAILABLE
+                    ]
                 );
 
                 if (reserve.changes === 0) {
@@ -295,26 +335,73 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                     };
                 }
 
+                const initialPurchase = mergeLifecycleState({
+                    status: PURCHASE_STATUS.CHECKOUT_PENDING,
+                    serverName: "",
+                    stripeSubscriptionStatus: null,
+                    stripeCancelAtPeriodEnd: 0,
+                    subscriptionDelinquentAt: null,
+                    serviceSuspendedAt: null
+                }, {
+                    lastStateOwner: "web_app"
+                });
+
                 const purchase = await runQuery(
                     `INSERT INTO purchases
-                        (serverId, email, serverName, status, stripeSessionId, createdAt, setupToken, setupTokenExpiresAt, browserSessionId)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        (
+                            serverId,
+                            email,
+                            serverName,
+                            status,
+                            stripeSessionId,
+                            createdAt,
+                            setupToken,
+                            setupTokenExpiresAt,
+                            browserSessionId,
+                            planType,
+                            productCode,
+                            inventoryBucketCode,
+                            nodeGroupCode,
+                            provisioningTargetCode,
+                            runtimeFamily,
+                            runtimeTemplate,
+                            setupStatus,
+                            fulfillmentStatus,
+                            serviceStatus,
+                            customerRiskStatus,
+                            lastStateOwner,
+                            updatedAt
+                        )
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         server.id,
                         "",
                         "",
-                        PURCHASE_STATUS.CHECKOUT_PENDING,
+                        initialPurchase.status,
                         null,
                         Date.now(),
                         setupToken,
                         setupTokenExpiresAt,
-                        browserSessionId || null
+                        browserSessionId || null,
+                        planType,
+                        server.productCode || planDefinition.code,
+                        server.inventoryBucketCode || planDefinition.inventoryBucketCode,
+                        server.nodeGroupCode || planDefinition.nodeGroupCode,
+                        server.provisioningTargetCode || planDefinition.provisioningTargetCode,
+                        server.runtimeFamily || planDefinition.runtimeFamily,
+                        server.runtimeTemplate || planDefinition.runtimeTemplate,
+                        initialPurchase.setupStatus,
+                        initialPurchase.fulfillmentStatus,
+                        initialPurchase.serviceStatus,
+                        initialPurchase.customerRiskStatus,
+                        initialPurchase.lastStateOwner,
+                        Date.now()
                     ]
                 );
 
                 purchaseId = purchase.lastID;
 
-        const successUrl = `${config.baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`;
+                const successUrl = `${config.baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`;
                 const cancelUrl = `${config.baseUrl}/pricing`;
 
                 session = await stripe.checkout.sessions.create({
@@ -329,13 +416,15 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                     metadata: {
                         purchaseId: String(purchaseId),
                         serverId: String(server.id),
-                        planType
+                        planType,
+                        productCode: server.productCode || planDefinition.code
                     },
                     subscription_data: {
                         metadata: {
                             purchaseId: String(purchaseId),
                             serverId: String(server.id),
-                            planType
+                            planType,
+                            productCode: server.productCode || planDefinition.code
                         }
                     },
                     success_url: successUrl,

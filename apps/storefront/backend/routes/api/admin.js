@@ -20,6 +20,7 @@ const {
     TERMINAL_SUBSCRIPTION_STATUSES,
     getPurchasePolicyState
 } = require("../../services/policyRules");
+const { mergeLifecycleState } = require("../../services/lifecycle");
 
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 const router = express.Router();
@@ -192,14 +193,16 @@ function parseAuditDetails(value) {
 }
 
 function serializePurchase(purchase, stripeState = null, auditLog = []) {
+    const purchaseWithLifecycle = mergeLifecycleState(purchase);
+
     return {
-        ...purchase,
+        ...purchaseWithLifecycle,
         auditLog: auditLog.map(entry => ({
             ...entry,
             details: parseAuditDetails(entry.detailsJson)
         })),
         diagnostics: {
-            ...buildDiagnostics(purchase),
+            ...buildDiagnostics(purchaseWithLifecycle),
             stripe: stripeState
         }
     };
@@ -233,7 +236,8 @@ async function getPurchaseRecord(purchaseId) {
             p.*,
             s.status AS serverStatus,
             s.type AS serverType,
-            s.price AS serverPrice
+            s.price AS serverPrice,
+            COALESCE(p.planType, s.type) AS planType
          FROM purchases p
          LEFT JOIN servers s ON s.id = p.serverId
          WHERE p.id = ?`,
@@ -357,7 +361,8 @@ router.get("/purchases", async (req, res) => {
                 p.*,
                 s.status AS serverStatus,
                 s.type AS serverType,
-                s.price AS serverPrice
+                s.price AS serverPrice,
+                COALESCE(p.planType, s.type) AS planType
              FROM purchases p
              LEFT JOIN servers s ON s.id = p.serverId
              ORDER BY COALESCE(p.createdAt, 0) DESC, p.id DESC`
@@ -583,6 +588,13 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
             }
         }
 
+        const nextPurchase = mergeLifecycleState(purchase, {
+            status,
+            serverName,
+            serviceSuspendedAt,
+            lastStateOwner: "admin"
+        });
+
         await runQuery(
             `UPDATE purchases
              SET status = ?,
@@ -591,16 +603,28 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
                  stripeSessionId = ?,
                  setupToken = ?,
                  setupTokenExpiresAt = ?,
-                 serviceSuspendedAt = ?
+                 serviceSuspendedAt = ?,
+                 setupStatus = ?,
+                 fulfillmentStatus = ?,
+                 serviceStatus = ?,
+                 customerRiskStatus = ?,
+                 updatedAt = ?,
+                 lastStateOwner = ?
              WHERE id = ?`,
             [
-                status,
+                nextPurchase.status,
                 email,
                 serverName,
                 stripeSessionId,
                 setupToken,
                 setupTokenExpiresAt,
                 serviceSuspendedAt,
+                nextPurchase.setupStatus,
+                nextPurchase.fulfillmentStatus,
+                nextPurchase.serviceStatus,
+                nextPurchase.customerRiskStatus,
+                Date.now(),
+                nextPurchase.lastStateOwner,
                 purchaseId
             ]
         );
@@ -703,14 +727,46 @@ router.post("/complete", async (req, res) => {
             return res.status(400).json({ error: "Only paid purchases can be completed" });
         }
 
+        const releasedAt = Date.now();
+        const nextPurchase = mergeLifecycleState(purchase, {
+            status: PURCHASE_STATUS.COMPLETED,
+            lastStateOwner: "admin"
+        });
+
         await runQuery(
-            "UPDATE purchases SET status = ? WHERE id = ? AND status = ?",
-            [PURCHASE_STATUS.COMPLETED, purchaseId, PURCHASE_STATUS.PAID]
+            `UPDATE purchases
+             SET status = ?,
+                 setupStatus = ?,
+                 fulfillmentStatus = ?,
+                 serviceStatus = ?,
+                 customerRiskStatus = ?,
+                 completedAt = COALESCE(completedAt, ?),
+                 releasedAt = COALESCE(releasedAt, ?),
+                 adminReleaseActionAt = COALESCE(adminReleaseActionAt, ?),
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?
+               AND status = ?`,
+            [
+                nextPurchase.status,
+                nextPurchase.setupStatus,
+                nextPurchase.fulfillmentStatus,
+                nextPurchase.serviceStatus,
+                nextPurchase.customerRiskStatus,
+                releasedAt,
+                releasedAt,
+                releasedAt,
+                releasedAt,
+                nextPurchase.lastStateOwner,
+                purchaseId,
+                PURCHASE_STATUS.PAID
+            ]
         );
         await runQuery(
-            "UPDATE servers SET status = ? WHERE id = ? AND status IN (?, ?)",
+            "UPDATE servers SET status = ?, allocatedAt = ? WHERE id = ? AND status IN (?, ?)",
             [
                 SERVER_STATUS.ALLOCATED,
+                releasedAt,
                 purchase.serverId,
                 SERVER_STATUS.HELD,
                 SERVER_STATUS.AVAILABLE
@@ -723,7 +779,6 @@ router.post("/complete", async (req, res) => {
         });
         await runQuery("COMMIT");
 
-        console.log(`Admin completed purchase ${purchaseId} for server ${purchase.serverId}`);
         res.json({ success: true });
     } catch (err) {
         await rollbackTransaction();

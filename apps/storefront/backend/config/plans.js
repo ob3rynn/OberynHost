@@ -1,24 +1,22 @@
 const PLAN_DEFINITIONS = {
-    "2GB": {
-        price: 9.98,
+    "3GB": {
+        code: "minecraft-paper-3gb",
+        displayName: "3GB Paper Server",
+        price: 11.98,
+        launchSlotCount: 25,
+        productFamily: "minecraft",
+        runtimeFamily: "paper",
+        inventoryBucketCode: "paper-3gb-launch-bucket",
+        nodeGroupCode: "paper-launch-group",
+        provisioningTargetCode: "paper-launch-default",
+        runtimeTemplate: "paper-launch-default",
         features: [
-            "2GB RAM",
+            "3GB RAM",
             "Paper server software",
-            "Shared CPU",
-            "Optimized configuration",
-            "No setup required",
-            "Best for small worlds"
-        ]
-    },
-    "4GB": {
-        price: 31.98,
-        features: [
-            "4GB RAM",
-            "Paper server software",
-            "2 Dedicated CPU Threads",
-            "Optimized configuration",
-            "No setup required",
-            "Better for heavier usage"
+            "Fixed monthly resources",
+            "Curated supported versions",
+            "Post-payment guided setup",
+            "Best for launch-scope Minecraft hosting"
         ]
     }
 };

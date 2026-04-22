@@ -8,23 +8,26 @@ const router = express.Router();
 router.get("/plans", (req, res) => {
     db.all(`
         SELECT
-            type,
+            productCode,
             MAX(price) as price,
             SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as available
         FROM servers
-        GROUP BY type
+        WHERE productCode IS NOT NULL
+        GROUP BY productCode
     `, [SERVER_STATUS.AVAILABLE], (err, rows) => {
 
         if (err) {
             return res.status(500).json({ error: "DB error" });
         }
 
-        const rowsByType = new Map(rows.map(row => [row.type, row]));
+        const rowsByProductCode = new Map(rows.map(row => [row.productCode, row]));
         const plans = Object.entries(PLAN_DEFINITIONS).map(([type, definition]) => {
-            const row = rowsByType.get(type);
+            const row = rowsByProductCode.get(definition.code);
 
             return {
                 type,
+                code: definition.code,
+                displayName: definition.displayName,
                 price: row?.price ?? definition.price,
                 available: row ? Number(row.available) : 0,
                 features: definition.features || []

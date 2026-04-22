@@ -14,6 +14,7 @@ const plansRoutes = require("./routes/api/plans");
 const checkoutRoutes = require("./routes/api/checkout");
 const setupRoutes = require("./routes/api/setup");
 const adminRoutes = require("./routes/api/admin");
+const { startFulfillmentWorker } = require("./workers/fulfillmentWorker");
 
 const app = express();
 
@@ -44,9 +45,18 @@ app.use("/api", adminRoutes);
 async function startServer() {
     await dbReady;
 
-    return app.listen(config.port, config.host, () => {
+    const fulfillmentWorker = startFulfillmentWorker();
+    app.locals.fulfillmentWorker = fulfillmentWorker;
+
+    const server = app.listen(config.port, config.host, () => {
         console.log(`Server running on ${config.baseUrl}`);
     });
+
+    server.on("close", () => {
+        fulfillmentWorker.stop();
+    });
+
+    return server;
 }
 
 if (require.main === module) {

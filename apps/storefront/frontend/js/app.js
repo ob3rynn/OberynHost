@@ -76,13 +76,16 @@ function getAvailabilityCopy(plan) {
 function createPlanCard(plan, options = {}) {
     const card = document.createElement("article");
     card.className = `plan-card ${options.compact ? "plan-card--compact" : ""}`;
+    const displayName = typeof plan.displayName === "string" && plan.displayName.trim()
+        ? plan.displayName.trim()
+        : `${plan.type} Paper Server`;
 
     const header = document.createElement("div");
     header.className = "plan-card__header";
     header.innerHTML = `
         <div>
             <p class="plan-card__eyebrow">${plan.type}</p>
-            <h3>${plan.type} Paper Server</h3>
+            <h3>${displayName}</h3>
         </div>
         <span class="plan-card__availability ${plan.available === 0 ? "sold-out" : ""}">
             ${getAvailabilityCopy(plan)}

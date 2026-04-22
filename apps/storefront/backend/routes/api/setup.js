@@ -1,12 +1,15 @@
 const express = require("express");
 const config = require("../../config");
-const { PURCHASE_STATUS } = require("../../constants/status");
+const { PURCHASE_STATUS, FULFILLMENT_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { getQuery, runQuery } = require("../../db/queries");
+const { rollbackTransaction } = require("../../db/transactions");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { parseCookies, serializeCookie } = require("../../utils/cookies");
 const { isOpaqueToken } = require("../../utils/tokens");
 const { markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
+const { enqueueProvisioningJobForPurchase } = require("../../services/fulfillmentQueue");
+const { mergeLifecycleState } = require("../../services/lifecycle");
 
 const router = express.Router();
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
@@ -186,32 +189,90 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
     }
 
     try {
-        const result = await runQuery(
-        `UPDATE purchases
-         SET serverName = ?
-         WHERE setupToken = ?
-           AND (setupTokenExpiresAt IS NULL OR setupTokenExpiresAt >= ?)
-           AND (
-                (status = ? AND (serverName IS NULL OR TRIM(serverName) = ''))
-                OR (status = ? AND (serverName IS NULL OR TRIM(serverName) = ''))
-           )`,
-        [
-            serverName,
-            setupToken,
-            Date.now(),
-            PURCHASE_STATUS.PAID,
-            PURCHASE_STATUS.COMPLETED
-        ]
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getQuery(
+            `SELECT *
+             FROM purchases
+             WHERE setupToken = ?
+               AND (setupTokenExpiresAt IS NULL OR setupTokenExpiresAt >= ?)
+               AND (
+                    (status = ? AND (serverName IS NULL OR TRIM(serverName) = ''))
+                    OR (status = ? AND (serverName IS NULL OR TRIM(serverName) = ''))
+               )
+             ORDER BY id DESC
+             LIMIT 1`,
+            [
+                setupToken,
+                Date.now(),
+                PURCHASE_STATUS.PAID,
+                PURCHASE_STATUS.COMPLETED
+            ]
         );
 
-        if (result.changes === 0) {
+        if (!purchase) {
+            await rollbackTransaction();
             return res.status(400).json({
                 error: "Setup is not available for this purchase state"
             });
         }
 
+        const now = Date.now();
+        const nextPurchase = mergeLifecycleState(purchase, {
+            serverName,
+            fulfillmentFailureClass: null,
+            needsAdminReviewReason: null,
+            lastProvisioningError: null,
+            lastProvisioningAttemptAt: null,
+            lastStateOwner: "web_app"
+        });
+        const result = await runQuery(
+            `UPDATE purchases
+             SET serverName = ?,
+                 setupStatus = ?,
+                 fulfillmentStatus = ?,
+                 serviceStatus = ?,
+                 customerRiskStatus = ?,
+                 fulfillmentFailureClass = NULL,
+                 needsAdminReviewReason = NULL,
+                 lastProvisioningError = NULL,
+                 lastProvisioningAttemptAt = NULL,
+                 hostnameReservedAt = COALESCE(hostnameReservedAt, ?),
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?`,
+            [
+                serverName,
+                nextPurchase.setupStatus,
+                nextPurchase.fulfillmentStatus,
+                nextPurchase.serviceStatus,
+                nextPurchase.customerRiskStatus,
+                now,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id
+            ]
+        );
+
+        if (result.changes === 0) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Setup is not available for this purchase state"
+            });
+        }
+
+        if (nextPurchase.fulfillmentStatus === FULFILLMENT_STATUS.QUEUED) {
+            await enqueueProvisioningJobForPurchase({
+                ...purchase,
+                ...nextPurchase,
+                serverName
+            }, { now });
+        }
+        await runQuery("COMMIT");
+
         res.json({ success: true });
     } catch (err) {
+        await rollbackTransaction();
         console.error("Setup completion failed:", err);
         res.status(500).json({ error: "Could not save setup" });
     }

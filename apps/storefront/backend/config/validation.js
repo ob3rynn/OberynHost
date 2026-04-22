@@ -4,8 +4,7 @@ const REQUIRED_RUNTIME_ENV_NAMES = [
     "STRIPE_SECRET_KEY",
     "STRIPE_API_VERSION",
     "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_PRICE_2GB",
-    "STRIPE_PRICE_4GB"
+    "STRIPE_PRICE_3GB"
 ];
 
 const PLACEHOLDER_ENV_NAMES = [
@@ -23,12 +22,6 @@ const EXACT_PLACEHOLDER_VALUES = {
     STRIPE_WEBHOOK_SECRET: new Set([
         "whsec_replace_me"
     ]),
-    STRIPE_PRICE_2GB: new Set([
-        "price_replace_me"
-    ]),
-    STRIPE_PRICE_4GB: new Set([
-        "price_replace_me"
-    ])
 };
 
 class ConfigValidationError extends Error {
@@ -131,8 +124,7 @@ function buildRuntimeConfig(env = process.env) {
     const stripeApiVersion = getTrimmedEnvValue(env, "STRIPE_API_VERSION");
     const stripeWebhookSecret = getTrimmedEnvValue(env, "STRIPE_WEBHOOK_SECRET");
     const stripePriceIds = {
-        "2GB": getTrimmedEnvValue(env, "STRIPE_PRICE_2GB"),
-        "4GB": getTrimmedEnvValue(env, "STRIPE_PRICE_4GB")
+        "3GB": getTrimmedEnvValue(env, "STRIPE_PRICE_3GB")
     };
 
     if (!Number.isInteger(port) || port < 1 || port > 65535) {

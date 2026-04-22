@@ -2,6 +2,7 @@ const config = require("../config");
 const { runQuery, getQuery } = require("../db/queries");
 const { PURCHASE_STATUS, SERVER_STATUS } = require("../constants/status");
 const { generateOpaqueToken } = require("../utils/tokens");
+const { mergeLifecycleState } = require("./lifecycle");
 
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
 
@@ -44,6 +45,33 @@ function buildSubscriptionRuntime(subscription, overrides = {}) {
     };
 }
 
+function inferPaidAt(purchase, nextPurchase, overrides = {}) {
+    if (overrides.paidAt !== undefined) {
+        return overrides.paidAt;
+    }
+
+    if (
+        nextPurchase.status === PURCHASE_STATUS.PAID ||
+        nextPurchase.status === PURCHASE_STATUS.COMPLETED
+    ) {
+        return purchase.paidAt || Date.now();
+    }
+
+    return purchase.paidAt || null;
+}
+
+function inferCompletedAt(purchase, nextPurchase, overrides = {}) {
+    if (overrides.completedAt !== undefined) {
+        return overrides.completedAt;
+    }
+
+    if (nextPurchase.status === PURCHASE_STATUS.COMPLETED) {
+        return purchase.completedAt || Date.now();
+    }
+
+    return purchase.completedAt || null;
+}
+
 async function findPurchaseForStripeEvent({ purchaseId = null, stripeSessionId = null, stripeSubscriptionId = null }) {
     return getQuery(
         `SELECT *
@@ -61,25 +89,22 @@ async function releaseServerIfNeeded(serverId) {
     if (!serverId) return;
 
     await runQuery(
-        "UPDATE servers SET status = ? WHERE id = ? AND status IN (?, ?)",
+        `UPDATE servers
+         SET status = ?,
+             reservationKey = NULL,
+             reservedAt = NULL,
+             allocatedAt = NULL
+         WHERE id = ?
+           AND status IN (?, ?)`,
         [SERVER_STATUS.AVAILABLE, serverId, SERVER_STATUS.HELD, SERVER_STATUS.ALLOCATED]
     );
 }
 
-async function cancelPurchaseAndRelease(purchaseId, serverId) {
-    if (purchaseId) {
-        await runQuery(
-            "UPDATE purchases SET status = ? WHERE id = ? AND status = ?",
-            [PURCHASE_STATUS.CANCELLED, purchaseId, PURCHASE_STATUS.CHECKOUT_PENDING]
-        );
-    }
-
-    if (serverId) {
-        await releaseServerIfNeeded(serverId);
-    }
-}
-
 async function savePurchaseRuntime(purchase, values) {
+    const nextPurchase = mergeLifecycleState(purchase, values);
+    const paidAt = inferPaidAt(purchase, nextPurchase, values);
+    const completedAt = inferCompletedAt(purchase, nextPurchase, values);
+
     await runQuery(
         `UPDATE purchases
          SET status = ?,
@@ -94,25 +119,103 @@ async function savePurchaseRuntime(purchase, values) {
              serviceSuspendedAt = ?,
              email = ?,
              setupToken = ?,
-             setupTokenExpiresAt = ?
+             setupTokenExpiresAt = ?,
+             setupStatus = ?,
+             fulfillmentStatus = ?,
+             serviceStatus = ?,
+             customerRiskStatus = ?,
+             paidAt = ?,
+             completedAt = ?,
+             updatedAt = ?,
+             lastStateOwner = ?
          WHERE id = ?`,
         [
-            values.status,
-            values.stripeSessionId,
-            values.stripeCustomerId,
-            values.stripeSubscriptionId,
-            values.stripeSubscriptionStatus,
-            values.stripeCurrentPeriodEnd,
-            values.stripeCancelAtPeriodEnd,
-            values.stripePriceId,
-            values.subscriptionDelinquentAt,
-            values.serviceSuspendedAt,
-            values.email,
-            values.setupToken,
-            values.setupTokenExpiresAt,
+            nextPurchase.status,
+            nextPurchase.stripeSessionId,
+            nextPurchase.stripeCustomerId,
+            nextPurchase.stripeSubscriptionId,
+            nextPurchase.stripeSubscriptionStatus,
+            nextPurchase.stripeCurrentPeriodEnd,
+            nextPurchase.stripeCancelAtPeriodEnd,
+            nextPurchase.stripePriceId,
+            nextPurchase.subscriptionDelinquentAt,
+            nextPurchase.serviceSuspendedAt,
+            nextPurchase.email,
+            nextPurchase.setupToken,
+            nextPurchase.setupTokenExpiresAt,
+            nextPurchase.setupStatus,
+            nextPurchase.fulfillmentStatus,
+            nextPurchase.serviceStatus,
+            nextPurchase.customerRiskStatus,
+            paidAt,
+            completedAt,
+            Date.now(),
+            nextPurchase.lastStateOwner || purchase.lastStateOwner || null,
             purchase.id
         ]
     );
+
+    return {
+        ...nextPurchase,
+        paidAt,
+        completedAt
+    };
+}
+
+async function updatePurchaseStatusIfCurrent(purchaseId, currentStatus, nextStatus, overrides = {}) {
+    const purchase = await getQuery("SELECT * FROM purchases WHERE id = ?", [purchaseId]);
+
+    if (!purchase || purchase.status !== currentStatus) {
+        return false;
+    }
+
+    const result = await runQuery(
+        `UPDATE purchases
+         SET status = ?,
+             setupStatus = ?,
+             fulfillmentStatus = ?,
+             serviceStatus = ?,
+             customerRiskStatus = ?,
+             updatedAt = ?,
+             lastStateOwner = ?
+         WHERE id = ?
+           AND status = ?`,
+        (() => {
+            const nextPurchase = mergeLifecycleState(purchase, {
+                status: nextStatus,
+                lastStateOwner: overrides.lastStateOwner || purchase.lastStateOwner || null
+            });
+
+            return [
+                nextPurchase.status,
+                nextPurchase.setupStatus,
+                nextPurchase.fulfillmentStatus,
+                nextPurchase.serviceStatus,
+                nextPurchase.customerRiskStatus,
+                Date.now(),
+                nextPurchase.lastStateOwner,
+                purchaseId,
+                currentStatus
+            ];
+        })()
+    );
+
+    return result.changes > 0;
+}
+
+async function cancelPurchaseAndRelease(purchaseId, serverId) {
+    if (purchaseId) {
+        await updatePurchaseStatusIfCurrent(
+            purchaseId,
+            PURCHASE_STATUS.CHECKOUT_PENDING,
+            PURCHASE_STATUS.CANCELLED,
+            { lastStateOwner: "web_app" }
+        );
+    }
+
+    if (serverId) {
+        await releaseServerIfNeeded(serverId);
+    }
 }
 
 async function markPurchasePaid(session, subscription = null) {
@@ -155,7 +258,8 @@ async function markPurchasePaid(session, subscription = null) {
         serviceSuspendedAt: null,
         email: email || purchase.email || "",
         setupToken: purchase.setupToken || fallbackSetupToken,
-        setupTokenExpiresAt
+        setupTokenExpiresAt,
+        lastStateOwner: "webhook"
     });
 }
 
@@ -207,7 +311,8 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
                 : null,
         email: overrides.email || purchase.email || "",
         setupToken: purchase.setupToken || generateOpaqueToken(),
-        setupTokenExpiresAt: purchase.setupTokenExpiresAt || (Date.now() + config.setupTokenTtlMs)
+        setupTokenExpiresAt: purchase.setupTokenExpiresAt || (Date.now() + config.setupTokenTtlMs),
+        lastStateOwner: "webhook"
     });
 
     if (isTerminal) {
@@ -227,12 +332,14 @@ async function expirePurchase(session) {
     if (!purchase) return;
     if (purchase.status !== PURCHASE_STATUS.CHECKOUT_PENDING) return;
 
-    const update = await runQuery(
-        "UPDATE purchases SET status = ? WHERE id = ? AND status = ?",
-        [PURCHASE_STATUS.EXPIRED, purchase.id, PURCHASE_STATUS.CHECKOUT_PENDING]
+    const updated = await updatePurchaseStatusIfCurrent(
+        purchase.id,
+        PURCHASE_STATUS.CHECKOUT_PENDING,
+        PURCHASE_STATUS.EXPIRED,
+        { lastStateOwner: "webhook" }
     );
 
-    if (update.changes === 0) return;
+    if (!updated) return;
 
     await releaseServerIfNeeded(purchase.serverId);
 }

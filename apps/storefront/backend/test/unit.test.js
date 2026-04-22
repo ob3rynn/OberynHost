@@ -1,7 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 
 const { parseCookies, serializeCookie, clearCookie } = require("../utils/cookies");
@@ -13,6 +12,7 @@ const {
     findPlaceholderEnvNames
 } = require("../config/validation");
 const BACKEND_ROOT = path.resolve(__dirname, "..");
+const TEST_TMP_ROOT = process.env.TEST_TMP_ROOT || "/tmp";
 
 function createRuntimeEnv(overrides = {}) {
     return {
@@ -24,8 +24,7 @@ function createRuntimeEnv(overrides = {}) {
         STRIPE_SECRET_KEY: "sk_test_live_123456",
         STRIPE_API_VERSION: "2026-02-25.clover",
         STRIPE_WEBHOOK_SECRET: "whsec_live_123456",
-        STRIPE_PRICE_2GB: "price_live_2gb",
-        STRIPE_PRICE_4GB: "price_live_4gb",
+        STRIPE_PRICE_3GB: "price_live_3gb",
         ...overrides
     };
 }
@@ -111,10 +110,9 @@ test("runtime config rejects shipped placeholder values", () => {
             ADMIN_KEY: "replace-with-a-long-random-secret",
             STRIPE_SECRET_KEY: "sk_test_replace_me",
             STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
-            STRIPE_PRICE_2GB: "price_replace_me",
-            STRIPE_PRICE_4GB: "price_replace_me"
+            STRIPE_PRICE_3GB: "price_replace_me"
         })),
-        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_2GB, STRIPE_PRICE_4GB/
+        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET/
     );
 });
 
@@ -140,7 +138,7 @@ test("runtime config preserves existing PORT and ALLOWED_ORIGINS validation", ()
 });
 
 test("relative DATABASE_PATH resolves from the backend directory, not cwd", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "oberynn-db-path-"));
+    const tempDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "oberynn-db-path-"));
     const databaseFile = path.join(tempDir, "relative-test.db");
     const relativeToBackend = path.relative(BACKEND_ROOT, databaseFile);
     const previousCwd = process.cwd();
@@ -152,7 +150,7 @@ test("relative DATABASE_PATH resolves from the backend directory, not cwd", asyn
 
     process.env.DATABASE_PATH = relativeToBackend;
     process.env.NODE_ENV = "test";
-    process.chdir(os.tmpdir());
+    process.chdir(TEST_TMP_ROOT);
 
     const db = require("../db");
 
@@ -200,7 +198,7 @@ test("relative DATABASE_PATH resolves from the backend directory, not cwd", asyn
 
 test("DATABASE_PATH fails fast when the parent directory does not exist", () => {
     const missingDatabaseFile = path.join(
-        os.tmpdir(),
+        TEST_TMP_ROOT,
         `oberynn-db-missing-${Date.now()}`,
         "nested",
         "missing.db"

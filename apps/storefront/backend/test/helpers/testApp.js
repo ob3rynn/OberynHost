@@ -1,10 +1,10 @@
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const Module = require("module");
 const net = require("net");
 
 const BACKEND_ROOT = path.resolve(__dirname, "../..");
+const TEST_TMP_ROOT = process.env.TEST_TMP_ROOT || "/tmp";
 
 function closeServer(server) {
     return new Promise((resolve, reject) => {
@@ -81,7 +81,7 @@ function parseCookies(headers) {
 }
 
 async function createTestApp(t, options = {}) {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "oberynn-test-"));
+    const tempDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "oberynn-test-"));
     const databasePath = path.join(tempDir, "test.db");
     const port = await getFreePort();
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -93,8 +93,7 @@ async function createTestApp(t, options = {}) {
         "STRIPE_SECRET_KEY",
         "STRIPE_API_VERSION",
         "STRIPE_WEBHOOK_SECRET",
-        "STRIPE_PRICE_2GB",
-        "STRIPE_PRICE_4GB",
+        "STRIPE_PRICE_3GB",
         "DATABASE_PATH"
     ];
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -105,8 +104,7 @@ async function createTestApp(t, options = {}) {
     process.env.STRIPE_SECRET_KEY = options.stripeSecretKey || "sk_test_mocked";
     process.env.STRIPE_API_VERSION = options.stripeApiVersion || "2026-02-25.clover";
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
-    process.env.STRIPE_PRICE_2GB = options.stripePrice2GB || "price_test_2gb";
-    process.env.STRIPE_PRICE_4GB = options.stripePrice4GB || "price_test_4gb";
+    process.env.STRIPE_PRICE_3GB = options.stripePrice3GB || "price_test_3gb";
     process.env.DATABASE_PATH = databasePath;
 
     const stripeState = {
@@ -133,7 +131,7 @@ async function createTestApp(t, options = {}) {
                 data: [
                     {
                         current_period_end: Math.floor(Date.now() / 1000) + 86400,
-                        price: { id: process.env.STRIPE_PRICE_2GB }
+                        price: { id: process.env.STRIPE_PRICE_3GB }
                     }
                 ]
             }
