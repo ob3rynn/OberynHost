@@ -30,6 +30,17 @@ const OPTIONAL_PELICAN_ENV_NAMES = [
     "PELICAN_PROVISIONING_TARGETS_JSON"
 ];
 
+const OPTIONAL_EMAIL_ENV_NAMES = [
+    "EMAIL_PROVIDER",
+    "POSTMARK_SERVER_TOKEN",
+    "POSTMARK_MESSAGE_STREAM"
+];
+
+const EMAIL_PROVIDER = {
+    LOG: "log",
+    POSTMARK: "postmark"
+};
+
 class ConfigValidationError extends Error {
     constructor(message) {
         super(message);
@@ -90,6 +101,16 @@ function parseBoolean(name, value, defaultValue = false) {
     }
 
     failConfigValidation(`${name} must be a boolean.`);
+}
+
+function parseEmailProvider(value) {
+    const normalized = String(value || "").trim().toLowerCase() || EMAIL_PROVIDER.LOG;
+
+    if (normalized === EMAIL_PROVIDER.LOG || normalized === EMAIL_PROVIDER.POSTMARK) {
+        return normalized;
+    }
+
+    failConfigValidation("EMAIL_PROVIDER must be one of: log, postmark.");
 }
 
 function parseStringMap(name, value = {}, options = {}) {
@@ -344,6 +365,9 @@ function buildRuntimeConfig(env = process.env) {
     const rawAllowedOrigins = getTrimmedEnvValue(env, "ALLOWED_ORIGINS");
     const customerHostnameRootDomain = getTrimmedEnvValue(env, "CUSTOMER_HOSTNAME_ROOT_DOMAIN") || "oberyn.net";
     const outboundEmailFrom = getTrimmedEnvValue(env, "OUTBOUND_EMAIL_FROM") || "support@oberynn.com";
+    const emailProvider = parseEmailProvider(getTrimmedEnvValue(env, "EMAIL_PROVIDER"));
+    const postmarkServerToken = getTrimmedEnvValue(env, "POSTMARK_SERVER_TOKEN");
+    const postmarkMessageStream = getTrimmedEnvValue(env, "POSTMARK_MESSAGE_STREAM") || "outbound";
     const rawPelicanPanelUrl = getTrimmedEnvValue(env, "PELICAN_PANEL_URL");
     const pelicanApplicationApiKey = getTrimmedEnvValue(env, "PELICAN_APPLICATION_API_KEY");
     const rawPelicanProvisioningTargets = getTrimmedEnvValue(env, "PELICAN_PROVISIONING_TARGETS_JSON");
@@ -378,6 +402,10 @@ function buildRuntimeConfig(env = process.env) {
         );
     }
 
+    if (emailProvider === EMAIL_PROVIDER.POSTMARK && !postmarkServerToken) {
+        failConfigValidation("POSTMARK_SERVER_TOKEN is required when EMAIL_PROVIDER=postmark.");
+    }
+
     const parsedBaseUrl = parseAbsoluteHttpUrl("BASE_URL", rawBaseUrl);
     const baseUrl = parsedBaseUrl.toString().replace(/\/+$/, "");
     const pelicanPanelUrl = rawPelicanPanelUrl
@@ -398,6 +426,13 @@ function buildRuntimeConfig(env = process.env) {
         outboundEmailFrom,
         allowedOrigins,
         secureCookies: parsedBaseUrl.protocol === "https:",
+        email: {
+            provider: emailProvider,
+            postmarkServerToken,
+            postmarkMessageStream,
+            configured: emailProvider === EMAIL_PROVIDER.LOG || Boolean(postmarkServerToken),
+            presentEnvNames: OPTIONAL_EMAIL_ENV_NAMES.filter(name => getTrimmedEnvValue(env, name))
+        },
         adminKey,
         adminSessionTtlMs: 1000 * 60 * 60 * 12,
         adminSessionCookieName: parsedBaseUrl.protocol === "https:"
@@ -431,6 +466,8 @@ function buildRuntimeConfig(env = process.env) {
 
 module.exports = {
     ConfigValidationError,
+    EMAIL_PROVIDER,
+    OPTIONAL_EMAIL_ENV_NAMES,
     OPTIONAL_PELICAN_ENV_NAMES,
     PLACEHOLDER_ENV_NAMES,
     REQUIRED_RUNTIME_ENV_NAMES,

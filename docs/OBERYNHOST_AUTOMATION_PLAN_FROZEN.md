@@ -29,6 +29,7 @@ Items struck through in this section are already implemented in the current repo
 - ~~The worker now performs provisioning-contract preflight, decrypts staged first-time passwords only inside the worker boundary, supports an injected provisioning adapter, clears staged passwords after successful provisioning, persists Pelican linkage, consumes the reserved local slot, generates a desired routing artifact, and can move a purchase to `pending_activation` in tested local flow.~~
 - ~~The default worker adapter now has a guarded Pelican Application API implementation behind optional `PELICAN_*` env config, including external-id user/server reuse, allocation selection from configured target pools, runtime-profile egg/image/startup mapping, and tested safe admin-review fallback when live config is absent.~~
 - ~~Admin release is now gated to `pending_activation` purchases with Pelican linkage, consumed local inventory, desired routing artifact consistency, explicit routing verification, and an atomically queued ready-access email in the local outbox.~~
+- ~~The worker now also owns ready-access outbox delivery through a provider boundary, with a dev-safe `log` adapter by default, a live Postmark adapter path, and persisted `queued -> sending -> sent/failed` delivery results in SQLite.~~
 
 ## State Ownership Matrix
 
@@ -172,11 +173,19 @@ Items struck through in this section are already implemented in the current repo
 - Lifecycle tests for webhook-projected cancel scheduling, webhook-projected grace entry, worker-driven suspension, delinquency warning sequence at `24h/48h/72h` before deletion, worker deletion, and automatic hard-flag creation after terminal delinquency deletion.
 - Security tests for one-time password handling, outbox behavior, Stripe idempotency, queue uniqueness, and absence of retrievable password storage.
 
+## Still Required Before Production
+
+- Replace the current Stripe placeholders with live values for `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_3GB`, then verify the webhook endpoint against the real `BASE_URL`.
+- Switch email delivery from `EMAIL_PROVIDER=log` to `EMAIL_PROVIDER=postmark`, set `POSTMARK_SERVER_TOKEN`, keep `OUTBOUND_EMAIL_FROM` on a confirmed Postmark sender/domain for `support@oberynn.com`, and run a live ready-access smoke test.
+- Fill `PELICAN_PANEL_URL`, `PELICAN_APPLICATION_API_KEY`, and `PELICAN_PROVISIONING_TARGETS_JSON` with the confirmed live panel URL, application API key, real egg IDs, allocation IDs, and resource limits for the launch target.
+- Keep the phase-1 operator routing apply/verification runbook in place because the code only generates desired routing state; host-side apply and verification still gate `pending_activation -> ready`.
+- Add unattended recovery for outbox rows stuck in `sending` or `failed` if we want production email delivery to self-heal instead of stopping for operator review.
+
 ## Assumptions And Defaults
 
 - Launch product: one Paper-only 3 GB product, `$11.98/month`, `25` slots.
 - Supported versions: curated backend-defined Paper version list.
-- Email provider default: Postmark behind a provider boundary.
+- Email delivery runs behind a provider boundary; local default is `log`, production target is Postmark.
 - Sender identity: `support@oberynn.com`.
 - Hostname model: customer hostnames under node hostnames on `oberyn.net`.
 - Phase-1 edge model: repo owns desired HAProxy mapping; operator still applies and verifies host-side routing.

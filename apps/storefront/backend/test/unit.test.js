@@ -148,6 +148,21 @@ test("runtime config accepts localhost base and allowed origins", () => {
     assert.equal(config.secureCookies, false);
 });
 
+test("runtime config defaults email delivery to log and validates Postmark requirements", () => {
+    const config = buildRuntimeConfig(createRuntimeEnv());
+
+    assert.equal(config.email.provider, "log");
+    assert.equal(config.email.postmarkMessageStream, "outbound");
+    assert.equal(config.email.configured, true);
+
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            EMAIL_PROVIDER: "postmark"
+        })),
+        /POSTMARK_SERVER_TOKEN is required when EMAIL_PROVIDER=postmark/
+    );
+});
+
 test("runtime config parses optional Pelican provisioning targets", () => {
     const config = buildRuntimeConfig(createRuntimeEnv({
         PELICAN_PANEL_URL: "https://panel.oberyn.net/",

@@ -1877,6 +1877,147 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     assert.equal(afterLogout.status, 401);
 });
 
+test("email outbox worker marks queued ready-access email sent through an injected provider", async t => {
+    const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.net"
+        }
+    });
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                pelicanUsername,
+                hostname
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            5,
+            "delivery@example.com",
+            "Delivery Test",
+            "completed",
+            Date.now(),
+            "setup_token_email_delivery_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            "delivery_customer",
+            "delivery-test.oberyn.net"
+        ]
+    );
+
+    const { enqueueReadyEmailForPurchase } = require("../services/emailOutbox");
+    await enqueueReadyEmailForPurchase({
+        id: 1,
+        email: "delivery@example.com",
+        serverName: "Delivery Test",
+        pelicanUsername: "delivery_customer",
+        hostname: "delivery-test.oberyn.net"
+    });
+
+    let capturedMessage = null;
+    const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runEmailOutboxWorkerIteration({
+        sendEmailMessage: async message => {
+            capturedMessage = message;
+            return {
+                provider: "test_provider",
+                providerMessageId: "msg_test_123"
+            };
+        }
+    });
+
+    assert.equal(iteration.outcome, "sent");
+    assert.equal(iteration.purchaseId, 1);
+    assert.equal(iteration.provider, "test_provider");
+    assert.equal(iteration.providerMessageId, "msg_test_123");
+    assert.equal(capturedMessage.kind, "ready_access");
+    assert.equal(capturedMessage.recipientEmail, "delivery@example.com");
+    assert.equal(capturedMessage.payload.pelicanUsername, "delivery_customer");
+
+    const row = await getQuery(
+        `SELECT state, sentAt, lastError
+         FROM emailOutbox
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(row.state, "sent");
+    assert.ok(Number(row.sentAt) > 0);
+    assert.equal(row.lastError, null);
+});
+
+test("email outbox worker records provider failures on the queued message", async t => {
+    const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.net"
+        }
+    });
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                pelicanUsername,
+                hostname
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            6,
+            "delivery-fail@example.com",
+            "Delivery Fail",
+            "completed",
+            Date.now(),
+            "setup_token_email_fail_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            "fail_customer",
+            "delivery-fail.oberyn.net"
+        ]
+    );
+
+    const { enqueueReadyEmailForPurchase } = require("../services/emailOutbox");
+    await enqueueReadyEmailForPurchase({
+        id: 1,
+        email: "delivery-fail@example.com",
+        serverName: "Delivery Fail",
+        pelicanUsername: "fail_customer",
+        hostname: "delivery-fail.oberyn.net"
+    });
+
+    const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runEmailOutboxWorkerIteration({
+        sendEmailMessage: async () => {
+            throw new Error("Provider outage");
+        }
+    });
+
+    assert.equal(iteration.outcome, "failed");
+    assert.equal(iteration.purchaseId, 1);
+    assert.match(iteration.error, /Provider outage/);
+
+    const row = await getQuery(
+        `SELECT state, sentAt, lastError
+         FROM emailOutbox
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(row.state, "failed");
+    assert.equal(row.sentAt, null);
+    assert.match(row.lastError, /Provider outage/);
+});
+
 test("admin guardrails block cancelling or releasing a live subscription, but allow suspension", async t => {
     const app = await createTestApp(t);
     const { runQuery, getQuery } = app.queries;

@@ -8,6 +8,12 @@ const {
 } = require("../services/fulfillmentQueue");
 const { PURCHASE_STATUS } = require("../constants/status");
 const { buildDesiredRoutingArtifact } = require("../services/routingArtifacts");
+const {
+    leaseNextEmailOutboxMessage,
+    markEmailOutboxFailed,
+    markEmailOutboxSent
+} = require("../services/emailOutbox");
+const { sendEmailMessage: defaultSendEmailMessage } = require("../services/emailProvider");
 const defaultProvisioner = require("../services/pelicanProvisioner");
 const { ProvisioningBlockedError } = require("../services/pelicanProvisioner");
 const { decryptSetupSecret } = require("../services/setupSecrets");
@@ -206,6 +212,89 @@ async function runFulfillmentWorkerIteration(options = {}) {
     return processFulfillmentJob(leasedJob, options);
 }
 
+async function processEmailOutboxMessage(message, options = {}) {
+    const sendEmailMessage = options.sendEmailMessage || defaultSendEmailMessage;
+
+    try {
+        const deliveryResult = await sendEmailMessage({
+            id: message.id,
+            purchaseId: message.purchaseId,
+            kind: message.kind,
+            idempotencyKey: message.idempotencyKey,
+            recipientEmail: message.recipientEmail,
+            senderEmail: message.senderEmail,
+            subject: message.subject,
+            bodyText: message.bodyText,
+            payload: message.payload || null
+        });
+
+        const markedSent = await markEmailOutboxSent(message, {
+            now: options.now
+        });
+
+        if (!markedSent) {
+            return {
+                outcome: "stale_email_outbox",
+                emailOutboxId: message.id,
+                purchaseId: message.purchaseId || null
+            };
+        }
+
+        return {
+            outcome: "sent",
+            emailOutboxId: message.id,
+            purchaseId: message.purchaseId || null,
+            provider: String(deliveryResult?.provider || "").trim(),
+            providerMessageId: String(deliveryResult?.providerMessageId || "").trim()
+        };
+    } catch (err) {
+        const markedFailed = await markEmailOutboxFailed(message, err, {
+            now: options.now
+        });
+
+        if (!markedFailed) {
+            return {
+                outcome: "stale_email_outbox",
+                emailOutboxId: message.id,
+                purchaseId: message.purchaseId || null
+            };
+        }
+
+        return {
+            outcome: "failed",
+            emailOutboxId: message.id,
+            purchaseId: message.purchaseId || null,
+            error: String(err?.message || "Email delivery failed.")
+        };
+    }
+}
+
+async function runEmailOutboxWorkerIteration(options = {}) {
+    const message = await leaseNextEmailOutboxMessage({
+        now: options.now
+    });
+
+    if (!message) {
+        return null;
+    }
+
+    return processEmailOutboxMessage(message, options);
+}
+
+async function runWorkerIteration(options = {}) {
+    const fulfillment = await runFulfillmentWorkerIteration(options);
+    const email = await runEmailOutboxWorkerIteration(options);
+
+    if (!fulfillment && !email) {
+        return null;
+    }
+
+    return {
+        fulfillment,
+        email
+    };
+}
+
 function startFulfillmentWorker(options = {}) {
     const intervalMs = Number(options.intervalMs || DEFAULT_WORKER_INTERVAL_MS);
     let timer = null;
@@ -220,9 +309,9 @@ function startFulfillmentWorker(options = {}) {
         running = true;
 
         try {
-            await runFulfillmentWorkerIteration(options);
+            await runWorkerIteration(options);
         } catch (err) {
-            console.error("Fulfillment worker iteration failed:", err);
+            console.error("Worker iteration failed:", err);
         } finally {
             running = false;
 
@@ -253,7 +342,10 @@ module.exports = {
     DEFAULT_WORKER_LEASE_MS,
     enqueueProvisioningJobForPurchase,
     getProvisioningContractErrors,
+    processEmailOutboxMessage,
     processFulfillmentJob,
+    runEmailOutboxWorkerIteration,
     runFulfillmentWorkerIteration,
+    runWorkerIteration,
     startFulfillmentWorker
 };

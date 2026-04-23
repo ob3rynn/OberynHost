@@ -95,6 +95,9 @@ async function createTestApp(t, options = {}) {
         "STRIPE_WEBHOOK_SECRET",
         "STRIPE_PRICE_3GB",
         "OUTBOUND_EMAIL_FROM",
+        "EMAIL_PROVIDER",
+        "POSTMARK_SERVER_TOKEN",
+        "POSTMARK_MESSAGE_STREAM",
         "PELICAN_PANEL_URL",
         "PELICAN_APPLICATION_API_KEY",
         "PELICAN_PROVISIONING_TARGETS_JSON",
@@ -110,6 +113,14 @@ async function createTestApp(t, options = {}) {
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
     process.env.STRIPE_PRICE_3GB = options.stripePrice3GB || "price_test_3gb";
     process.env.OUTBOUND_EMAIL_FROM = options.outboundEmailFrom || "support@oberynn.com";
+    process.env.EMAIL_PROVIDER = "log";
+    delete process.env.POSTMARK_SERVER_TOKEN;
+    delete process.env.POSTMARK_MESSAGE_STREAM;
+    if (options.emailEnv) {
+        for (const [key, value] of Object.entries(options.emailEnv)) {
+            process.env[key] = value;
+        }
+    }
     delete process.env.PELICAN_PANEL_URL;
     delete process.env.PELICAN_APPLICATION_API_KEY;
     delete process.env.PELICAN_PROVISIONING_TARGETS_JSON;
