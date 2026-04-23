@@ -64,6 +64,44 @@
             <div class="field-group">
                 <label for="serverName">Server name</label>
                 <input id="serverName" placeholder="My Server" disabled>
+                <p class="page-note">
+                    Your public server hostname is generated from this name and must be unique.
+                    Preview: <strong id="hostnamePreview">choose a server name</strong>
+                </p>
+            </div>
+
+            <div class="field-group">
+                <label for="minecraftVersion">Minecraft version</label>
+                <select id="minecraftVersion" disabled>
+                    <option value="">Choose a supported version</option>
+                </select>
+            </div>
+
+            <div id="pelicanCreateFields">
+                <div class="field-group">
+                    <label for="pelicanUsername">Pelican username</label>
+                    <input id="pelicanUsername" placeholder="oberyn_admin" disabled>
+                </div>
+
+                <div class="field-group">
+                    <label for="pelicanPassword">Pelican password</label>
+                    <input id="pelicanPassword" type="password" placeholder="Create a one-time password" disabled>
+                </div>
+
+                <p class="page-note">
+                    This password is only used once to create your Pelican account and is not retained in retrievable form afterward.
+                </p>
+            </div>
+
+            <div id="pelicanReuseFields" style="display:none;">
+                <div class="field-group">
+                    <label for="linkedPelicanUsername">Pelican username</label>
+                    <input id="linkedPelicanUsername" disabled>
+                </div>
+
+                <p class="page-note">
+                    Your existing Pelican account will be reused for this order. No password is needed here.
+                </p>
             </div>
 
             <div class="hero-note hero-note--status">
@@ -90,6 +128,13 @@
 
 <script>
 const serverNameInput = document.getElementById("serverName");
+const hostnamePreview = document.getElementById("hostnamePreview");
+const minecraftVersionInput = document.getElementById("minecraftVersion");
+const pelicanCreateFields = document.getElementById("pelicanCreateFields");
+const pelicanReuseFields = document.getElementById("pelicanReuseFields");
+const pelicanUsernameInput = document.getElementById("pelicanUsername");
+const pelicanPasswordInput = document.getElementById("pelicanPassword");
+const linkedPelicanUsernameInput = document.getElementById("linkedPelicanUsername");
 const completeBtn = document.getElementById("completeBtn");
 const lead = document.getElementById("lead");
 const statusEl = document.getElementById("status");
@@ -97,10 +142,33 @@ const statusEl = document.getElementById("status");
 let canSubmit = false;
 let pollTimer = null;
 const recoverySessionId = new URLSearchParams(window.location.search).get("session_id") || "";
+let pelicanAccountMode = "create";
+let customerHostnameRootDomain = "oberyn.net";
+
+function normalizeHostnameSlug(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/['"]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .replace(/-{2,}/g, "-")
+        .slice(0, 48);
+}
+
+function refreshHostnamePreview() {
+    const slug = normalizeHostnameSlug(serverNameInput.value);
+    hostnamePreview.innerText = slug
+        ? `${slug}.${customerHostnameRootDomain}`
+        : "choose a server name";
+}
 
 function setReadyState(ready) {
     canSubmit = ready;
     serverNameInput.disabled = !ready;
+    minecraftVersionInput.disabled = !ready;
+    pelicanUsernameInput.disabled = !ready || pelicanAccountMode !== "create";
+    pelicanPasswordInput.disabled = !ready || pelicanAccountMode !== "create";
     completeBtn.disabled = !ready;
 }
 
@@ -108,6 +176,63 @@ function stopPolling() {
     if (!pollTimer) return;
     clearTimeout(pollTimer);
     pollTimer = null;
+}
+
+function populateMinecraftVersions(versions, selectedVersion = "") {
+    const grouped = new Map();
+    const entries = Array.isArray(versions) ? versions : [];
+
+    entries.forEach(entry => {
+        const javaVersion = entry && entry.javaVersion ? String(entry.javaVersion) : "Other";
+
+        if (!grouped.has(javaVersion)) {
+            grouped.set(javaVersion, []);
+        }
+
+        grouped.get(javaVersion).push(entry);
+    });
+
+    minecraftVersionInput.innerHTML = "";
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Choose a supported version";
+    minecraftVersionInput.appendChild(placeholder);
+
+    grouped.forEach((items, javaVersion) => {
+        const group = document.createElement("optgroup");
+        group.label = `Java ${javaVersion}`;
+
+        items.forEach(item => {
+            const option = document.createElement("option");
+            option.value = item.minecraftVersion;
+            option.textContent = item.minecraftVersion;
+            option.selected = item.minecraftVersion === selectedVersion;
+            group.appendChild(option);
+        });
+
+        minecraftVersionInput.appendChild(group);
+    });
+
+    if (selectedVersion && !minecraftVersionInput.value) {
+        minecraftVersionInput.value = selectedVersion;
+    }
+}
+
+function setPelicanAccountMode(mode, username = "") {
+    pelicanAccountMode = mode === "reuse" ? "reuse" : "create";
+    const isReuse = pelicanAccountMode === "reuse";
+
+    pelicanCreateFields.style.display = isReuse ? "none" : "block";
+    pelicanReuseFields.style.display = isReuse ? "block" : "none";
+    linkedPelicanUsernameInput.value = username || "";
+
+    if (isReuse) {
+        pelicanUsernameInput.value = username || "";
+        pelicanPasswordInput.value = "";
+    }
+
+    setReadyState(canSubmit);
 }
 
 async function refreshSetupStatus() {
@@ -132,8 +257,21 @@ async function refreshSetupStatus() {
             return;
         }
 
+        populateMinecraftVersions(data.minecraftVersions, data.minecraftVersion || "");
+        customerHostnameRootDomain = data.customerHostnameRootDomain || customerHostnameRootDomain;
+        setPelicanAccountMode(data.pelicanAccountMode, data.pelicanUsername || "");
+
         if (data.serverName && !serverNameInput.value) {
             serverNameInput.value = data.serverName;
+        }
+        refreshHostnamePreview();
+
+        if (data.minecraftVersion && !minecraftVersionInput.value) {
+            minecraftVersionInput.value = data.minecraftVersion;
+        }
+
+        if (data.pelicanUsername && !linkedPelicanUsernameInput.value) {
+            linkedPelicanUsernameInput.value = data.pelicanUsername;
         }
 
         setReadyState(Boolean(data.ready));
@@ -165,9 +303,31 @@ async function complete() {
     if (!canSubmit) return;
 
     const name = serverNameInput.value.trim();
+    const minecraftVersion = minecraftVersionInput.value.trim();
+    const pelicanUsername = pelicanAccountMode === "reuse"
+        ? linkedPelicanUsernameInput.value.trim()
+        : pelicanUsernameInput.value.trim();
+    const pelicanPassword = pelicanAccountMode === "reuse"
+        ? ""
+        : pelicanPasswordInput.value.trim();
 
     if (!name) {
         statusEl.innerText = "Please enter a server name first.";
+        return;
+    }
+
+    if (!minecraftVersion) {
+        statusEl.innerText = "Please choose a supported Minecraft version.";
+        return;
+    }
+
+    if (!pelicanUsername) {
+        statusEl.innerText = "Please enter your Pelican username first.";
+        return;
+    }
+
+    if (pelicanAccountMode === "create" && !pelicanPassword) {
+        statusEl.innerText = "Please enter a one-time Pelican password first.";
         return;
     }
 
@@ -179,7 +339,10 @@ async function complete() {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            serverName: name
+            serverName: name,
+            minecraftVersion,
+            pelicanUsername,
+            pelicanPassword
         })
     });
 
@@ -195,6 +358,8 @@ async function complete() {
         completeBtn.disabled = false;
     }
 }
+
+serverNameInput.addEventListener("input", refreshHostnamePreview);
 
 refreshSetupStatus();
 </script>

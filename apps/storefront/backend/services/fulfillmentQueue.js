@@ -1,4 +1,4 @@
-const { FULFILLMENT_STATUS } = require("../constants/status");
+const { FULFILLMENT_STATUS, SERVER_STATUS } = require("../constants/status");
 const { getQuery, runQuery } = require("../db/queries");
 const { rollbackTransaction } = require("../db/transactions");
 const { mergeLifecycleState } = require("./lifecycle");
@@ -33,12 +33,22 @@ function buildProvisioningPayload(purchase) {
     return {
         purchaseId: purchase.id,
         serverId: purchase.serverId,
+        email: purchase.email || null,
+        stripeCustomerId: purchase.stripeCustomerId || null,
         productCode: purchase.productCode,
         inventoryBucketCode: purchase.inventoryBucketCode,
         nodeGroupCode: purchase.nodeGroupCode,
         provisioningTargetCode: purchase.provisioningTargetCode,
+        hostname: purchase.hostname || null,
+        hostnameReservationKey: purchase.hostnameReservationKey || null,
+        minecraftVersion: purchase.minecraftVersion || null,
         runtimeFamily: purchase.runtimeFamily,
         runtimeTemplate: purchase.runtimeTemplate,
+        runtimeProfileCode: purchase.runtimeProfileCode || null,
+        runtimeJavaVersion: Number(purchase.runtimeJavaVersion || 0) || null,
+        pelicanUserId: purchase.pelicanUserId || null,
+        pelicanUsername: purchase.pelicanUsername || null,
+        pelicanAccountMode: purchase.pelicanUserId ? "reuse" : "create",
         serverName: purchase.serverName || ""
     };
 }
@@ -294,11 +304,168 @@ async function moveLeasedJobToAdminReview(job, details = {}) {
     }
 }
 
+async function completeLeasedProvisioningJob(job, provisioningResult, routingArtifact, details = {}) {
+    const now = Number(details.now || Date.now());
+    const artifactJson = JSON.stringify(routingArtifact);
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getQuery(
+            "SELECT * FROM purchases WHERE id = ?",
+            [job.purchaseId]
+        );
+
+        if (!purchase || purchase.workerLeaseKey !== job.leaseKey) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const nextPurchase = mergeLifecycleState(purchase, {
+            fulfillmentStatus: FULFILLMENT_STATUS.PENDING_ACTIVATION,
+            pelicanUserId: provisioningResult.pelicanUserId,
+            pelicanServerId: provisioningResult.pelicanServerId,
+            pelicanServerIdentifier: provisioningResult.pelicanServerIdentifier,
+            pelicanAllocationId: provisioningResult.pelicanAllocationId,
+            pelicanUsername: provisioningResult.pelicanUsername,
+            desiredRoutingArtifactJson: artifactJson,
+            desiredRoutingArtifactGeneratedAt: now,
+            fulfillmentFailureClass: null,
+            needsAdminReviewReason: null,
+            lastProvisioningError: null,
+            lastProvisioningAttemptAt: now,
+            provisioningAttemptCount: Number(purchase.provisioningAttemptCount || 0) + 1,
+            workerLeaseKey: null,
+            workerLeaseExpiresAt: null,
+            lastStateOwner: "worker"
+        });
+
+        const queueUpdate = await runQuery(
+            `UPDATE fulfillmentQueue
+             SET state = ?,
+                 lastError = NULL,
+                 updatedAt = ?,
+                 completedAt = ?,
+                 leaseKey = NULL,
+                 leaseExpiresAt = NULL
+             WHERE id = ?
+               AND state = ?
+               AND leaseKey = ?`,
+            [
+                FULFILLMENT_QUEUE_STATE.COMPLETED,
+                now,
+                now,
+                job.queueId,
+                FULFILLMENT_QUEUE_STATE.LEASED,
+                job.leaseKey
+            ]
+        );
+
+        if (queueUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const purchaseUpdate = await runQuery(
+            `UPDATE purchases
+             SET fulfillmentStatus = ?,
+                 fulfillmentFailureClass = NULL,
+                 needsAdminReviewReason = NULL,
+                 lastProvisioningError = NULL,
+                 lastProvisioningAttemptAt = ?,
+                 provisioningAttemptCount = ?,
+                 pelicanUserId = ?,
+                 pelicanServerId = ?,
+                 pelicanServerIdentifier = ?,
+                 pelicanAllocationId = ?,
+                 pelicanUsername = ?,
+                 desiredRoutingArtifactJson = ?,
+                 desiredRoutingArtifactGeneratedAt = ?,
+                 pelicanPasswordCiphertext = NULL,
+                 pelicanPasswordIv = NULL,
+                 pelicanPasswordAuthTag = NULL,
+                 pelicanPasswordStoredAt = NULL,
+                 workerLeaseKey = NULL,
+                 workerLeaseExpiresAt = NULL,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?
+               AND workerLeaseKey = ?`,
+            [
+                nextPurchase.fulfillmentStatus,
+                now,
+                nextPurchase.provisioningAttemptCount,
+                nextPurchase.pelicanUserId,
+                nextPurchase.pelicanServerId,
+                nextPurchase.pelicanServerIdentifier,
+                nextPurchase.pelicanAllocationId,
+                nextPurchase.pelicanUsername,
+                artifactJson,
+                now,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id,
+                job.leaseKey
+            ]
+        );
+
+        if (purchaseUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const serverUpdate = await runQuery(
+            `UPDATE servers
+             SET status = ?,
+                 allocatedAt = COALESCE(allocatedAt, ?)
+             WHERE id = ?
+               AND status = ?`,
+            [
+                SERVER_STATUS.ALLOCATED,
+                now,
+                purchase.serverId,
+                SERVER_STATUS.HELD
+            ]
+        );
+
+        if (serverUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        if (purchase.stripeCustomerId && nextPurchase.pelicanUsername) {
+            await runQuery(
+                `INSERT INTO customerPelicanLinks
+                    (stripeCustomerId, pelicanUserId, pelicanUsername, createdAt, updatedAt)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(stripeCustomerId) DO UPDATE SET
+                    pelicanUserId = excluded.pelicanUserId,
+                    pelicanUsername = excluded.pelicanUsername,
+                    updatedAt = excluded.updatedAt`,
+                [
+                    purchase.stripeCustomerId,
+                    nextPurchase.pelicanUserId,
+                    nextPurchase.pelicanUsername,
+                    now,
+                    now
+                ]
+            );
+        }
+
+        await runQuery("COMMIT");
+        return true;
+    } catch (err) {
+        await rollbackTransaction();
+        throw err;
+    }
+}
+
 module.exports = {
     FULFILLMENT_FAILURE_CLASS,
     FULFILLMENT_QUEUE_STATE,
     FULFILLMENT_TASK_TYPE,
     buildProvisioningIdempotencyKey,
+    completeLeasedProvisioningJob,
     enqueueProvisioningJobForPurchase,
     leaseNextFulfillmentJob,
     moveLeasedJobToAdminReview

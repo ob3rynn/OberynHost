@@ -1,5 +1,7 @@
 const express = require("express");
 const config = require("../../config");
+const { PLAN_DEFINITIONS } = require("../../config/plans");
+const { listSupportedMinecraftVersions, resolveMinecraftRuntimeProfile } = require("../../config/minecraftVersions");
 const { PURCHASE_STATUS, FULFILLMENT_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { getQuery, runQuery } = require("../../db/queries");
@@ -10,9 +12,17 @@ const { isOpaqueToken } = require("../../utils/tokens");
 const { markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
 const { enqueueProvisioningJobForPurchase } = require("../../services/fulfillmentQueue");
 const { mergeLifecycleState } = require("../../services/lifecycle");
+const {
+    findCustomerPelicanLinkByStripeCustomerId,
+    findPendingPelicanIdentityByStripeCustomerId,
+    findPelicanUsernameConflict
+} = require("../../services/pelicanIdentities");
+const { encryptSetupSecret } = require("../../services/setupSecrets");
+const { validateCustomerHostnameSlug } = require("../../services/hostnames");
 
 const router = express.Router();
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
+const DEFAULT_PLAN_DEFINITION = PLAN_DEFINITIONS["3GB"] || Object.values(PLAN_DEFINITIONS)[0] || null;
 const setupStatusLimiter = createRateLimiter({
     windowMs: 1000 * 60,
     max: 20,
@@ -24,6 +34,27 @@ const setupCompleteLimiter = createRateLimiter({
     message: "Too many setup attempts. Please wait a moment."
 });
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,48}[A-Za-z0-9]$/;
+const PELICAN_USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
+const MIN_PELICAN_PASSWORD_LENGTH = 8;
+
+function getPlanDefinitionForPurchase(purchase) {
+    return PLAN_DEFINITIONS[purchase?.planType] || DEFAULT_PLAN_DEFINITION;
+}
+
+function getTrimmedBodyValue(value) {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function hasSubmittedSetup(purchase) {
+    return Boolean((purchase?.serverName || "").trim());
+}
+
+function isSetupEditablePurchase(purchase) {
+    return (
+        (purchase?.status === PURCHASE_STATUS.PAID || purchase?.status === PURCHASE_STATUS.COMPLETED) &&
+        !hasSubmittedSetup(purchase)
+    );
+}
 
 function getSetupToken(req) {
     const cookies = parseCookies(req.headers.cookie);
@@ -76,7 +107,8 @@ async function recoverPurchaseFromSessionId(req, res) {
 
     const purchaseId = Number(session.metadata?.purchaseId);
     const purchase = await getQuery(
-        `SELECT id, status, serverName, setupToken, setupTokenExpiresAt
+        `SELECT id, status, serverName, hostname, setupToken, setupTokenExpiresAt, stripeCustomerId,
+                minecraftVersion, pelicanUsername
          FROM purchases
          WHERE stripeSessionId = ?
             OR id = ?
@@ -101,6 +133,20 @@ async function recoverPurchaseFromSessionId(req, res) {
     return purchase;
 }
 
+async function getCustomerPelicanContext(purchase) {
+    const customerLink = await findCustomerPelicanLinkByStripeCustomerId(purchase?.stripeCustomerId);
+    const pendingIdentity = customerLink
+        ? null
+        : await findPendingPelicanIdentityByStripeCustomerId(purchase?.stripeCustomerId, {
+            excludePurchaseId: purchase?.id
+        });
+
+    return {
+        customerLink,
+        pendingIdentity
+    };
+}
+
 router.post("/setup-status", setupStatusLimiter, async (req, res) => {
     try {
         const setupToken = getSetupToken(req);
@@ -108,7 +154,10 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
 
         if (isOpaqueToken(setupToken)) {
             purchase = await getQuery(
-                "SELECT id, status, serverName, setupTokenExpiresAt FROM purchases WHERE setupToken = ?",
+                `SELECT id, status, serverName, hostname, setupTokenExpiresAt, stripeCustomerId,
+                        minecraftVersion, pelicanUsername
+                 FROM purchases
+                 WHERE setupToken = ?`,
                 [setupToken]
             );
         } else {
@@ -136,12 +185,10 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
             });
         }
 
-        const hasServerName = Boolean((purchase.serverName || "").trim());
-        const canEdit =
-            (purchase.status === PURCHASE_STATUS.PAID && !hasServerName) ||
-            (purchase.status === PURCHASE_STATUS.COMPLETED && !hasServerName);
+        const { customerLink, pendingIdentity } = await getCustomerPelicanContext(purchase);
+        const canEdit = isSetupEditablePurchase(purchase);
 
-        let message = "Payment verified. You can choose your server name.";
+        let message = "Payment verified. You can choose your server details.";
 
         if (purchase.status === PURCHASE_STATUS.CHECKOUT_PENDING) {
             message = "Payment is still being verified by Stripe. Please wait a moment.";
@@ -150,7 +197,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
             purchase.status === PURCHASE_STATUS.CANCELLED
         ) {
             message = "This checkout is no longer valid for server setup.";
-        } else if (hasServerName) {
+        } else if (hasSubmittedSetup(purchase)) {
             message = "Server setup has already been submitted for this order.";
         }
 
@@ -159,6 +206,12 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
             editable: canEdit,
             status: purchase.status,
             serverName: purchase.serverName || "",
+            hostname: purchase.hostname || "",
+            customerHostnameRootDomain: config.customerHostnameRootDomain,
+            minecraftVersion: purchase.minecraftVersion || "",
+            minecraftVersions: listSupportedMinecraftVersions(),
+            pelicanAccountMode: customerLink ? "reuse" : "create",
+            pelicanUsername: customerLink?.pelicanUsername || pendingIdentity?.pelicanUsername || purchase.pelicanUsername || "",
             expiresAt: Number(purchase.setupTokenExpiresAt) || (Date.now() + config.setupTokenTtlMs),
             message
         });
@@ -170,9 +223,10 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
 
 router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
     const setupToken = getSetupToken(req);
-    const serverName = typeof req.body?.serverName === "string"
-        ? req.body.serverName.trim()
-        : "";
+    const serverName = getTrimmedBodyValue(req.body?.serverName);
+    const minecraftVersion = getTrimmedBodyValue(req.body?.minecraftVersion);
+    const requestedPelicanUsername = getTrimmedBodyValue(req.body?.pelicanUsername);
+    const pelicanPassword = getTrimmedBodyValue(req.body?.pelicanPassword);
 
     if (!isOpaqueToken(setupToken)) {
         return res.status(400).json({ error: "Invalid setup token" });
@@ -186,6 +240,10 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
         return res.status(400).json({
             error: "Server name must be 3-50 characters and use only letters, numbers, spaces, hyphens, or underscores."
         });
+    }
+
+    if (!minecraftVersion) {
+        return res.status(400).json({ error: "Minecraft version required" });
     }
 
     try {
@@ -217,9 +275,130 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
             });
         }
 
+        const planDefinition = getPlanDefinitionForPurchase(purchase);
+        const resolvedRuntime = resolveMinecraftRuntimeProfile(minecraftVersion, planDefinition);
+
+        if (!resolvedRuntime) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Please choose a supported Minecraft version."
+            });
+        }
+
+        const existingCustomerLink = await findCustomerPelicanLinkByStripeCustomerId(purchase.stripeCustomerId);
+        const pendingIdentity = existingCustomerLink
+            ? null
+            : await findPendingPelicanIdentityByStripeCustomerId(purchase.stripeCustomerId, {
+                excludePurchaseId: purchase.id
+            });
+
+        let effectivePelicanUsername = existingCustomerLink?.pelicanUsername || "";
+        let effectivePelicanUserId = existingCustomerLink?.pelicanUserId || null;
+        let encryptedPassword = null;
+
+        if (!existingCustomerLink && pendingIdentity && pendingIdentity.pelicanUsername) {
+            effectivePelicanUsername = pendingIdentity.pelicanUsername;
+        }
+
+        if (!effectivePelicanUsername) {
+            if (!requestedPelicanUsername) {
+                await rollbackTransaction();
+                return res.status(400).json({ error: "Pelican username required" });
+            }
+
+            if (!PELICAN_USERNAME_PATTERN.test(requestedPelicanUsername)) {
+                await rollbackTransaction();
+                return res.status(400).json({
+                    error: "Pelican username must be 3-32 characters and use only letters, numbers, dots, hyphens, or underscores."
+                });
+            }
+
+            const usernameConflict = await findPelicanUsernameConflict(requestedPelicanUsername, {
+                stripeCustomerId: purchase.stripeCustomerId,
+                excludePurchaseId: purchase.id
+            });
+
+            if (usernameConflict) {
+                await rollbackTransaction();
+                return res.status(409).json({
+                    error: "That Pelican username is already claimed. Please choose another."
+                });
+            }
+
+            effectivePelicanUsername = requestedPelicanUsername;
+        }
+
+        if (!existingCustomerLink && pendingIdentity && pendingIdentity.pelicanUsername) {
+            if (
+                requestedPelicanUsername &&
+                requestedPelicanUsername.toLowerCase() !== pendingIdentity.pelicanUsername.toLowerCase()
+            ) {
+                await rollbackTransaction();
+                return res.status(409).json({
+                    error: "This customer already has a Pelican username pending provisioning."
+                });
+            }
+        }
+
+        if (!effectivePelicanUserId) {
+            if (!pelicanPassword) {
+                await rollbackTransaction();
+                return res.status(400).json({ error: "Pelican password required" });
+            }
+
+            if (pelicanPassword.length < MIN_PELICAN_PASSWORD_LENGTH) {
+                await rollbackTransaction();
+                return res.status(400).json({
+                    error: `Pelican password must be at least ${MIN_PELICAN_PASSWORD_LENGTH} characters long.`
+                });
+            }
+
+            encryptedPassword = encryptSetupSecret(pelicanPassword);
+        }
+
+        const hostnameValidation = validateCustomerHostnameSlug(serverName);
+
+        if (!hostnameValidation.ok) {
+            await rollbackTransaction();
+            return res.status(400).json({ error: hostnameValidation.reason });
+        }
+
+        const hostnameConflict = await getQuery(
+            `SELECT id, hostname
+             FROM purchases
+             WHERE id != ?
+               AND hostnameReservationKey = ? COLLATE NOCASE
+               AND hostnameReleasedAt IS NULL
+               AND status NOT IN (?, ?)
+             LIMIT 1`,
+            [
+                purchase.id,
+                hostnameValidation.slug,
+                PURCHASE_STATUS.CANCELLED,
+                PURCHASE_STATUS.EXPIRED
+            ]
+        );
+
+        if (hostnameConflict) {
+            await rollbackTransaction();
+            return res.status(409).json({
+                error: "That server name creates a hostname that is already reserved. Please choose another server name."
+            });
+        }
+
         const now = Date.now();
         const nextPurchase = mergeLifecycleState(purchase, {
             serverName,
+            hostname: hostnameValidation.hostname,
+            hostnameReservationKey: hostnameValidation.slug,
+            minecraftVersion: resolvedRuntime.minecraftVersion,
+            runtimeProfileCode: resolvedRuntime.runtimeProfileCode,
+            runtimeJavaVersion: resolvedRuntime.javaVersion,
+            runtimeFamily: resolvedRuntime.runtimeFamily,
+            runtimeTemplate: resolvedRuntime.runtimeTemplate,
+            provisioningTargetCode: resolvedRuntime.provisioningTargetCode,
+            pelicanUserId: effectivePelicanUserId,
+            pelicanUsername: effectivePelicanUsername,
             fulfillmentFailureClass: null,
             needsAdminReviewReason: null,
             lastProvisioningError: null,
@@ -228,7 +407,21 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
         });
         const result = await runQuery(
             `UPDATE purchases
-             SET serverName = ?,
+                 SET serverName = ?,
+                 hostname = ?,
+                 hostnameReservationKey = ?,
+                 minecraftVersion = ?,
+                 runtimeProfileCode = ?,
+                 runtimeJavaVersion = ?,
+                 runtimeFamily = ?,
+                 runtimeTemplate = ?,
+                 provisioningTargetCode = ?,
+                 pelicanUserId = ?,
+                 pelicanUsername = ?,
+                 pelicanPasswordCiphertext = ?,
+                 pelicanPasswordIv = ?,
+                 pelicanPasswordAuthTag = ?,
+                 pelicanPasswordStoredAt = ?,
                  setupStatus = ?,
                  fulfillmentStatus = ?,
                  serviceStatus = ?,
@@ -243,6 +436,20 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
              WHERE id = ?`,
             [
                 serverName,
+                nextPurchase.hostname,
+                nextPurchase.hostnameReservationKey,
+                nextPurchase.minecraftVersion,
+                nextPurchase.runtimeProfileCode,
+                nextPurchase.runtimeJavaVersion,
+                nextPurchase.runtimeFamily,
+                nextPurchase.runtimeTemplate,
+                nextPurchase.provisioningTargetCode,
+                nextPurchase.pelicanUserId,
+                nextPurchase.pelicanUsername,
+                encryptedPassword?.ciphertext || null,
+                encryptedPassword?.iv || null,
+                encryptedPassword?.authTag || null,
+                encryptedPassword ? now : null,
                 nextPurchase.setupStatus,
                 nextPurchase.fulfillmentStatus,
                 nextPurchase.serviceStatus,
@@ -265,7 +472,17 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
             await enqueueProvisioningJobForPurchase({
                 ...purchase,
                 ...nextPurchase,
-                serverName
+                serverName,
+                hostname: nextPurchase.hostname,
+                hostnameReservationKey: nextPurchase.hostnameReservationKey,
+                minecraftVersion: nextPurchase.minecraftVersion,
+                runtimeProfileCode: nextPurchase.runtimeProfileCode,
+                runtimeJavaVersion: nextPurchase.runtimeJavaVersion,
+                runtimeFamily: nextPurchase.runtimeFamily,
+                runtimeTemplate: nextPurchase.runtimeTemplate,
+                provisioningTargetCode: nextPurchase.provisioningTargetCode,
+                pelicanUserId: nextPurchase.pelicanUserId,
+                pelicanUsername: nextPurchase.pelicanUsername
             }, { now });
         }
         await runQuery("COMMIT");

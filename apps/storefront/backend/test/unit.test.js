@@ -29,6 +29,51 @@ function createRuntimeEnv(overrides = {}) {
     };
 }
 
+function createPelicanTargetsJson(overrides = {}) {
+    return JSON.stringify({
+        "paper-launch-default": {
+            egg: {
+                byRuntimeProfile: {
+                    "paper-java17": 17,
+                    "paper-java21": 21,
+                    "paper-java25": 25
+                }
+            },
+            allocationIds: [9001, 9002],
+            dockerImage: {
+                byRuntimeProfile: {
+                    "paper-java17": "ghcr.io/pelican-eggs/yolks:java_17",
+                    "paper-java21": "ghcr.io/pelican-eggs/yolks:java_21",
+                    "paper-java25": "ghcr.io/pelican-eggs/yolks:java_25"
+                }
+            },
+            startup: "java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}}",
+            environment: {
+                SERVER_JARFILE: "server.jar",
+                MINECRAFT_VERSION: "{{minecraftVersion}}",
+                BUILD_NUMBER: "latest"
+            },
+            limits: {
+                memory: 3072,
+                swap: 0,
+                disk: 10240,
+                io: 500,
+                cpu: 0,
+                threads: null
+            },
+            featureLimits: {
+                databases: 0,
+                allocations: 0,
+                backups: 1
+            },
+            skipScripts: false,
+            startOnCompletion: false,
+            oomKiller: true,
+            ...overrides
+        }
+    });
+}
+
 test("cookie helpers parse, serialize, and clear cookies", () => {
     const header = serializeCookie("session", "abc 123", {
         maxAgeMs: 5_000,
@@ -101,6 +146,38 @@ test("runtime config accepts localhost base and allowed origins", () => {
         "http://localhost:3000"
     ]);
     assert.equal(config.secureCookies, false);
+});
+
+test("runtime config parses optional Pelican provisioning targets", () => {
+    const config = buildRuntimeConfig(createRuntimeEnv({
+        PELICAN_PANEL_URL: "https://panel.oberyn.net/",
+        PELICAN_APPLICATION_API_KEY: "ptla_test_key",
+        PELICAN_PROVISIONING_TARGETS_JSON: createPelicanTargetsJson()
+    }));
+
+    assert.equal(config.pelican.configured, true);
+    assert.equal(config.pelican.panelUrl, "https://panel.oberyn.net");
+    assert.equal(config.pelican.provisioningTargets["paper-launch-default"].allocationIds[0], 9001);
+    assert.equal(config.pelican.provisioningTargets["paper-launch-default"].egg.byRuntimeProfile["paper-java21"], 21);
+    assert.equal(config.pelican.provisioningTargets["paper-launch-default"].limits.memory, 3072);
+});
+
+test("runtime config rejects malformed Pelican target JSON when provided", () => {
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            PELICAN_PROVISIONING_TARGETS_JSON: "[]"
+        })),
+        /PELICAN_PROVISIONING_TARGETS_JSON must be an object/
+    );
+
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            PELICAN_PROVISIONING_TARGETS_JSON: createPelicanTargetsJson({
+                allocationIds: []
+            })
+        })),
+        /allocationIds must be a non-empty array/
+    );
 });
 
 test("runtime config rejects shipped placeholder values", () => {

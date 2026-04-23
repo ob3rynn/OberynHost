@@ -1227,6 +1227,7 @@ const META_HELP = {
     "Server Price": "The monthly price for this server subscription.",
     "Payment State": "Your local fulfillment-facing read of whether payment is verified yet.",
     "Server State": "How the inventory slot is currently held in your system.",
+    "Fulfillment State": "The automation lifecycle state for provisioning and release.",
     "Subscription": "The current Stripe subscription status tied to the order.",
     "Period End": "When the current paid billing period ends in Stripe.",
     "Renewal": "Whether the subscription will renew or end at the current period boundary.",
@@ -1237,6 +1238,13 @@ const META_HELP = {
 const DETAIL_HELP = {
     "Email": "The customer address tied to billing and delivery contact.",
     "Server Name": "The setup name submitted by the customer after payment.",
+    "Hostname": "The customer-facing hostname reserved from the server name.",
+    "Fulfillment State": "The internal automation state for setup, provisioning, release, and review.",
+    "Pelican Username": "The Pelican account username that will be sent in the ready email.",
+    "Pelican Server": "The Pelican server linkage returned by provisioning.",
+    "Pelican Allocation": "The Pelican allocation assigned to this purchase.",
+    "Routing Verified": "When an operator confirmed the desired routing artifact was applied.",
+    "Ready Email Queued": "When the customer-ready access email was added to the local outbox.",
     "Stripe Session": "The Checkout Session used to start the purchase flow.",
     "Stripe Customer": "The Stripe customer record associated with the order.",
     "Stripe Subscription": "The recurring Stripe subscription created for this server.",
@@ -1341,7 +1349,7 @@ function groupPurchases(data) {
         overview: data,
         subscriptions: data.filter(p => hasLiveSubscription(p)),
         canceling: data.filter(p => isCancelingSubscription(p)),
-        ready: data.filter(p => p.status === "paid"),
+        ready: data.filter(p => p.status === "paid" && p.fulfillmentStatus === "pending_activation"),
         pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)),
         stale: data.filter(p => isStaleCheckout(p)),
         archived: data.filter(p => p.status === "expired" || p.status === "cancelled"),
@@ -1494,7 +1502,15 @@ function clearSelection() {
     state.selectedPurchaseIds.clear();
 }
 
-function createGuardedAction(label, tone, confirmLabel, onConfirm, disabled = false) {
+function createGuardedAction(
+    label,
+    tone,
+    confirmLabel,
+    onConfirm,
+    disabled = false,
+    checkText = "Are you sure?",
+    helperText = ""
+) {
     const wrapper = createElement("div", "guarded-action");
     const trigger = createActionButton(label, tone, () => {
         panel.classList.add("visible");
@@ -1507,14 +1523,14 @@ function createGuardedAction(label, tone, confirmLabel, onConfirm, disabled = fa
     panel.appendChild(createElement(
         "div",
         "helper-text",
-        `Manual override protection is active for ${label.toLowerCase()}.`
+        helperText || `Manual override protection is active for ${label.toLowerCase()}.`
     ));
 
     const checkLabel = createElement("label", "guard-check");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkLabel.appendChild(checkbox);
-    checkLabel.appendChild(document.createTextNode("Are you sure?"));
+    checkLabel.appendChild(document.createTextNode(checkText));
     panel.appendChild(checkLabel);
 
     const actions = createElement("div", "guard-actions");
@@ -1654,8 +1670,8 @@ function renderOverview(data) {
         "No subscriptions are currently set to end at period close."
     ));
     overviewGrid.appendChild(renderOverviewCard(
-        "Ready To Fulfill",
-        "Verified orders waiting for action.",
+        "Pending Activation",
+        "Provisioned servers waiting on routing verification and release.",
         grouped.ready,
         "No verified orders are waiting right now."
     ));
@@ -1714,11 +1730,11 @@ function getViewIntroContent(tabKey, items, grouped) {
 
     if (tabKey === "ready") {
         return {
-            body: "These orders have verified payment and everything needed to move toward delivery.",
-            note: "Use this queue as the main fulfillment inbox.",
+            body: "These servers have been provisioned and are waiting for operator routing verification before customer release.",
+            note: "Only release after the desired routing artifact has been applied and verified.",
             stats: [
-                ["Ready", items.length],
-                ["With Server Name", items.filter(item => Boolean(item.serverName)).length]
+                ["Pending Activation", items.length],
+                ["Routing Verified", items.filter(item => Boolean(item.routingVerifiedAt)).length]
             ]
         };
     }
@@ -1847,17 +1863,26 @@ function renderBulkToolbar(items) {
         );
     }, !selectedItems.some(item => item.stripeSessionId)));
 
-    actions.appendChild(createActionButton("Bulk Mark Complete", "primary", async () => {
+    actions.appendChild(createGuardedAction("Bulk Release Ready", "primary", "Confirm Bulk Release", async () => {
+        const releasable = selectedItems.filter(item =>
+            item.status === "paid" && item.fulfillmentStatus === "pending_activation"
+        );
         await runBulkAction(
-            selectedItems.filter(item => item.status === "paid"),
+            releasable,
             item => requestJson("/api/complete", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ purchaseId: item.id, adminNote: getOperatorNote(noteInput) })
+                body: JSON.stringify({
+                    purchaseId: item.id,
+                    adminNote: getOperatorNote(noteInput),
+                    routingVerified: true
+                })
             }),
-            `Marked ${selectedItems.filter(item => item.status === "paid").length} selected order(s) complete.`
+            `Released ${releasable.length} selected order(s) and queued ready emails.`
         );
-    }, !selectedItems.some(item => item.status === "paid")));
+    }, !selectedItems.some(item => item.status === "paid" && item.fulfillmentStatus === "pending_activation"),
+    "Routing has been applied and verified for every selected pending-activation server.",
+    "This releases selected servers and queues customer ready emails."));
 
     actions.appendChild(createActionButton("Bulk Repair State", "warning", async () => {
         const repairable = selectedItems.filter(item =>
@@ -2030,9 +2055,9 @@ async function completePurchase(id, adminNote = "") {
         await requestJson("/api/complete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ purchaseId: id, adminNote })
+            body: JSON.stringify({ purchaseId: id, adminNote, routingVerified: true })
         });
-    }, `Marked order #${id} complete.`);
+    }, `Released order #${id} and queued the ready email.`);
 }
 
 async function reconcileStripe(id, adminNote = "") {
@@ -2389,6 +2414,10 @@ function renderPurchaseCard(purchase) {
     metaGrid.appendChild(createMetaBlock("Payment State", status.payment));
     metaGrid.appendChild(createMetaBlock("Server State", purchase.serverStatus || "Unknown"));
     metaGrid.appendChild(createMetaBlock(
+        "Fulfillment State",
+        (purchase.fulfillmentStatus || "unknown").replace(/_/g, " ")
+    ));
+    metaGrid.appendChild(createMetaBlock(
         "Subscription",
         formatSubscriptionStatus(purchase.stripeSubscriptionStatus)
     ));
@@ -2417,6 +2446,13 @@ function renderPurchaseCard(purchase) {
     main.appendChild(createDetailSection("Customer and Subscription Details", section => {
         section.appendChild(createDetailLine("Email", purchase.email));
         section.appendChild(createDetailLine("Server Name", purchase.serverName));
+        section.appendChild(createDetailLine("Hostname", purchase.hostname));
+        section.appendChild(createDetailLine("Fulfillment State", purchase.fulfillmentStatus));
+        section.appendChild(createDetailLine("Pelican Username", purchase.pelicanUsername));
+        section.appendChild(createDetailLine("Pelican Server", purchase.pelicanServerIdentifier || purchase.pelicanServerId));
+        section.appendChild(createDetailLine("Pelican Allocation", purchase.pelicanAllocationId));
+        section.appendChild(createDetailLine("Routing Verified", formatTimestamp(purchase.routingVerifiedAt)));
+        section.appendChild(createDetailLine("Ready Email Queued", formatTimestamp(purchase.readyEmailQueuedAt)));
         section.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
         section.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
         section.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
@@ -2443,10 +2479,21 @@ function renderPurchaseCard(purchase) {
 
     const actions = createElement("div", "action-row");
 
-    if (purchase.status === "paid") {
-        actions.appendChild(createActionButton("Mark Complete", "primary", async () => {
+    const canReleaseReady = purchase.status === "paid" &&
+        purchase.fulfillmentStatus === "pending_activation";
+
+    if (canReleaseReady) {
+        actions.appendChild(createGuardedAction("Release Ready", "primary", "Confirm Release", async () => {
             await completePurchase(purchase.id, getOperatorNote(noteInput));
-        }));
+        }, false,
+        "Routing has been applied and verified for this server.",
+        "This is the final admin release gate and will queue the customer ready email."));
+    } else if (purchase.status === "paid") {
+        actions.appendChild(createElement(
+            "div",
+            "helper-text",
+            "This paid order cannot be released until provisioning reaches pending activation."
+        ));
     }
 
     if (purchase.stripeSessionId) {

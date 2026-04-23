@@ -22,6 +22,13 @@ Items struck through in this section are already implemented in the current repo
 - ~~A SQLite-backed fulfillment queue now exists with one active provisioning job per purchase per task kind, worker leasing, and idempotent queue ownership.~~
 - ~~The worker now owns the `queued -> provisioning` boundary and safely escalates unresolved provisioning work to `needs_admin_review` rather than guessing past an undefined contract.~~
 - ~~Automated tests now cover checkout reservation, setup queueing, and worker lease-to-review behavior for the current phase.~~
+- ~~Setup now captures a backend-curated Minecraft version choice plus first-time vs repeat-customer Pelican account inputs on the same purchase.~~
+- ~~Repeat-customer Pelican reuse now resolves from backend customer linkage, while first-time one-time passwords are staged encrypted at rest until the worker consumes them.~~
+- ~~Local Pelican username collision checks now run before queueing, and the fulfillment payload now carries the resolved runtime profile inputs needed for provisioning.~~
+- ~~Setup now derives and reserves the customer hostname from the server name, shows that behavior to the customer before submit, and rejects duplicate active hostname slugs.~~
+- ~~The worker now performs provisioning-contract preflight, decrypts staged first-time passwords only inside the worker boundary, supports an injected provisioning adapter, clears staged passwords after successful provisioning, persists Pelican linkage, consumes the reserved local slot, generates a desired routing artifact, and can move a purchase to `pending_activation` in tested local flow.~~
+- ~~The default worker adapter now has a guarded Pelican Application API implementation behind optional `PELICAN_*` env config, including external-id user/server reuse, allocation selection from configured target pools, runtime-profile egg/image/startup mapping, and tested safe admin-review fallback when live config is absent.~~
+- ~~Admin release is now gated to `pending_activation` purchases with Pelican linkage, consumed local inventory, desired routing artifact consistency, explicit routing verification, and an atomically queued ready-access email in the local outbox.~~
 
 ## State Ownership Matrix
 
@@ -94,6 +101,13 @@ Items struck through in this section are already implemented in the current repo
 - Provisioning idempotency anchors on the purchase itself, using a purchase-scoped external reference such as `purchase:<purchaseId>`, with `one service linkage per purchase` as the non-negotiable invariant.
 - Provisioning success means: Pelican user exists, Pelican server exists, allocation is attached, local linkage is saved, and the desired routing artifact has been generated. That is the point where the worker may mark `pending_activation`.
 - `pending_activation -> ready` remains admin-only after operator routing apply and verification. Automatic Pelican provisioning does not remove the manual release gate in phase 1.
+
+## Minimal Worker Contract
+
+- Input: one paid purchase with setup submitted, reserved capacity, resolved catalog routing, selected Minecraft version, resolved runtime profile, and either an existing Pelican linkage or an encrypted staged first-time password.
+- Allowed work: validate that contract, create or reuse the Pelican user, provision exactly one Pelican server allocation for the purchase, persist linkage, generate the desired routing artifact, and move the purchase to the next precise internal state.
+- Output: either a fully provisioned `pending_activation` purchase with linkage and routing artifact ready for admin release, or a precise internal failure state such as `retryable_failure`, `needs_admin_review`, or `dead_letter`.
+- Out of scope: direct customer-ready release, reconcile drift repair, lifecycle enforcement after provisioning, or any destructive cleanup decisions without the later documented automation phases.
 
 ## Reconcile Boundary
 

@@ -94,6 +94,10 @@ async function createTestApp(t, options = {}) {
         "STRIPE_API_VERSION",
         "STRIPE_WEBHOOK_SECRET",
         "STRIPE_PRICE_3GB",
+        "OUTBOUND_EMAIL_FROM",
+        "PELICAN_PANEL_URL",
+        "PELICAN_APPLICATION_API_KEY",
+        "PELICAN_PROVISIONING_TARGETS_JSON",
         "DATABASE_PATH"
     ];
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -105,6 +109,15 @@ async function createTestApp(t, options = {}) {
     process.env.STRIPE_API_VERSION = options.stripeApiVersion || "2026-02-25.clover";
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
     process.env.STRIPE_PRICE_3GB = options.stripePrice3GB || "price_test_3gb";
+    process.env.OUTBOUND_EMAIL_FROM = options.outboundEmailFrom || "support@oberynn.com";
+    delete process.env.PELICAN_PANEL_URL;
+    delete process.env.PELICAN_APPLICATION_API_KEY;
+    delete process.env.PELICAN_PROVISIONING_TARGETS_JSON;
+    if (options.pelicanEnv) {
+        for (const [key, value] of Object.entries(options.pelicanEnv)) {
+            process.env[key] = value;
+        }
+    }
     process.env.DATABASE_PATH = databasePath;
 
     const stripeState = {

@@ -3,10 +3,11 @@ const express = require("express");
 const requireAdmin = require("../../middleware/auth");
 const config = require("../../config");
 const { createRateLimiter } = require("../../middleware/rateLimit");
-const { PURCHASE_STATUS, SERVER_STATUS } = require("../../constants/status");
+const { PURCHASE_STATUS, SERVER_STATUS, FULFILLMENT_STATUS } = require("../../constants/status");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { createAdminSession, destroyAdminSession } = require("../../services/adminSessions");
 const { markPurchasePaid, expirePurchase } = require("../../services/purchases");
+const { enqueueReadyEmailForPurchase } = require("../../services/emailOutbox");
 const { clearCookie, parseCookies, serializeCookie } = require("../../utils/cookies");
 const { allQuery, getQuery, runQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
@@ -55,7 +56,11 @@ function inferServerStatus(purchase) {
         case PURCHASE_STATUS.CANCELLED:
             return SERVER_STATUS.AVAILABLE;
         case PURCHASE_STATUS.CHECKOUT_PENDING:
+            return SERVER_STATUS.HELD;
         case PURCHASE_STATUS.PAID:
+            return purchase.fulfillmentStatus === FULFILLMENT_STATUS.PENDING_ACTIVATION
+                ? SERVER_STATUS.ALLOCATED
+                : SERVER_STATUS.HELD;
         default:
             return SERVER_STATUS.HELD;
     }
@@ -139,6 +144,25 @@ function buildDiagnostics(purchase) {
         issues,
         purchase.status === PURCHASE_STATUS.COMPLETED && !purchase.serverName,
         "Completed purchase has no saved server name."
+    );
+    addIssue(
+        issues,
+        purchase.status === PURCHASE_STATUS.PAID &&
+        purchase.fulfillmentStatus === FULFILLMENT_STATUS.PENDING_ACTIVATION &&
+        !purchase.routingVerifiedAt,
+        "Pending activation is waiting on operator routing verification."
+    );
+    addIssue(
+        issues,
+        purchase.status === PURCHASE_STATUS.PAID &&
+        purchase.fulfillmentStatus === FULFILLMENT_STATUS.PENDING_ACTIVATION &&
+        !purchase.desiredRoutingArtifactJson,
+        "Pending activation has no desired routing artifact."
+    );
+    addIssue(
+        issues,
+        purchase.status === PURCHASE_STATUS.COMPLETED && !purchase.readyEmailQueuedAt,
+        "Completed purchase has no queued ready email record."
     );
     addIssue(
         issues,
@@ -300,6 +324,68 @@ async function recordAdminAction(req, purchaseId, actionType, note = "", details
             Date.now()
         ]
     );
+}
+
+function parseRoutingVerified(value) {
+    return value === true || value === "true";
+}
+
+function parseDesiredRoutingArtifact(purchase, errors) {
+    if (!purchase.desiredRoutingArtifactJson) {
+        errors.push("desired routing artifact is missing");
+        return null;
+    }
+
+    try {
+        return JSON.parse(purchase.desiredRoutingArtifactJson);
+    } catch {
+        errors.push("desired routing artifact is not valid JSON");
+        return null;
+    }
+}
+
+function getReadyReleaseErrors(purchase) {
+    const errors = [];
+
+    if (purchase.status !== PURCHASE_STATUS.PAID) {
+        errors.push("purchase is not paid");
+    }
+
+    if (purchase.fulfillmentStatus !== FULFILLMENT_STATUS.PENDING_ACTIVATION) {
+        errors.push("fulfillment is not pending activation");
+    }
+
+    if (purchase.serverStatus !== SERVER_STATUS.ALLOCATED) {
+        errors.push("local inventory slot has not been consumed");
+    }
+
+    if (!purchase.email) errors.push("customer email is missing");
+    if (!purchase.serverName) errors.push("server name is missing");
+    if (!purchase.hostname || !purchase.hostnameReservationKey) errors.push("hostname reservation is missing");
+    if (!purchase.pelicanUserId) errors.push("Pelican user linkage is missing");
+    if (!purchase.pelicanUsername) errors.push("Pelican username is missing");
+    if (!purchase.pelicanServerId) errors.push("Pelican server linkage is missing");
+    if (!purchase.pelicanServerIdentifier) errors.push("Pelican server identifier is missing");
+    if (!purchase.pelicanAllocationId) errors.push("Pelican allocation linkage is missing");
+    if (!config.pelican?.panelUrl) errors.push("Pelican panel URL is not configured for ready email");
+
+    const artifact = parseDesiredRoutingArtifact(purchase, errors);
+
+    if (artifact) {
+        if (artifact.hostname !== purchase.hostname) {
+            errors.push("desired routing artifact hostname does not match the purchase");
+        }
+
+        if (String(artifact.pelicanServerIdentifier || "") !== String(purchase.pelicanServerIdentifier || "")) {
+            errors.push("desired routing artifact server identifier does not match the purchase");
+        }
+
+        if (String(artifact.pelicanAllocationId || "") !== String(purchase.pelicanAllocationId || "")) {
+            errors.push("desired routing artifact allocation does not match the purchase");
+        }
+    }
+
+    return errors;
 }
 
 router.use((req, res, next) => {
@@ -687,6 +773,7 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
 
 router.post("/complete", async (req, res) => {
     const purchaseId = Number(req.body?.purchaseId);
+    const routingVerified = parseRoutingVerified(req.body?.routingVerified);
     let adminNote;
 
     try {
@@ -709,27 +796,33 @@ router.post("/complete", async (req, res) => {
             return res.status(400).json({ error: "Purchase not found" });
         }
 
-        if (
-            purchase.status === PURCHASE_STATUS.EXPIRED ||
-            purchase.status === PURCHASE_STATUS.CANCELLED
-        ) {
-            await rollbackTransaction();
-            return res.status(400).json({ error: "Expired purchases cannot be completed" });
-        }
-
         if (purchase.status === PURCHASE_STATUS.COMPLETED) {
             await rollbackTransaction();
             return res.status(400).json({ error: "Purchase already completed" });
         }
 
-        if (purchase.status !== PURCHASE_STATUS.PAID) {
+        const releaseErrors = getReadyReleaseErrors(purchase);
+
+        if (releaseErrors.length > 0) {
             await rollbackTransaction();
-            return res.status(400).json({ error: "Only paid purchases can be completed" });
+            return res.status(400).json({
+                error: `Purchase cannot be released yet: ${releaseErrors.join("; ")}.`
+            });
+        }
+
+        if (!routingVerified && !purchase.routingVerifiedAt) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Operator routing verification is required before release."
+            });
         }
 
         const releasedAt = Date.now();
+        const routingVerifiedAt = purchase.routingVerifiedAt || releasedAt;
         const nextPurchase = mergeLifecycleState(purchase, {
             status: PURCHASE_STATUS.COMPLETED,
+            routingVerifiedAt,
+            readyEmailQueuedAt: purchase.readyEmailQueuedAt || releasedAt,
             lastStateOwner: "admin"
         });
 
@@ -743,6 +836,8 @@ router.post("/complete", async (req, res) => {
                  completedAt = COALESCE(completedAt, ?),
                  releasedAt = COALESCE(releasedAt, ?),
                  adminReleaseActionAt = COALESCE(adminReleaseActionAt, ?),
+                 routingVerifiedAt = COALESCE(routingVerifiedAt, ?),
+                 readyEmailQueuedAt = COALESCE(readyEmailQueuedAt, ?),
                  updatedAt = ?,
                  lastStateOwner = ?
              WHERE id = ?
@@ -756,24 +851,31 @@ router.post("/complete", async (req, res) => {
                 releasedAt,
                 releasedAt,
                 releasedAt,
+                routingVerifiedAt,
+                releasedAt,
                 releasedAt,
                 nextPurchase.lastStateOwner,
                 purchaseId,
                 PURCHASE_STATUS.PAID
             ]
         );
-        await runQuery(
-            "UPDATE servers SET status = ?, allocatedAt = ? WHERE id = ? AND status IN (?, ?)",
-            [
-                SERVER_STATUS.ALLOCATED,
-                releasedAt,
-                purchase.serverId,
-                SERVER_STATUS.HELD,
-                SERVER_STATUS.AVAILABLE
-            ]
-        );
-        await recordAdminAction(req, purchaseId, "mark_complete", adminNote.value || "", {
+
+        const readyPurchase = {
+            ...purchase,
+            ...nextPurchase,
+            routingVerifiedAt,
+            readyEmailQueuedAt: purchase.readyEmailQueuedAt || releasedAt
+        };
+        const readyEmail = await enqueueReadyEmailForPurchase(readyPurchase, { now: releasedAt });
+
+        await recordAdminAction(req, purchaseId, "release_ready", adminNote.value || "", {
             serverId: purchase.serverId,
+            hostname: purchase.hostname,
+            pelicanUsername: purchase.pelicanUsername,
+            pelicanServerIdentifier: purchase.pelicanServerIdentifier,
+            pelicanAllocationId: purchase.pelicanAllocationId,
+            routingVerifiedAt,
+            readyEmailIdempotencyKey: readyEmail.idempotencyKey,
             fromStatus: purchase.status,
             toStatus: PURCHASE_STATUS.COMPLETED
         });

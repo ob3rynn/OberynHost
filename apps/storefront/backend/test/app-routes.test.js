@@ -3,6 +3,59 @@ const assert = require("node:assert/strict");
 
 const { createTestApp } = require("./helpers/testApp");
 
+function createPelicanTargetsJson() {
+    return JSON.stringify({
+        "paper-launch-default": {
+            egg: {
+                byRuntimeProfile: {
+                    "paper-java17": 17,
+                    "paper-java21": 21,
+                    "paper-java25": 25
+                }
+            },
+            allocationIds: [9001, 9002],
+            dockerImage: {
+                byRuntimeProfile: {
+                    "paper-java17": "ghcr.io/pelican-eggs/yolks:java_17",
+                    "paper-java21": "ghcr.io/pelican-eggs/yolks:java_21",
+                    "paper-java25": "ghcr.io/pelican-eggs/yolks:java_25"
+                }
+            },
+            startup: "java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}}",
+            environment: {
+                SERVER_JARFILE: "server.jar",
+                MINECRAFT_VERSION: "{{minecraftVersion}}",
+                BUILD_NUMBER: "latest"
+            },
+            limits: {
+                memory: 3072,
+                swap: 0,
+                disk: 10240,
+                io: 500,
+                cpu: 0,
+                threads: null
+            },
+            featureLimits: {
+                databases: 0,
+                allocations: 0,
+                backups: 1
+            },
+            skipScripts: false,
+            startOnCompletion: false,
+            oomKiller: true
+        }
+    });
+}
+
+function jsonResponse(status, payload) {
+    return new Response(JSON.stringify(payload), {
+        status,
+        headers: {
+            "content-type": "application/json"
+        }
+    });
+}
+
 test("public routes serve correctly and set security headers", async t => {
     const app = await createTestApp(t);
 
@@ -485,7 +538,12 @@ test("setup can only be submitted once through the customer flow", async t => {
             cookie,
             origin: app.baseUrl
         },
-        body: JSON.stringify({ serverName: "First Server" })
+        body: JSON.stringify({
+            serverName: "First Server",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "first_customer",
+            pelicanPassword: "temporary-password"
+        })
     });
     assert.equal(firstComplete.status, 200);
 
@@ -512,7 +570,12 @@ test("setup can only be submitted once through the customer flow", async t => {
             cookie,
             origin: app.baseUrl
         },
-        body: JSON.stringify({ serverName: "Second Server" })
+        body: JSON.stringify({
+            serverName: "Second Server",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "first_customer",
+            pelicanPassword: "temporary-password"
+        })
     });
     assert.equal(secondComplete.status, 400);
 });
@@ -583,7 +646,12 @@ test("setup submission queues provisioning work on the same purchase", async t =
             cookie: "setup_session=setup_token_queue_abcdefghijklmnopqrstuvwxyz",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ serverName: "Queued Server" })
+        body: JSON.stringify({
+            serverName: "Queued Server",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "queued_customer",
+            pelicanPassword: "queued-password"
+        })
     });
     assert.equal(res.status, 200);
 
@@ -591,13 +659,32 @@ test("setup submission queues provisioning work on the same purchase", async t =
         `SELECT
             fulfillmentStatus,
             lastStateOwner,
-            hostnameReservedAt
+            hostnameReservedAt,
+            minecraftVersion,
+            runtimeProfileCode,
+            runtimeJavaVersion,
+            hostname,
+            hostnameReservationKey,
+            pelicanUsername,
+            pelicanPasswordCiphertext,
+            pelicanPasswordIv,
+            pelicanPasswordAuthTag
          FROM purchases
          WHERE id = 1`
     );
     assert.equal(purchase.fulfillmentStatus, "queued");
     assert.equal(purchase.lastStateOwner, "web_app");
     assert.ok(Number(purchase.hostnameReservedAt) > 0);
+    assert.equal(purchase.minecraftVersion, "1.21.11");
+    assert.equal(purchase.runtimeProfileCode, "paper-java21");
+    assert.equal(purchase.runtimeJavaVersion, 21);
+    assert.equal(purchase.hostname, "queued-server.oberyn.net");
+    assert.equal(purchase.hostnameReservationKey, "queued-server");
+    assert.equal(purchase.pelicanUsername, "queued_customer");
+    assert.ok(purchase.pelicanPasswordCiphertext);
+    assert.ok(purchase.pelicanPasswordIv);
+    assert.ok(purchase.pelicanPasswordAuthTag);
+    assert.notEqual(purchase.pelicanPasswordCiphertext, "queued-password");
 
     const job = await getQuery(
         `SELECT
@@ -612,6 +699,10 @@ test("setup submission queues provisioning work on the same purchase", async t =
     assert.equal(job.state, "queued");
     assert.equal(job.idempotencyKey, "purchase:1:task:provision_initial_server");
     assert.match(job.payloadJson, /Queued Server/);
+    assert.match(job.payloadJson, /queued-server\.oberyn\.net/);
+    assert.match(job.payloadJson, /queued_customer/);
+    assert.match(job.payloadJson, /1.21.11/);
+    assert.doesNotMatch(job.payloadJson, /queued-password/);
 });
 
 test("fulfillment worker leases queued setup work and escalates it to admin review", async t => {
@@ -680,7 +771,12 @@ test("fulfillment worker leases queued setup work and escalates it to admin revi
             cookie: "setup_session=setup_token_worker_queue_abcdefghijklmnopqrstuvwxyz",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ serverName: "Worker Queue Server" })
+        body: JSON.stringify({
+            serverName: "Worker Queue Server",
+            minecraftVersion: "1.20.6",
+            pelicanUsername: "worker_customer",
+            pelicanPassword: "worker-password"
+        })
     });
     assert.equal(setupRes.status, 200);
 
@@ -704,7 +800,7 @@ test("fulfillment worker leases queued setup work and escalates it to admin revi
     );
     assert.equal(purchase.fulfillmentStatus, "needs_admin_review");
     assert.equal(purchase.fulfillmentFailureClass, "manual_approval_required");
-    assert.match(purchase.needsAdminReviewReason, /Pelican provisioning contract is not configured yet/);
+    assert.match(purchase.needsAdminReviewReason, /Pelican provisioning adapter is not configured/);
     assert.equal(purchase.workerLeaseKey, null);
     assert.equal(purchase.workerLeaseExpiresAt, null);
     assert.equal(purchase.provisioningAttemptCount, 1);
@@ -726,7 +822,571 @@ test("fulfillment worker leases queued setup work and escalates it to admin revi
     assert.ok(Number(job.completedAt) > 0);
     assert.equal(job.leaseKey, null);
     assert.equal(job.leaseExpiresAt, null);
-    assert.match(job.lastError, /Pelican provisioning contract is not configured yet/);
+    assert.match(job.lastError, /Pelican provisioning adapter is not configured/);
+});
+
+test("fulfillment worker can provision to pending activation through an injected adapter", async t => {
+    const app = await createTestApp(t);
+    const { getQuery, runQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeCustomerId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "success@example.com",
+            "",
+            "paid",
+            "cus_success",
+            Date.now(),
+            "setup_token_success_queue_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    const setupRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_success_queue_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Success Server",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "success_customer",
+            pelicanPassword: "success-password"
+        })
+    });
+    assert.equal(setupRes.status, 200);
+
+    let capturedProvisioningInput = null;
+    const { runFulfillmentWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runFulfillmentWorkerIteration({
+        provisionInitialServer: async input => {
+            capturedProvisioningInput = input;
+            return {
+                pelicanUserId: "pelican-user-success",
+                pelicanUsername: input.pelicanUsername,
+                pelicanServerId: "pelican-server-success",
+                pelicanServerIdentifier: "srv_success",
+                pelicanAllocationId: "allocation-success"
+            };
+        }
+    });
+
+    assert.equal(iteration.outcome, "pending_activation");
+    assert.equal(capturedProvisioningInput.hostname, "success-server.oberyn.net");
+    assert.equal(capturedProvisioningInput.runtimeJavaVersion, 21);
+    assert.equal(capturedProvisioningInput.pelicanPassword, "success-password");
+
+    const purchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            pelicanUserId,
+            pelicanServerId,
+            pelicanServerIdentifier,
+            pelicanAllocationId,
+            pelicanUsername,
+            pelicanPasswordCiphertext,
+            pelicanPasswordIv,
+            pelicanPasswordAuthTag,
+            pelicanPasswordStoredAt,
+            desiredRoutingArtifactJson,
+            desiredRoutingArtifactGeneratedAt,
+            workerLeaseKey,
+            workerLeaseExpiresAt,
+            provisioningAttemptCount,
+            lastStateOwner
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.fulfillmentStatus, "pending_activation");
+    assert.equal(purchase.pelicanUserId, "pelican-user-success");
+    assert.equal(purchase.pelicanServerId, "pelican-server-success");
+    assert.equal(purchase.pelicanServerIdentifier, "srv_success");
+    assert.equal(purchase.pelicanAllocationId, "allocation-success");
+    assert.equal(purchase.pelicanUsername, "success_customer");
+    assert.equal(purchase.pelicanPasswordCiphertext, null);
+    assert.equal(purchase.pelicanPasswordIv, null);
+    assert.equal(purchase.pelicanPasswordAuthTag, null);
+    assert.equal(purchase.pelicanPasswordStoredAt, null);
+    assert.ok(Number(purchase.desiredRoutingArtifactGeneratedAt) > 0);
+    assert.equal(purchase.workerLeaseKey, null);
+    assert.equal(purchase.workerLeaseExpiresAt, null);
+    assert.equal(purchase.provisioningAttemptCount, 1);
+    assert.equal(purchase.lastStateOwner, "worker");
+
+    const allocatedServer = await getQuery(
+        "SELECT status, allocatedAt FROM servers WHERE id = ?",
+        [server.id]
+    );
+    assert.equal(allocatedServer.status, "allocated");
+    assert.ok(Number(allocatedServer.allocatedAt) > 0);
+
+    const artifact = JSON.parse(purchase.desiredRoutingArtifactJson);
+    assert.equal(artifact.kind, "haproxy_desired_mapping");
+    assert.equal(artifact.hostname, "success-server.oberyn.net");
+    assert.equal(artifact.pelicanServerIdentifier, "srv_success");
+    assert.equal(artifact.pelicanAllocationId, "allocation-success");
+
+    const job = await getQuery(
+        `SELECT state, completedAt, lastError, leaseKey, leaseExpiresAt
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.equal(job.state, "completed");
+    assert.ok(Number(job.completedAt) > 0);
+    assert.equal(job.lastError, null);
+    assert.equal(job.leaseKey, null);
+    assert.equal(job.leaseExpiresAt, null);
+
+    const link = await getQuery(
+        `SELECT pelicanUserId, pelicanUsername
+         FROM customerPelicanLinks
+         WHERE stripeCustomerId = ?`,
+        ["cus_success"]
+    );
+    assert.equal(link.pelicanUserId, "pelican-user-success");
+    assert.equal(link.pelicanUsername, "success_customer");
+});
+
+test("fulfillment worker uses configured Pelican Application API adapter", async t => {
+    const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.net",
+            PELICAN_APPLICATION_API_KEY: "ptla_test_key",
+            PELICAN_PROVISIONING_TARGETS_JSON: createPelicanTargetsJson()
+        }
+    });
+    const { getQuery, runQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeCustomerId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "adapter@example.com",
+            "",
+            "paid",
+            "cus_live_adapter",
+            Date.now(),
+            "setup_token_live_adapter_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    const setupRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_live_adapter_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Live Adapter",
+            minecraftVersion: "1.20.6",
+            pelicanUsername: "adapter_customer",
+            pelicanPassword: "adapter-password"
+        })
+    });
+    assert.equal(setupRes.status, 200);
+
+    const originalFetch = global.fetch;
+    const calls = [];
+    let userCreatePayload = null;
+    let serverCreatePayload = null;
+
+    global.fetch = async (url, options = {}) => {
+        const requestUrl = new URL(String(url));
+        const body = options.body ? JSON.parse(options.body) : null;
+        calls.push({
+            method: options.method || "GET",
+            path: requestUrl.pathname,
+            body
+        });
+
+        if (requestUrl.pathname === "/api/application/servers/external/purchase%3A1") {
+            return new Response("", { status: 404 });
+        }
+
+        if (requestUrl.pathname === "/api/application/users/external/stripe%3Acus_live_adapter") {
+            return new Response("", { status: 404 });
+        }
+
+        if (requestUrl.pathname === "/api/application/users" && options.method === "POST") {
+            userCreatePayload = body;
+            return jsonResponse(201, {
+                object: "user",
+                attributes: {
+                    id: 321,
+                    username: body.username
+                }
+            });
+        }
+
+        if (requestUrl.pathname === "/api/application/servers" && options.method === "POST") {
+            serverCreatePayload = body;
+            return jsonResponse(201, {
+                object: "server",
+                attributes: {
+                    id: 654,
+                    identifier: "srv_adapter",
+                    allocation: body.allocation.default,
+                    user: body.user
+                }
+            });
+        }
+
+        return jsonResponse(500, { error: "unexpected Pelican API call" });
+    };
+    t.after(() => {
+        global.fetch = originalFetch;
+    });
+
+    const { runFulfillmentWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runFulfillmentWorkerIteration();
+
+    assert.equal(iteration.outcome, "pending_activation");
+    assert.deepEqual(
+        calls.map(call => `${call.method} ${call.path}`),
+        [
+            "GET /api/application/servers/external/purchase%3A1",
+            "GET /api/application/users/external/stripe%3Acus_live_adapter",
+            "POST /api/application/users",
+            "POST /api/application/servers"
+        ]
+    );
+
+    assert.equal(userCreatePayload.external_id, "stripe:cus_live_adapter");
+    assert.equal(userCreatePayload.email, "adapter@example.com");
+    assert.equal(userCreatePayload.username, "adapter_customer");
+    assert.equal(userCreatePayload.password, "adapter-password");
+
+    assert.equal(serverCreatePayload.external_id, "purchase:1");
+    assert.equal(serverCreatePayload.name, "Live Adapter");
+    assert.equal(serverCreatePayload.user, 321);
+    assert.equal(serverCreatePayload.egg, 21);
+    assert.equal(serverCreatePayload.docker_image, "ghcr.io/pelican-eggs/yolks:java_21");
+    assert.equal(serverCreatePayload.environment.MINECRAFT_VERSION, "1.20.6");
+    assert.equal(serverCreatePayload.allocation.default, 9001);
+    assert.equal(serverCreatePayload.limits.memory, 3072);
+
+    const purchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            pelicanUserId,
+            pelicanServerId,
+            pelicanServerIdentifier,
+            pelicanAllocationId,
+            pelicanPasswordCiphertext
+         FROM purchases
+         WHERE id = 1`
+    );
+
+    assert.equal(purchase.fulfillmentStatus, "pending_activation");
+    assert.equal(purchase.pelicanUserId, "321");
+    assert.equal(purchase.pelicanServerId, "654");
+    assert.equal(purchase.pelicanServerIdentifier, "srv_adapter");
+    assert.equal(purchase.pelicanAllocationId, "9001");
+    assert.equal(purchase.pelicanPasswordCiphertext, null);
+
+    const allocatedServer = await getQuery(
+        "SELECT status, allocatedAt FROM servers WHERE id = ?",
+        [server.id]
+    );
+    assert.equal(allocatedServer.status, "allocated");
+    assert.ok(Number(allocatedServer.allocatedAt) > 0);
+});
+
+test("setup status exposes curated Minecraft versions and repeat-customer Pelican reuse", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO customerPelicanLinks
+            (stripeCustomerId, pelicanUserId, pelicanUsername, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+            "cus_repeat_customer",
+            "pelican-user-123",
+            "linked_player",
+            Date.now(),
+            Date.now()
+        ]
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            3,
+            "repeat@example.com",
+            "",
+            "paid",
+            "cus_repeat_customer",
+            Date.now(),
+            "setup_token_repeat_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 3]);
+
+    const statusRes = await app.request("/api/setup-status", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_repeat_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+    assert.equal(statusRes.status, 200);
+
+    const statusData = await statusRes.json();
+    assert.equal(statusData.ready, true);
+    assert.equal(statusData.pelicanAccountMode, "reuse");
+    assert.equal(statusData.pelicanUsername, "linked_player");
+    assert.ok(Array.isArray(statusData.minecraftVersions));
+    assert.ok(statusData.minecraftVersions.some(entry => entry.minecraftVersion === "1.21.11"));
+    assert.ok(statusData.minecraftVersions.some(entry => entry.minecraftVersion === "1.19.4"));
+
+    const completeRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_repeat_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Repeat Server",
+            minecraftVersion: "1.19.4",
+            pelicanUsername: "ignored_override"
+        })
+    });
+    assert.equal(completeRes.status, 200);
+
+    const purchase = await getQuery(
+        `SELECT
+            pelicanUserId,
+            pelicanUsername,
+            runtimeProfileCode,
+            runtimeJavaVersion,
+            pelicanPasswordCiphertext
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.pelicanUserId, "pelican-user-123");
+    assert.equal(purchase.pelicanUsername, "linked_player");
+    assert.equal(purchase.runtimeProfileCode, "paper-java17");
+    assert.equal(purchase.runtimeJavaVersion, 17);
+    assert.equal(purchase.pelicanPasswordCiphertext, null);
+
+    const job = await getQuery(
+        `SELECT payloadJson
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.match(job.payloadJson, /linked_player/);
+    assert.match(job.payloadJson, /reuse/);
+});
+
+test("first-time setup rejects Pelican usernames already claimed locally", async t => {
+    const app = await createTestApp(t);
+    const { runQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO customerPelicanLinks
+            (stripeCustomerId, pelicanUserId, pelicanUsername, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+            "cus_existing",
+            "pelican-existing",
+            "claimed_name",
+            Date.now(),
+            Date.now()
+        ]
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            4,
+            "new@example.com",
+            "",
+            "paid",
+            "cus_new_customer",
+            Date.now(),
+            "setup_token_claim_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 4]);
+
+    const res = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_claim_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Collision Server",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "claimed_name",
+            pelicanPassword: "collision-password"
+        })
+    });
+
+    assert.equal(res.status, 409);
+    const data = await res.json();
+    assert.match(data.error, /already claimed/i);
+});
+
+test("setup reserves hostname slugs from server names and rejects duplicates", async t => {
+    const app = await createTestApp(t);
+    const { runQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, hostnameReservationKey, hostname, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            1,
+            "existing-host@example.com",
+            "Dragon Keep",
+            "paid",
+            "dragon-keep",
+            "dragon-keep.oberyn.net",
+            Date.now(),
+            "setup_token_existing_host_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 1]);
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            2,
+            "new-host@example.com",
+            "",
+            "paid",
+            "cus_new_host",
+            Date.now(),
+            "setup_token_new_host_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 2]);
+
+    const res = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_new_host_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Dragon Keep",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "new_host_customer",
+            pelicanPassword: "new-host-password"
+        })
+    });
+
+    assert.equal(res.status, 409);
+    const data = await res.json();
+    assert.match(data.error, /hostname.*reserved/i);
 });
 
 test("webhook expired releases held inventory for abandoned checkout", async t => {
@@ -986,6 +1646,9 @@ test("admin auth, completion, reconcile, and audit trail work", async t => {
 
 test("admin happy path allows login, reconcile, complete, and logout", async t => {
     const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.net"
+        },
         stripe: {
             retrieveSession: async id => ({
                 id,
@@ -1060,6 +1723,79 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     const reconcileData = await reconcileRes.json();
     assert.equal(reconcileData.action, "marked_paid");
 
+    const earlyCompleteRes = await app.request("/api/complete", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ purchaseId: 1, adminNote: "Too early", routingVerified: true })
+    });
+    assert.equal(earlyCompleteRes.status, 400);
+    assert.match((await earlyCompleteRes.json()).error, /pending activation/);
+
+    const routingArtifact = {
+        kind: "haproxy_desired_mapping",
+        version: 1,
+        hostname: "completion-test.oberyn.net",
+        provisioningTargetCode: "paper-launch-default",
+        purchaseId: 1,
+        pelicanServerIdentifier: "srv_complete",
+        pelicanAllocationId: "9009",
+        generatedAt: Date.now()
+    };
+
+    await runQuery(
+        `UPDATE purchases
+         SET serverName = ?,
+             hostname = ?,
+             hostnameReservationKey = ?,
+             setupStatus = ?,
+             fulfillmentStatus = ?,
+             pelicanUserId = ?,
+             pelicanUsername = ?,
+             pelicanServerId = ?,
+             pelicanServerIdentifier = ?,
+             pelicanAllocationId = ?,
+             desiredRoutingArtifactJson = ?,
+             desiredRoutingArtifactGeneratedAt = ?,
+             updatedAt = ?
+         WHERE id = ?`,
+        [
+            "Completion Test",
+            "completion-test.oberyn.net",
+            "completion-test",
+            "setup_submitted",
+            "pending_activation",
+            "pelican-user-complete",
+            "complete_customer",
+            "pelican-server-complete",
+            "srv_complete",
+            "9009",
+            JSON.stringify(routingArtifact),
+            Date.now(),
+            Date.now(),
+            1
+        ]
+    );
+    await runQuery(
+        "UPDATE servers SET status = ?, allocatedAt = ? WHERE id = ?",
+        ["allocated", Date.now(), 4]
+    );
+
+    const unverifiedReleaseRes = await app.request("/api/complete", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ purchaseId: 1, adminNote: "Routing not confirmed" })
+    });
+    assert.equal(unverifiedReleaseRes.status, 400);
+    assert.match((await unverifiedReleaseRes.json()).error, /routing verification/i);
+
     const completeRes = await app.request("/api/complete", {
         method: "POST",
         headers: {
@@ -1067,28 +1803,63 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
             cookie: adminCookie,
             origin: app.baseUrl
         },
-        body: JSON.stringify({ purchaseId: 1, adminNote: "Delivered" })
+        body: JSON.stringify({ purchaseId: 1, adminNote: "Delivered", routingVerified: true })
     });
     assert.equal(completeRes.status, 200);
 
     const purchase = await getQuery(
-        `SELECT status, stripeSubscriptionId, stripeSubscriptionStatus, stripeCurrentPeriodEnd
+        `SELECT
+            status,
+            fulfillmentStatus,
+            stripeSubscriptionId,
+            stripeSubscriptionStatus,
+            stripeCurrentPeriodEnd,
+            routingVerifiedAt,
+            readyEmailQueuedAt
          FROM purchases WHERE id = 1`
     );
     assert.equal(purchase.status, "completed");
+    assert.equal(purchase.fulfillmentStatus, "ready");
     assert.equal(purchase.stripeSubscriptionId, "sub_test_admin_complete");
     assert.equal(purchase.stripeSubscriptionStatus, "active");
     assert.equal(purchase.stripeCurrentPeriodEnd, 1_900_000_200_000);
+    assert.ok(Number(purchase.routingVerifiedAt) > 0);
+    assert.ok(Number(purchase.readyEmailQueuedAt) > 0);
 
     const server = await getQuery("SELECT status FROM servers WHERE id = 4");
     assert.equal(server.status, "allocated");
+
+    const readyEmail = await getQuery(
+        `SELECT
+            kind,
+            state,
+            idempotencyKey,
+            recipientEmail,
+            senderEmail,
+            subject,
+            bodyText,
+            payloadJson
+         FROM emailOutbox
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(readyEmail.kind, "ready_access");
+    assert.equal(readyEmail.state, "queued");
+    assert.equal(readyEmail.idempotencyKey, "purchase:1:email:ready_access");
+    assert.equal(readyEmail.recipientEmail, "operator-check@example.com");
+    assert.equal(readyEmail.senderEmail, "support@oberynn.com");
+    assert.match(readyEmail.subject, /Completion Test/);
+    assert.match(readyEmail.bodyText, /https:\/\/panel\.oberyn\.net/);
+    assert.match(readyEmail.bodyText, /complete_customer/);
+    assert.doesNotMatch(readyEmail.bodyText, /password/i);
+    assert.equal(JSON.parse(readyEmail.payloadJson).pelicanUsername, "complete_customer");
 
     const auditRows = await allQuery(
         "SELECT actionType, note FROM adminAuditLog WHERE purchaseId = 1 ORDER BY id ASC"
     );
     assert.deepEqual(
         auditRows.map(row => row.actionType),
-        ["reconcile_stripe", "mark_complete"]
+        ["reconcile_stripe", "release_ready"]
     );
 
     const logoutRes = await app.request("/api/admin/logout", {

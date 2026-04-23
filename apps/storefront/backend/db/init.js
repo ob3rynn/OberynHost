@@ -375,6 +375,16 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE TABLE IF NOT EXISTS customerPelicanLinks (
+                stripeCustomerId TEXT PRIMARY KEY,
+                pelicanUserId TEXT,
+                pelicanUsername TEXT NOT NULL COLLATE NOCASE,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )
+        `);
+
+        await runStatement(`
             CREATE TABLE IF NOT EXISTS fulfillmentQueue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 purchaseId INTEGER NOT NULL,
@@ -388,6 +398,27 @@ const ready = (async () => {
                 lastError TEXT,
                 createdAt INTEGER NOT NULL,
                 updatedAt INTEGER NOT NULL,
+                FOREIGN KEY(purchaseId) REFERENCES purchases(id)
+            )
+        `);
+
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS emailOutbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchaseId INTEGER,
+                kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                idempotencyKey TEXT NOT NULL,
+                recipientEmail TEXT NOT NULL,
+                senderEmail TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                bodyText TEXT NOT NULL,
+                payloadJson TEXT,
+                availableAt INTEGER NOT NULL,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,
+                sentAt INTEGER,
+                lastError TEXT,
                 FOREIGN KEY(purchaseId) REFERENCES purchases(id)
             )
         `);
@@ -472,6 +503,9 @@ const ready = (async () => {
         await addColumnIfMissing("purchases", purchaseColumnNames, "provisioningTargetCode", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "runtimeFamily", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "runtimeTemplate", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "runtimeProfileCode", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "runtimeJavaVersion", "INTEGER");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "minecraftVersion", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "setupStatus", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "fulfillmentStatus", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "serviceStatus", "TEXT");
@@ -487,9 +521,19 @@ const ready = (async () => {
         await addColumnIfMissing("purchases", purchaseColumnNames, "provisioningAttemptCount", "INTEGER DEFAULT 0");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanServerId", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanUserId", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanUsername", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanServerIdentifier", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanAllocationId", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordCiphertext", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordIv", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordAuthTag", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordStoredAt", "INTEGER");
         await addColumnIfMissing("purchases", purchaseColumnNames, "hostname", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "hostnameReservationKey", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "hostnameReleasedAt", "INTEGER");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "desiredRoutingArtifactJson", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "desiredRoutingArtifactGeneratedAt", "INTEGER");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "routingVerifiedAt", "INTEGER");
         await addColumnIfMissing("purchases", purchaseColumnNames, "workerLeaseKey", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "workerLeaseExpiresAt", "INTEGER");
         await addColumnIfMissing("purchases", purchaseColumnNames, "reconciledAt", "INTEGER");
@@ -527,6 +571,11 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_pelican_links_username
+            ON customerPelicanLinks(pelicanUsername COLLATE NOCASE)
+        `);
+
+        await runStatement(`
             CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_setup_token
             ON purchases(setupToken)
             WHERE setupToken IS NOT NULL
@@ -560,6 +609,20 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_purchases_customer_pelican_username
+            ON purchases(stripeCustomerId, pelicanUsername)
+            WHERE pelicanUsername IS NOT NULL
+        `);
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_active_hostname_slug
+            ON purchases(hostnameReservationKey COLLATE NOCASE)
+            WHERE hostnameReservationKey IS NOT NULL
+              AND hostnameReleasedAt IS NULL
+              AND status NOT IN ('cancelled', 'expired')
+        `);
+
+        await runStatement(`
             CREATE INDEX IF NOT EXISTS idx_purchases_product_status
             ON purchases(productCode, status, createdAt DESC)
         `);
@@ -578,6 +641,21 @@ const ready = (async () => {
         await runStatement(`
             CREATE INDEX IF NOT EXISTS idx_fulfillment_queue_poll
             ON fulfillmentQueue(state, availableAt, id)
+        `);
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_email_outbox_idempotency_key
+            ON emailOutbox(idempotencyKey)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_email_outbox_poll
+            ON emailOutbox(state, availableAt, id)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_email_outbox_purchase
+            ON emailOutbox(purchaseId, createdAt DESC)
         `);
 
         await runStatement("UPDATE servers SET status = ? WHERE status = 'reserved'", [
