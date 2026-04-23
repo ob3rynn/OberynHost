@@ -415,6 +415,10 @@ const ready = (async () => {
                 bodyText TEXT NOT NULL,
                 payloadJson TEXT,
                 availableAt INTEGER NOT NULL,
+                lockedAt INTEGER,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                leaseKey TEXT,
+                leaseExpiresAt INTEGER,
                 createdAt INTEGER NOT NULL,
                 updatedAt INTEGER NOT NULL,
                 sentAt INTEGER,
@@ -441,6 +445,8 @@ const ready = (async () => {
         const serverColumnNames = new Set(serverColumns.map(column => column.name));
         const fulfillmentQueueColumns = await getAllRows("PRAGMA table_info(fulfillmentQueue)");
         const fulfillmentQueueColumnNames = new Set(fulfillmentQueueColumns.map(column => column.name));
+        const emailOutboxColumns = await getAllRows("PRAGMA table_info(emailOutbox)");
+        const emailOutboxColumnNames = new Set(emailOutboxColumns.map(column => column.name));
 
         await addColumnIfMissing("servers", serverColumnNames, "productCode", "TEXT");
         await addColumnIfMissing("servers", serverColumnNames, "inventoryBucketCode", "TEXT");
@@ -545,6 +551,10 @@ const ready = (async () => {
         await addColumnIfMissing("fulfillmentQueue", fulfillmentQueueColumnNames, "leaseKey", "TEXT");
         await addColumnIfMissing("fulfillmentQueue", fulfillmentQueueColumnNames, "leaseExpiresAt", "INTEGER");
         await addColumnIfMissing("fulfillmentQueue", fulfillmentQueueColumnNames, "completedAt", "INTEGER");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "lockedAt", "INTEGER");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "attempts", "INTEGER DEFAULT 0");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "leaseKey", "TEXT");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "leaseExpiresAt", "INTEGER");
 
         await seedLaunchCatalog();
         await seedLaunchInventory();
@@ -681,6 +691,9 @@ const ready = (async () => {
         await runStatement(
             "UPDATE purchases SET setupTokenExpiresAt = ? WHERE setupTokenExpiresAt IS NULL",
             [Date.now() + config.setupTokenTtlMs]
+        );
+        await runStatement(
+            "UPDATE emailOutbox SET attempts = COALESCE(attempts, 0) WHERE attempts IS NULL"
         );
         await runStatement(
             "UPDATE purchases SET updatedAt = COALESCE(updatedAt, createdAt, ?) WHERE updatedAt IS NULL",

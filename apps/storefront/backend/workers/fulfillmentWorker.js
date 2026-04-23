@@ -9,11 +9,16 @@ const {
 const { PURCHASE_STATUS } = require("../constants/status");
 const { buildDesiredRoutingArtifact } = require("../services/routingArtifacts");
 const {
+    DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS,
+    DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS,
     leaseNextEmailOutboxMessage,
     markEmailOutboxFailed,
     markEmailOutboxSent
 } = require("../services/emailOutbox");
-const { sendEmailMessage: defaultSendEmailMessage } = require("../services/emailProvider");
+const {
+    isRetryableEmailDeliveryError,
+    sendEmailMessage: defaultSendEmailMessage
+} = require("../services/emailProvider");
 const defaultProvisioner = require("../services/pelicanProvisioner");
 const { ProvisioningBlockedError } = require("../services/pelicanProvisioner");
 const { decryptSetupSecret } = require("../services/setupSecrets");
@@ -214,6 +219,8 @@ async function runFulfillmentWorkerIteration(options = {}) {
 
 async function processEmailOutboxMessage(message, options = {}) {
     const sendEmailMessage = options.sendEmailMessage || defaultSendEmailMessage;
+    const maxAttempts = Number(options.emailMaxAttempts || DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS);
+    const retryDelayMs = Number(options.emailRetryDelayMs || DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS);
 
     try {
         const deliveryResult = await sendEmailMessage({
@@ -244,15 +251,19 @@ async function processEmailOutboxMessage(message, options = {}) {
             outcome: "sent",
             emailOutboxId: message.id,
             purchaseId: message.purchaseId || null,
+            attempts: Number(message.attempts || 0),
             provider: String(deliveryResult?.provider || "").trim(),
             providerMessageId: String(deliveryResult?.providerMessageId || "").trim()
         };
     } catch (err) {
-        const markedFailed = await markEmailOutboxFailed(message, err, {
-            now: options.now
+        const failureResult = await markEmailOutboxFailed(message, err, {
+            now: options.now,
+            retryable: isRetryableEmailDeliveryError(err),
+            retryDelayMs,
+            maxAttempts
         });
 
-        if (!markedFailed) {
+        if (!failureResult.updated) {
             return {
                 outcome: "stale_email_outbox",
                 emailOutboxId: message.id,
@@ -261,9 +272,11 @@ async function processEmailOutboxMessage(message, options = {}) {
         }
 
         return {
-            outcome: "failed",
+            outcome: failureResult.shouldRetry ? "retry_scheduled" : "failed",
             emailOutboxId: message.id,
             purchaseId: message.purchaseId || null,
+            attempts: Number(message.attempts || 0),
+            nextAvailableAt: failureResult.nextAvailableAt,
             error: String(err?.message || "Email delivery failed.")
         };
     }
@@ -271,7 +284,9 @@ async function processEmailOutboxMessage(message, options = {}) {
 
 async function runEmailOutboxWorkerIteration(options = {}) {
     const message = await leaseNextEmailOutboxMessage({
-        now: options.now
+        now: options.now,
+        leaseMs: options.emailLeaseMs,
+        maxAttempts: options.emailMaxAttempts
     });
 
     if (!message) {

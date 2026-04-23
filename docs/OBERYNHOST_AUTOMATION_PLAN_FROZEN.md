@@ -30,6 +30,7 @@ Items struck through in this section are already implemented in the current repo
 - ~~The default worker adapter now has a guarded Pelican Application API implementation behind optional `PELICAN_*` env config, including external-id user/server reuse, allocation selection from configured target pools, runtime-profile egg/image/startup mapping, and tested safe admin-review fallback when live config is absent.~~
 - ~~Admin release is now gated to `pending_activation` purchases with Pelican linkage, consumed local inventory, desired routing artifact consistency, explicit routing verification, and an atomically queued ready-access email in the local outbox.~~
 - ~~The worker now also owns ready-access outbox delivery through a provider boundary, with a dev-safe `log` adapter by default, a live Postmark adapter path, and persisted `queued -> sending -> sent/failed` delivery results in SQLite.~~
+- ~~Email outbox delivery now tracks leases and attempts, auto-retries retryable failures with bounded backoff, and force-recovers expired `sending` leases into explicit final failure so rows do not hang forever.~~
 
 ## State Ownership Matrix
 
@@ -179,7 +180,7 @@ Items struck through in this section are already implemented in the current repo
 - Switch email delivery from `EMAIL_PROVIDER=log` to `EMAIL_PROVIDER=postmark`, set `POSTMARK_SERVER_TOKEN`, keep `OUTBOUND_EMAIL_FROM` on a confirmed Postmark sender/domain for `support@oberynn.com`, and run a live ready-access smoke test.
 - Fill `PELICAN_PANEL_URL`, `PELICAN_APPLICATION_API_KEY`, and `PELICAN_PROVISIONING_TARGETS_JSON` with the confirmed live panel URL, application API key, real egg IDs, allocation IDs, and resource limits for the launch target.
 - Keep the phase-1 operator routing apply/verification runbook in place because the code only generates desired routing state; host-side apply and verification still gate `pending_activation -> ready`.
-- Add unattended recovery for outbox rows stuck in `sending` or `failed` if we want production email delivery to self-heal instead of stopping for operator review.
+- Decide whether we want a provider-backed, duplicate-safe reconciliation path for `sending` rows that may have been accepted by the provider before the app crashed; the current implementation fails those closed on lease expiry instead of blindly resending.
 
 ## Assumptions And Defaults
 

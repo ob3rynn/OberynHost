@@ -13,7 +13,12 @@ class EmailDeliveryError extends Error {
         this.statusCode = Number(options.statusCode || 0) || null;
         this.errorCode = Number(options.errorCode || 0) || null;
         this.providerMessageId = String(options.providerMessageId || "").trim();
+        this.retryable = options.retryable === true;
     }
+}
+
+function isRetryableEmailDeliveryError(err) {
+    return Boolean(err && err.retryable === true);
 }
 
 function buildPostmarkMetadata(message = {}) {
@@ -56,13 +61,19 @@ async function sendWithPostmark(message, options = {}) {
     const fetchImpl = options.fetchImpl || global.fetch;
 
     if (typeof fetchImpl !== "function") {
-        throw new Error("Fetch is not available for Postmark email delivery.");
+        throw new EmailDeliveryError("Fetch is not available for Postmark email delivery.", {
+            provider: EMAIL_PROVIDER.POSTMARK,
+            retryable: false
+        });
     }
 
     const serverToken = String(config.email?.postmarkServerToken || "").trim();
 
     if (!serverToken) {
-        throw new Error("POSTMARK_SERVER_TOKEN is required when EMAIL_PROVIDER=postmark.");
+        throw new EmailDeliveryError("POSTMARK_SERVER_TOKEN is required when EMAIL_PROVIDER=postmark.", {
+            provider: EMAIL_PROVIDER.POSTMARK,
+            retryable: false
+        });
     }
 
     const payload = {
@@ -75,15 +86,27 @@ async function sendWithPostmark(message, options = {}) {
         MessageStream: config.email?.postmarkMessageStream || "outbound"
     };
 
-    const response = await fetchImpl("https://api.postmarkapp.com/email", {
-        method: "POST",
-        headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            "X-Postmark-Server-Token": serverToken
-        },
-        body: JSON.stringify(payload)
-    });
+    let response;
+
+    try {
+        response = await fetchImpl("https://api.postmarkapp.com/email", {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-Postmark-Server-Token": serverToken
+            },
+            body: JSON.stringify(payload)
+        });
+    } catch (err) {
+        throw new EmailDeliveryError(
+            `Postmark email delivery request failed before receiving a response: ${err.message || "unknown error"}`,
+            {
+                provider: EMAIL_PROVIDER.POSTMARK,
+                retryable: true
+            }
+        );
+    }
 
     const responseText = await response.text();
     let responseJson = null;
@@ -104,7 +127,8 @@ async function sendWithPostmark(message, options = {}) {
                 provider: EMAIL_PROVIDER.POSTMARK,
                 statusCode: response.status,
                 errorCode,
-                providerMessageId
+                providerMessageId,
+                retryable: response.status >= 500 || response.status === 429
             }
         );
     }
@@ -116,7 +140,8 @@ async function sendWithPostmark(message, options = {}) {
                 provider: EMAIL_PROVIDER.POSTMARK,
                 statusCode: response.status,
                 errorCode,
-                providerMessageId
+                providerMessageId,
+                retryable: false
             }
         );
     }
@@ -137,12 +162,16 @@ async function sendEmailMessage(message, options = {}) {
         case EMAIL_PROVIDER.POSTMARK:
             return sendWithPostmark(message, options);
         default:
-            throw new Error(`Unsupported email provider: ${provider}`);
+            throw new EmailDeliveryError(`Unsupported email provider: ${provider}`, {
+                provider,
+                retryable: false
+            });
     }
 }
 
 module.exports = {
     EMAIL_PROVIDER,
     EmailDeliveryError,
+    isRetryableEmailDeliveryError,
     sendEmailMessage
 };

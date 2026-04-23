@@ -2018,6 +2018,184 @@ test("email outbox worker records provider failures on the queued message", asyn
     assert.match(row.lastError, /Provider outage/);
 });
 
+test("email outbox worker schedules one retry for retryable delivery failures and then sends", async t => {
+    const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.net"
+        }
+    });
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                pelicanUsername,
+                hostname
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            7,
+            "retry@example.com",
+            "Retry Test",
+            "completed",
+            1_900_000_000_000,
+            "setup_token_email_retry_abcdefghijklmnopqrstuvwxyz",
+            1_900_000_060_000,
+            "retry_customer",
+            "retry-test.oberyn.net"
+        ]
+    );
+
+    const { enqueueReadyEmailForPurchase } = require("../services/emailOutbox");
+    await enqueueReadyEmailForPurchase({
+        id: 1,
+        email: "retry@example.com",
+        serverName: "Retry Test",
+        pelicanUsername: "retry_customer",
+        hostname: "retry-test.oberyn.net"
+    }, { now: 1_900_000_000_000 });
+
+    const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
+    const firstIteration = await runEmailOutboxWorkerIteration({
+        now: 1_900_000_000_000,
+        emailRetryDelayMs: 60_000,
+        sendEmailMessage: async () => {
+            const error = new Error("Temporary provider outage");
+            error.retryable = true;
+            throw error;
+        }
+    });
+
+    assert.equal(firstIteration.outcome, "retry_scheduled");
+    assert.equal(firstIteration.attempts, 1);
+    assert.equal(firstIteration.nextAvailableAt, 1_900_000_060_000);
+
+    const afterFailure = await getQuery(
+        `SELECT state, attempts, availableAt, leaseKey, leaseExpiresAt, lastError
+         FROM emailOutbox
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(afterFailure.state, "failed");
+    assert.equal(afterFailure.attempts, 1);
+    assert.equal(afterFailure.availableAt, 1_900_000_060_000);
+    assert.equal(afterFailure.leaseKey, null);
+    assert.equal(afterFailure.leaseExpiresAt, null);
+    assert.match(afterFailure.lastError, /Temporary provider outage/);
+
+    const tooEarly = await runEmailOutboxWorkerIteration({
+        now: 1_900_000_030_000
+    });
+    assert.equal(tooEarly, null);
+
+    const secondIteration = await runEmailOutboxWorkerIteration({
+        now: 1_900_000_060_000,
+        emailRetryDelayMs: 60_000,
+        sendEmailMessage: async message => ({
+            provider: "test_provider",
+            providerMessageId: `retry-${message.id}`
+        })
+    });
+
+    assert.equal(secondIteration.outcome, "sent");
+    assert.equal(secondIteration.attempts, 2);
+
+    const afterSuccess = await getQuery(
+        `SELECT state, attempts, sentAt, leaseKey, leaseExpiresAt
+         FROM emailOutbox
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(afterSuccess.state, "sent");
+    assert.equal(afterSuccess.attempts, 2);
+    assert.equal(afterSuccess.sentAt, 1_900_000_060_000);
+    assert.equal(afterSuccess.leaseKey, null);
+    assert.equal(afterSuccess.leaseExpiresAt, null);
+});
+
+test("email outbox worker recovers expired sending leases into explicit final failure", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO emailOutbox
+            (
+                purchaseId,
+                kind,
+                state,
+                idempotencyKey,
+                recipientEmail,
+                senderEmail,
+                subject,
+                bodyText,
+                payloadJson,
+                availableAt,
+                lockedAt,
+                attempts,
+                leaseKey,
+                leaseExpiresAt,
+                createdAt,
+                updatedAt,
+                lastError
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            null,
+            "ready_access",
+            "sending",
+            "purchase:expired:email:ready_access",
+            "expired@example.com",
+            "support@oberynn.com",
+            "Expired lease",
+            "Body",
+            "{}",
+            1_900_000_000_000,
+            1_900_000_000_000,
+            1,
+            "lease_expired_123",
+            1_900_000_010_000,
+            1_900_000_000_000,
+            1_900_000_000_000,
+            "Unknown"
+        ]
+    );
+
+    let sendCalls = 0;
+    const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runEmailOutboxWorkerIteration({
+        now: 1_900_000_020_000,
+        sendEmailMessage: async () => {
+            sendCalls += 1;
+            return {
+                provider: "test_provider",
+                providerMessageId: "should-not-send"
+            };
+        }
+    });
+
+    assert.equal(iteration, null);
+    assert.equal(sendCalls, 0);
+
+    const row = await getQuery(
+        `SELECT state, attempts, leaseKey, leaseExpiresAt, lastError
+         FROM emailOutbox
+         WHERE idempotencyKey = ?`,
+        ["purchase:expired:email:ready_access"]
+    );
+    assert.equal(row.state, "failed");
+    assert.equal(row.attempts, 2);
+    assert.equal(row.leaseKey, null);
+    assert.equal(row.leaseExpiresAt, null);
+    assert.match(row.lastError, /automatic resend skipped to avoid duplicate customer mail/i);
+});
+
 test("admin guardrails block cancelling or releasing a live subscription, but allow suspension", async t => {
     const app = await createTestApp(t);
     const { runQuery, getQuery } = app.queries;
