@@ -3,11 +3,17 @@ const express = require("express");
 const requireAdmin = require("../../middleware/auth");
 const config = require("../../config");
 const { createRateLimiter } = require("../../middleware/rateLimit");
-const { PURCHASE_STATUS, SERVER_STATUS, FULFILLMENT_STATUS } = require("../../constants/status");
+const { PURCHASE_STATUS, SERVER_STATUS, SETUP_STATUS, FULFILLMENT_STATUS } = require("../../constants/status");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { createAdminSession, destroyAdminSession } = require("../../services/adminSessions");
 const { markPurchasePaid, expirePurchase } = require("../../services/purchases");
 const { enqueueReadyEmailForPurchase } = require("../../services/emailOutbox");
+const {
+    buildProvisioningIdempotencyKey,
+    buildProvisioningPayload,
+    FULFILLMENT_QUEUE_STATE,
+    FULFILLMENT_TASK_TYPE
+} = require("../../services/fulfillmentQueue");
 const { clearCookie, parseCookies, serializeCookie } = require("../../utils/cookies");
 const { allQuery, getQuery, runQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
@@ -383,6 +389,57 @@ function getReadyReleaseErrors(purchase) {
         if (String(artifact.pelicanAllocationId || "") !== String(purchase.pelicanAllocationId || "")) {
             errors.push("desired routing artifact allocation does not match the purchase");
         }
+    }
+
+    return errors;
+}
+
+function getFulfillmentRequeueErrors(purchase) {
+    const errors = [];
+    const requeueableStates = new Set([
+        FULFILLMENT_STATUS.NEEDS_ADMIN_REVIEW,
+        FULFILLMENT_STATUS.DEAD_LETTER,
+        FULFILLMENT_STATUS.RETRYABLE_FAILURE
+    ]);
+
+    if (purchase.status !== PURCHASE_STATUS.PAID) {
+        errors.push("purchase is not paid");
+    }
+
+    if (!requeueableStates.has(purchase.fulfillmentStatus)) {
+        errors.push("fulfillment is not in a requeueable admin-review state");
+    }
+
+    if (purchase.setupStatus !== SETUP_STATUS.SETUP_SUBMITTED) {
+        errors.push("setup has not been fully submitted");
+    }
+
+    if (!purchase.serverId || purchase.serverStatus !== SERVER_STATUS.HELD) {
+        errors.push("reserved capacity is not held");
+    }
+
+    if (!purchase.serverName) errors.push("server name is missing");
+    if (!purchase.hostname || !purchase.hostnameReservationKey) errors.push("hostname reservation is missing");
+    if (!purchase.productCode) errors.push("product code is missing");
+    if (!purchase.inventoryBucketCode) errors.push("inventory bucket is missing");
+    if (!purchase.nodeGroupCode) errors.push("node group is missing");
+    if (!purchase.provisioningTargetCode) errors.push("provisioning target is missing");
+    if (!purchase.minecraftVersion) errors.push("Minecraft version is missing");
+    if (!purchase.runtimeProfileCode || !purchase.runtimeJavaVersion) {
+        errors.push("resolved runtime profile is missing");
+    }
+    if (!purchase.pelicanUsername) errors.push("Pelican username is missing");
+
+    if (!purchase.pelicanUserId && !purchase.email) {
+        errors.push("customer email is missing for Pelican user creation");
+    }
+
+    if (!purchase.pelicanUserId && (
+        !purchase.pelicanPasswordCiphertext ||
+        !purchase.pelicanPasswordIv ||
+        !purchase.pelicanPasswordAuthTag
+    )) {
+        errors.push("first-time Pelican password is not staged");
     }
 
     return errors;
@@ -768,6 +825,167 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
 
         console.error("Purchase override failed:", err);
         res.status(500).json({ error: "Could not apply purchase override" });
+    }
+});
+
+router.post("/admin/purchases/:purchaseId/requeue-fulfillment", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        const requeueErrors = getFulfillmentRequeueErrors(purchase);
+
+        if (requeueErrors.length > 0) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: `Purchase cannot be requeued yet: ${requeueErrors.join("; ")}.`
+            });
+        }
+
+        const idempotencyKey = buildProvisioningIdempotencyKey(purchase.id);
+        const existingJob = await getQuery(
+            `SELECT *
+             FROM fulfillmentQueue
+             WHERE idempotencyKey = ?`,
+            [idempotencyKey]
+        );
+
+        if (
+            existingJob &&
+            (existingJob.state === FULFILLMENT_QUEUE_STATE.QUEUED ||
+                existingJob.state === FULFILLMENT_QUEUE_STATE.LEASED)
+        ) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "This purchase already has an active provisioning job."
+            });
+        }
+
+        const now = Date.now();
+        const payloadJson = JSON.stringify(buildProvisioningPayload(purchase));
+
+        if (existingJob) {
+            await runQuery(
+                `UPDATE fulfillmentQueue
+                 SET purchaseId = ?,
+                     taskType = ?,
+                     state = ?,
+                     payloadJson = ?,
+                     availableAt = ?,
+                     lockedAt = NULL,
+                     attempts = 0,
+                     lastError = NULL,
+                     leaseKey = NULL,
+                     leaseExpiresAt = NULL,
+                     completedAt = NULL,
+                     updatedAt = ?
+                 WHERE id = ?
+                   AND state NOT IN (?, ?)`,
+                [
+                    purchase.id,
+                    FULFILLMENT_TASK_TYPE.PROVISION_INITIAL_SERVER,
+                    FULFILLMENT_QUEUE_STATE.QUEUED,
+                    payloadJson,
+                    now,
+                    now,
+                    existingJob.id,
+                    FULFILLMENT_QUEUE_STATE.QUEUED,
+                    FULFILLMENT_QUEUE_STATE.LEASED
+                ]
+            );
+        } else {
+            await runQuery(
+                `INSERT INTO fulfillmentQueue
+                    (
+                        purchaseId,
+                        taskType,
+                        state,
+                        idempotencyKey,
+                        payloadJson,
+                        availableAt,
+                        createdAt,
+                        updatedAt
+                    )
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    purchase.id,
+                    FULFILLMENT_TASK_TYPE.PROVISION_INITIAL_SERVER,
+                    FULFILLMENT_QUEUE_STATE.QUEUED,
+                    idempotencyKey,
+                    payloadJson,
+                    now,
+                    now,
+                    now
+                ]
+            );
+        }
+
+        const nextPurchase = mergeLifecycleState(purchase, {
+            fulfillmentStatus: FULFILLMENT_STATUS.QUEUED,
+            fulfillmentFailureClass: null,
+            needsAdminReviewReason: null,
+            lastProvisioningError: null,
+            workerLeaseKey: null,
+            workerLeaseExpiresAt: null,
+            lastStateOwner: "admin"
+        });
+
+        await runQuery(
+            `UPDATE purchases
+             SET fulfillmentStatus = ?,
+                 fulfillmentFailureClass = NULL,
+                 needsAdminReviewReason = NULL,
+                 lastProvisioningError = NULL,
+                 workerLeaseKey = NULL,
+                 workerLeaseExpiresAt = NULL,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?`,
+            [
+                nextPurchase.fulfillmentStatus,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id
+            ]
+        );
+
+        await recordAdminAction(req, purchaseId, "requeue_fulfillment", adminNote.value || "", {
+            fromFulfillmentStatus: purchase.fulfillmentStatus,
+            toFulfillmentStatus: nextPurchase.fulfillmentStatus,
+            queueIdempotencyKey: idempotencyKey
+        });
+
+        await runQuery("COMMIT");
+
+        const serialized = await loadSerializedPurchase(purchaseId);
+
+        res.json({
+            success: true,
+            purchase: serialized
+        });
+    } catch (err) {
+        await rollbackTransaction();
+        console.error("Fulfillment requeue failed:", err);
+        res.status(500).json({ error: "Could not requeue fulfillment" });
     }
 });
 

@@ -1292,6 +1292,14 @@ function isStaleCheckout(purchase) {
     return Boolean(purchase.diagnostics?.stalePendingCheckout);
 }
 
+function isFulfillmentRequeueable(purchase) {
+    return purchase.status === "paid" && [
+        "needs_admin_review",
+        "dead_letter",
+        "retryable_failure"
+    ].includes(purchase.fulfillmentStatus);
+}
+
 function hasNonStaleIssues(purchase) {
     const issueCount = purchase.diagnostics?.issueCount || 0;
     const staleOffset = isStaleCheckout(purchase) ? 1 : 0;
@@ -1863,6 +1871,21 @@ function renderBulkToolbar(items) {
         );
     }, !selectedItems.some(item => item.stripeSessionId)));
 
+    actions.appendChild(createGuardedAction("Bulk Requeue Fulfillment", "secondary", "Confirm Requeue", async () => {
+        const requeueable = selectedItems.filter(item => isFulfillmentRequeueable(item));
+        await runBulkAction(
+            requeueable,
+            item => requestJson(`/api/admin/purchases/${item.id}/requeue-fulfillment`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ adminNote: getOperatorNote(noteInput) })
+            }),
+            `Requeued fulfillment for ${requeueable.length} selected order(s).`
+        );
+    }, !selectedItems.some(item => isFulfillmentRequeueable(item)),
+    "These selected orders are safe to put back into the provisioning queue.",
+    "This clears the current admin-review fulfillment failure and requeues the same purchase instead of creating a replacement order."));
+
     actions.appendChild(createGuardedAction("Bulk Release Ready", "primary", "Confirm Bulk Release", async () => {
         const releasable = selectedItems.filter(item =>
             item.status === "paid" && item.fulfillmentStatus === "pending_activation"
@@ -2075,6 +2098,14 @@ async function reconcileStripe(id, adminNote = "") {
         );
         await load();
     }
+}
+
+async function requeueFulfillment(id, adminNote = "") {
+    await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/requeue-fulfillment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminNote })
+    }), `Requeued fulfillment for order #${id}.`);
 }
 
 async function applyOverride(id, payload, successMessage) {
@@ -2500,6 +2531,14 @@ function renderPurchaseCard(purchase) {
         actions.appendChild(createActionButton("Re-check Stripe", "secondary", async () => {
             await reconcileStripe(purchase.id, getOperatorNote(noteInput));
         }));
+    }
+
+    if (isFulfillmentRequeueable(purchase)) {
+        actions.appendChild(createGuardedAction("Requeue Fulfillment", "secondary", "Confirm Requeue", async () => {
+            await requeueFulfillment(purchase.id, getOperatorNote(noteInput));
+        }, false,
+        "The underlying issue is fixed and this same purchase should return to the provisioning queue.",
+        "This clears the current admin-review fulfillment failure and requeues the existing purchase instead of creating a replacement order."));
     }
 
     if (purchase.diagnostics?.policy?.suspensionRequired) {

@@ -1877,6 +1877,217 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     assert.equal(afterLogout.status, 401);
 });
 
+test("admin can requeue fulfillment on the same purchase after admin review", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery, allQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeCustomerId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                runtimeProfileCode,
+                runtimeJavaVersion,
+                minecraftVersion,
+                setupStatus,
+                fulfillmentStatus,
+                fulfillmentFailureClass,
+                needsAdminReviewReason,
+                lastProvisioningError,
+                hostname,
+                hostnameReservationKey,
+                pelicanUserId,
+                pelicanUsername,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "requeue@example.com",
+            "Requeue Server",
+            "paid",
+            "cus_requeue",
+            Date.now(),
+            "setup_token_requeue_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            "paper-java21",
+            21,
+            "1.20.6",
+            "setup_submitted",
+            "needs_admin_review",
+            "manual_approval_required",
+            "Missing operator confirmation",
+            "Missing operator confirmation",
+            "requeue-server.oberyn.net",
+            "requeue-server",
+            "pelican-user-requeue",
+            "requeue_customer",
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    await runQuery(
+        `INSERT INTO fulfillmentQueue
+            (
+                purchaseId,
+                taskType,
+                state,
+                idempotencyKey,
+                payloadJson,
+                availableAt,
+                lockedAt,
+                attempts,
+                lastError,
+                createdAt,
+                updatedAt,
+                completedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            1,
+            "provision_initial_server",
+            "needs_admin_review",
+            "purchase:1:task:provision_initial_server",
+            JSON.stringify({ stale: true }),
+            Date.now(),
+            Date.now(),
+            1,
+            "Missing operator confirmation",
+            Date.now(),
+            Date.now(),
+            Date.now()
+        ]
+    );
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    assert.equal(loginRes.status, 200);
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const requeueRes = await app.request("/api/admin/purchases/1/requeue-fulfillment", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ adminNote: "Config fixed, retry same order" })
+    });
+    assert.equal(requeueRes.status, 200);
+
+    const purchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            fulfillmentFailureClass,
+            needsAdminReviewReason,
+            lastProvisioningError,
+            workerLeaseKey,
+            workerLeaseExpiresAt,
+            lastStateOwner
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.fulfillmentStatus, "queued");
+    assert.equal(purchase.fulfillmentFailureClass, null);
+    assert.equal(purchase.needsAdminReviewReason, null);
+    assert.equal(purchase.lastProvisioningError, null);
+    assert.equal(purchase.workerLeaseKey, null);
+    assert.equal(purchase.workerLeaseExpiresAt, null);
+    assert.equal(purchase.lastStateOwner, "admin");
+
+    const queueRow = await getQuery(
+        `SELECT
+            state,
+            payloadJson,
+            attempts,
+            lastError,
+            leaseKey,
+            leaseExpiresAt,
+            completedAt
+         FROM fulfillmentQueue
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(queueRow.state, "queued");
+    assert.equal(queueRow.attempts, 0);
+    assert.equal(queueRow.lastError, null);
+    assert.equal(queueRow.leaseKey, null);
+    assert.equal(queueRow.leaseExpiresAt, null);
+    assert.equal(queueRow.completedAt, null);
+    assert.equal(JSON.parse(queueRow.payloadJson).hostname, "requeue-server.oberyn.net");
+
+    const auditRows = await allQuery(
+        "SELECT actionType, note FROM adminAuditLog WHERE purchaseId = 1 ORDER BY id ASC"
+    );
+    assert.deepEqual(
+        auditRows.map(row => row.actionType),
+        ["requeue_fulfillment"]
+    );
+
+    const { runFulfillmentWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runFulfillmentWorkerIteration({
+        provisionInitialServer: async input => ({
+            pelicanUserId: input.pelicanUserId,
+            pelicanUsername: input.pelicanUsername,
+            pelicanServerId: "pelican-server-requeued",
+            pelicanServerIdentifier: "srv_requeued",
+            pelicanAllocationId: "allocation-requeued"
+        })
+    });
+
+    assert.equal(iteration.outcome, "pending_activation");
+
+    const recoveredPurchase = await getQuery(
+        `SELECT fulfillmentStatus, pelicanServerIdentifier
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(recoveredPurchase.fulfillmentStatus, "pending_activation");
+    assert.equal(recoveredPurchase.pelicanServerIdentifier, "srv_requeued");
+});
+
 test("email outbox worker marks queued ready-access email sent through an injected provider", async t => {
     const app = await createTestApp(t, {
         pelicanEnv: {

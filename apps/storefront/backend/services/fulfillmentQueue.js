@@ -464,6 +464,7 @@ module.exports = {
     FULFILLMENT_FAILURE_CLASS,
     FULFILLMENT_QUEUE_STATE,
     FULFILLMENT_TASK_TYPE,
+    buildProvisioningPayload,
     buildProvisioningIdempotencyKey,
     completeLeasedProvisioningJob,
     enqueueProvisioningJobForPurchase,

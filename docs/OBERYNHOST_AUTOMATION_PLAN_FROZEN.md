@@ -31,6 +31,7 @@ Items struck through in this section are already implemented in the current repo
 - ~~Admin release is now gated to `pending_activation` purchases with Pelican linkage, consumed local inventory, desired routing artifact consistency, explicit routing verification, and an atomically queued ready-access email in the local outbox.~~
 - ~~The worker now also owns ready-access outbox delivery through a provider boundary, with a dev-safe `log` adapter by default, a live Postmark adapter path, and persisted `queued -> sending -> sent/failed` delivery results in SQLite.~~
 - ~~Email outbox delivery now tracks leases and attempts, auto-retries retryable failures with bounded backoff, and force-recovers expired `sending` leases into explicit final failure so rows do not hang forever.~~
+- ~~Admin recovery can now requeue `needs_admin_review` or `dead_letter` fulfillment work on the same purchase, reset the existing queue record back to `queued`, and send it through the worker again without cloning a replacement order.~~
 
 ## State Ownership Matrix
 
