@@ -21,6 +21,7 @@ const {
     isRetryableEmailDeliveryError,
     sendEmailMessage: defaultSendEmailMessage
 } = require("../services/emailProvider");
+const { suspendNextPurchasePastGrace } = require("../services/lifecycleEnforcement");
 const defaultProvisioner = require("../services/pelicanProvisioner");
 const { ProvisioningBlockedError } = require("../services/pelicanProvisioner");
 const { decryptSetupSecret } = require("../services/setupSecrets");
@@ -397,17 +398,23 @@ async function runEmailOutboxWorkerIteration(options = {}) {
     return processEmailOutboxMessage(message, options);
 }
 
+async function runLifecycleWorkerIteration(options = {}) {
+    return suspendNextPurchasePastGrace(options);
+}
+
 async function runWorkerIteration(options = {}) {
     const fulfillment = await runFulfillmentWorkerIteration(options);
     const email = await runEmailOutboxWorkerIteration(options);
+    const lifecycle = await runLifecycleWorkerIteration(options);
 
-    if (!fulfillment && !email) {
+    if (!fulfillment && !email && !lifecycle) {
         return null;
     }
 
     return {
         fulfillment,
-        email
+        email,
+        lifecycle
     };
 }
 
@@ -464,6 +471,7 @@ module.exports = {
     processFulfillmentJob,
     runEmailOutboxWorkerIteration,
     runFulfillmentWorkerIteration,
+    runLifecycleWorkerIteration,
     runWorkerIteration,
     startFulfillmentWorker
 };

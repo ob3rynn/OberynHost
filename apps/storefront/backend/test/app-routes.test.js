@@ -1916,6 +1916,182 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
     assert.equal(recoveredPurchase.serviceSuspendedAt, null);
 });
 
+test("lifecycle worker suspends a completed delinquent service after grace expires", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { SUBSCRIPTION_GRACE_PERIOD_MS } = require("../services/policyRules");
+    const now = 1_800_000_000_000;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                stripeCustomerId,
+                stripeSubscriptionId,
+                stripeSubscriptionStatus,
+                stripeCurrentPeriodEnd,
+                stripeCancelAtPeriodEnd,
+                stripePriceId,
+                subscriptionDelinquentAt,
+                setupStatus,
+                fulfillmentStatus,
+                serviceStatus,
+                customerRiskStatus
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            7,
+            "suspend@example.com",
+            "Suspension Server",
+            "completed",
+            "cs_test_suspend_runtime",
+            now - (1000 * 60 * 60 * 24 * 40),
+            "setup_token_suspend_abcdefghijklmnopqrstuvwxyz",
+            now + 60_000,
+            "cus_suspend",
+            "sub_suspend",
+            "past_due",
+            now + 86_400_000,
+            0,
+            "price_test_3gb",
+            now - SUBSCRIPTION_GRACE_PERIOD_MS - 1000,
+            "setup_submitted",
+            "ready",
+            "grace_live",
+            "purchase_blocked_delinquent"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 7]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration.outcome, "suspended_for_nonpayment");
+    assert.equal(iteration.purchaseId, 1);
+    assert.equal(iteration.serverId, 7);
+    assert.equal(iteration.serviceSuspendedAt, now);
+
+    const purchase = await getQuery(
+        `SELECT
+            status,
+            serviceSuspendedAt,
+            serviceStatus,
+            customerRiskStatus,
+            lastStateOwner
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.status, "completed");
+    assert.equal(purchase.serviceSuspendedAt, now);
+    assert.equal(purchase.serviceStatus, "suspended_final_recovery");
+    assert.equal(purchase.customerRiskStatus, "purchase_blocked_delinquent");
+    assert.equal(purchase.lastStateOwner, "worker");
+
+    const server = await getQuery("SELECT status FROM servers WHERE id = ?", [7]);
+    assert.equal(server.status, "held");
+
+    const auditEntry = await getQuery(
+        `SELECT actionType, note, detailsJson, userAgent
+         FROM adminAuditLog
+         WHERE purchaseId = 1
+         ORDER BY id DESC
+         LIMIT 1`
+    );
+    assert.equal(auditEntry.actionType, "worker_suspend_for_nonpayment");
+    assert.equal(auditEntry.userAgent, "worker/lifecycle");
+    assert.match(auditEntry.note, /Grace period expired/);
+
+    const auditDetails = JSON.parse(auditEntry.detailsJson);
+    assert.equal(auditDetails.fromServerStatus, "allocated");
+    assert.equal(auditDetails.toServerStatus, "held");
+    assert.equal(auditDetails.serviceSuspendedAt, now);
+});
+
+test("lifecycle worker does not suspend subscriptions that are still in grace", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { SUBSCRIPTION_GRACE_PERIOD_MS } = require("../services/policyRules");
+    const now = 1_800_000_000_000;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                stripeCustomerId,
+                stripeSubscriptionId,
+                stripeSubscriptionStatus,
+                stripeCurrentPeriodEnd,
+                stripeCancelAtPeriodEnd,
+                stripePriceId,
+                subscriptionDelinquentAt,
+                setupStatus,
+                fulfillmentStatus,
+                serviceStatus,
+                customerRiskStatus
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            7,
+            "still-grace@example.com",
+            "Still Grace Server",
+            "completed",
+            "cs_test_suspend_not_due",
+            now - (1000 * 60 * 60 * 24 * 10),
+            "setup_token_suspend_not_due_abcdefghijklmnopqrstuvwxyz",
+            now + 60_000,
+            "cus_suspend_not_due",
+            "sub_suspend_not_due",
+            "past_due",
+            now + 86_400_000,
+            0,
+            "price_test_3gb",
+            now - SUBSCRIPTION_GRACE_PERIOD_MS + 60_000,
+            "setup_submitted",
+            "ready",
+            "grace_live",
+            "purchase_blocked_delinquent"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 7]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration, null);
+
+    const purchase = await getQuery(
+        `SELECT serviceSuspendedAt, serviceStatus, customerRiskStatus, lastStateOwner
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.serviceSuspendedAt, null);
+    assert.equal(purchase.serviceStatus, "grace_live");
+    assert.equal(purchase.customerRiskStatus, "purchase_blocked_delinquent");
+    assert.equal(purchase.lastStateOwner, null);
+
+    const server = await getQuery("SELECT status FROM servers WHERE id = ?", [7]);
+    assert.equal(server.status, "allocated");
+
+    const auditCount = await getQuery(
+        "SELECT COUNT(*) AS count FROM adminAuditLog WHERE purchaseId = 1"
+    );
+    assert.equal(auditCount.count, 0);
+});
+
 test("admin auth, completion, reconcile, and audit trail work", async t => {
     const app = await createTestApp(t, {
         stripe: {
