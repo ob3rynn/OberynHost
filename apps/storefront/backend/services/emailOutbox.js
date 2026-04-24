@@ -11,7 +11,8 @@ const EMAIL_OUTBOX_STATE = {
 };
 
 const EMAIL_KIND = {
-    READY_ACCESS: "ready_access"
+    READY_ACCESS: "ready_access",
+    SETUP_REMINDER: "setup_reminder"
 };
 
 const DEFAULT_EMAIL_OUTBOX_LEASE_MS = 1000 * 60;
@@ -20,6 +21,10 @@ const DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS = 2;
 
 function buildReadyEmailIdempotencyKey(purchaseId) {
     return `purchase:${purchaseId}:email:${EMAIL_KIND.READY_ACCESS}`;
+}
+
+function buildSetupReminderIdempotencyKey(purchaseId) {
+    return `purchase:${purchaseId}:email:${EMAIL_KIND.SETUP_REMINDER}`;
 }
 
 function parsePayloadJson(value) {
@@ -48,6 +53,21 @@ function normalizeEmailOutboxRow(row) {
 
 function getPanelUrl() {
     return String(config.pelican?.panelUrl || "").trim();
+}
+
+function buildSetupReminderUrl(purchase) {
+    const baseUrl = String(config.baseUrl || "").trim();
+    const stripeSessionId = String(purchase?.stripeSessionId || "").trim();
+
+    if (!baseUrl) {
+        throw new Error("Base URL is required before queueing a setup reminder email.");
+    }
+
+    if (stripeSessionId) {
+        return `${baseUrl}/success?session_id=${encodeURIComponent(stripeSessionId)}`;
+    }
+
+    return `${baseUrl}/success`;
 }
 
 function buildReadyEmailMessage(purchase) {
@@ -93,10 +113,88 @@ function buildReadyEmailMessage(purchase) {
     };
 }
 
+function buildSetupReminderEmailMessage(purchase) {
+    const recipientEmail = String(purchase?.email || "").trim();
+    const setupUrl = buildSetupReminderUrl(purchase);
+    const serverLabel = String(purchase?.planType || purchase?.serverType || "server").trim() || "server";
+
+    if (!recipientEmail) {
+        throw new Error("Customer email is required before queueing a setup reminder.");
+    }
+
+    const subject = `Finish your OberynHost ${serverLabel} setup`;
+    const bodyText = [
+        "Your payment has been verified, but server setup is still waiting on your details.",
+        "",
+        "Open this link to finish setup:",
+        setupUrl
+    ].join("\n");
+
+    return {
+        kind: EMAIL_KIND.SETUP_REMINDER,
+        recipientEmail,
+        senderEmail: config.outboundEmailFrom,
+        subject,
+        bodyText,
+        payload: {
+            kind: EMAIL_KIND.SETUP_REMINDER,
+            setupUrl,
+            purchaseId: purchase.id,
+            stripeSessionId: String(purchase?.stripeSessionId || "").trim(),
+            email: recipientEmail
+        }
+    };
+}
+
 async function enqueueReadyEmailForPurchase(purchase, options = {}) {
     const now = Number(options.now || Date.now());
     const message = buildReadyEmailMessage(purchase);
     const idempotencyKey = buildReadyEmailIdempotencyKey(purchase.id);
+
+    await runQuery(
+        `INSERT INTO emailOutbox
+            (
+                purchaseId,
+                kind,
+                state,
+                idempotencyKey,
+                recipientEmail,
+                senderEmail,
+                subject,
+                bodyText,
+                payloadJson,
+                availableAt,
+                createdAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(idempotencyKey) DO NOTHING`,
+        [
+            purchase.id,
+            message.kind,
+            EMAIL_OUTBOX_STATE.QUEUED,
+            idempotencyKey,
+            message.recipientEmail,
+            message.senderEmail,
+            message.subject,
+            message.bodyText,
+            JSON.stringify(message.payload),
+            now,
+            now,
+            now
+        ]
+    );
+
+    return {
+        ...message,
+        idempotencyKey
+    };
+}
+
+async function enqueueSetupReminderEmailForPurchase(purchase, options = {}) {
+    const now = Number(options.now || Date.now());
+    const message = buildSetupReminderEmailMessage(purchase);
+    const idempotencyKey = buildSetupReminderIdempotencyKey(purchase.id);
 
     await runQuery(
         `INSERT INTO emailOutbox
@@ -339,7 +437,10 @@ module.exports = {
     EMAIL_OUTBOX_STATE,
     buildReadyEmailIdempotencyKey,
     buildReadyEmailMessage,
+    buildSetupReminderEmailMessage,
+    buildSetupReminderIdempotencyKey,
     enqueueReadyEmailForPurchase,
+    enqueueSetupReminderEmailForPurchase,
     leaseNextEmailOutboxMessage,
     recoverExpiredEmailOutboxLeases,
     markEmailOutboxFailed,

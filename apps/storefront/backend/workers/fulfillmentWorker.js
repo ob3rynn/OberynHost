@@ -21,7 +21,11 @@ const {
     isRetryableEmailDeliveryError,
     sendEmailMessage: defaultSendEmailMessage
 } = require("../services/emailProvider");
-const { suspendNextPurchasePastGrace } = require("../services/lifecycleEnforcement");
+const {
+    escalateNextPaidStalledPurchase,
+    remindNextPaidStalledPurchase,
+    suspendNextPurchasePastGrace
+} = require("../services/lifecycleEnforcement");
 const defaultProvisioner = require("../services/pelicanProvisioner");
 const { ProvisioningBlockedError } = require("../services/pelicanProvisioner");
 const { decryptSetupSecret } = require("../services/setupSecrets");
@@ -399,6 +403,18 @@ async function runEmailOutboxWorkerIteration(options = {}) {
 }
 
 async function runLifecycleWorkerIteration(options = {}) {
+    const reminder = await remindNextPaidStalledPurchase(options);
+
+    if (reminder) {
+        return reminder;
+    }
+
+    const escalation = await escalateNextPaidStalledPurchase(options);
+
+    if (escalation) {
+        return escalation;
+    }
+
     return suspendNextPurchasePastGrace(options);
 }
 

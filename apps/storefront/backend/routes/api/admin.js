@@ -14,6 +14,7 @@ const {
     FULFILLMENT_QUEUE_STATE,
     FULFILLMENT_TASK_TYPE
 } = require("../../services/fulfillmentQueue");
+const { PAID_SETUP_ADMIN_ESCALATION_DELAY_MS } = require("../../services/lifecycleEnforcement");
 const { clearCookie, parseCookies, serializeCookie } = require("../../utils/cookies");
 const { allQuery, getQuery, runQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
@@ -82,9 +83,16 @@ function buildDiagnostics(purchase) {
     const issues = [];
     const recommendedServerStatus = inferServerStatus(purchase);
     const createdAt = Number(purchase.createdAt) || 0;
+    const paidAt = Number(purchase.paidAt || purchase.createdAt) || 0;
     const tokenExpired = Boolean(
         purchase.setupTokenExpiresAt &&
         Number(purchase.setupTokenExpiresAt) < Date.now()
+    );
+    const paidSetupEscalationDue = Boolean(
+        purchase.status === PURCHASE_STATUS.PAID &&
+        (!purchase.serverName || !String(purchase.serverName).trim()) &&
+        paidAt > 0 &&
+        (Date.now() - paidAt) >= PAID_SETUP_ADMIN_ESCALATION_DELAY_MS
     );
     const policy = getPurchasePolicyState(purchase);
     const stalePendingCheckout = Boolean(
@@ -174,6 +182,11 @@ function buildDiagnostics(purchase) {
         issues,
         stalePendingCheckout,
         "Pending checkout has been held for over 30 minutes without payment confirmation."
+    );
+    addIssue(
+        issues,
+        paidSetupEscalationDue,
+        "Paid purchase has been waiting on customer setup for over 72 hours and needs admin follow-up."
     );
     addIssue(
         issues,

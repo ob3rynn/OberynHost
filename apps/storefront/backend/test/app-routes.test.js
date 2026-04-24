@@ -2092,6 +2092,155 @@ test("lifecycle worker does not suspend subscriptions that are still in grace", 
     assert.equal(auditCount.count, 0);
 });
 
+test("lifecycle worker queues one setup reminder email for paid purchases stalled over 24 hours", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const {
+        PAID_SETUP_ADMIN_ESCALATION_DELAY_MS,
+        PAID_SETUP_REMINDER_DELAY_MS
+    } = require("../services/lifecycleEnforcement");
+    const now = Date.now();
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            8,
+            "setup-reminder@example.com",
+            "",
+            "paid",
+            "cs_test_setup_reminder",
+            now - PAID_SETUP_ADMIN_ESCALATION_DELAY_MS + (1000 * 60 * 60),
+            "setup_token_stall_reminder_abcdefghijklmnopqrstuvwxyz",
+            now + (1000 * 60 * 60 * 24),
+            now - PAID_SETUP_REMINDER_DELAY_MS - 1000
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 8]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration.outcome, "setup_reminder_queued");
+    assert.equal(iteration.purchaseId, 1);
+    assert.equal(iteration.emailKind, "setup_reminder");
+
+    const outboxRow = await getQuery(
+        `SELECT kind, state, idempotencyKey, subject, bodyText, payloadJson
+         FROM emailOutbox
+         WHERE purchaseId = 1`
+    );
+    assert.equal(outboxRow.kind, "setup_reminder");
+    assert.equal(outboxRow.state, "queued");
+    assert.equal(outboxRow.idempotencyKey, "purchase:1:email:setup_reminder");
+    assert.match(outboxRow.subject, /Finish your OberynHost/);
+    assert.match(outboxRow.bodyText, /success\?session_id=cs_test_setup_reminder/);
+
+    const payload = JSON.parse(outboxRow.payloadJson);
+    assert.equal(payload.kind, "setup_reminder");
+    assert.equal(payload.setupUrl, `${app.baseUrl}/success?session_id=cs_test_setup_reminder`);
+
+    const secondIteration = await runLifecycleWorkerIteration({ now: now + 1000 });
+    assert.equal(secondIteration, null);
+
+    const outboxCount = await getQuery(
+        "SELECT COUNT(*) AS count FROM emailOutbox WHERE purchaseId = 1 AND kind = ?",
+        ["setup_reminder"]
+    );
+    assert.equal(outboxCount.count, 1);
+});
+
+test("lifecycle worker escalates paid setup stalls after 72 hours for admin follow-up", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { PAID_SETUP_ADMIN_ESCALATION_DELAY_MS } = require("../services/lifecycleEnforcement");
+    const now = Date.now();
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            8,
+            "setup-escalation@example.com",
+            "",
+            "paid",
+            "cs_test_setup_escalation",
+            now - PAID_SETUP_ADMIN_ESCALATION_DELAY_MS - (1000 * 60 * 60),
+            "setup_token_stall_escalation_abcdefghijklmnopqrstuvwxyz",
+            now + (1000 * 60 * 60 * 24),
+            now - PAID_SETUP_ADMIN_ESCALATION_DELAY_MS - 1000
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 8]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration.outcome, "paid_setup_admin_escalation");
+    assert.equal(iteration.purchaseId, 1);
+
+    const auditEntry = await getQuery(
+        `SELECT actionType, note, detailsJson, userAgent
+         FROM adminAuditLog
+         WHERE purchaseId = 1
+         ORDER BY id DESC
+         LIMIT 1`
+    );
+    assert.equal(auditEntry.actionType, "worker_escalate_paid_stall");
+    assert.equal(auditEntry.userAgent, "worker/lifecycle");
+    assert.match(auditEntry.note, /over 72 hours/);
+
+    const secondIteration = await runLifecycleWorkerIteration({ now: now + 1000 });
+    assert.equal(secondIteration, null);
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    assert.equal(loginRes.status, 200);
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const purchasesRes = await app.request("/api/purchases", {
+        headers: {
+            cookie: adminCookie
+        }
+    });
+    assert.equal(purchasesRes.status, 200);
+    const purchases = await purchasesRes.json();
+    assert.equal(purchases.length, 1);
+    assert.ok(
+        purchases[0].diagnostics.issues.includes(
+            "Paid purchase has been waiting on customer setup for over 72 hours and needs admin follow-up."
+        )
+    );
+});
+
 test("admin auth, completion, reconcile, and audit trail work", async t => {
     const app = await createTestApp(t, {
         stripe: {

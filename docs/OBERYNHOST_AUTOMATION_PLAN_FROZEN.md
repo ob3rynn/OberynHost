@@ -34,6 +34,7 @@ Items struck through in this section are already implemented in the current repo
 - ~~Admin recovery can now requeue `needs_admin_review` or `dead_letter` fulfillment work on the same purchase, reset the existing queue record back to `queued`, and send it through the worker again without cloning a replacement order.~~
 - ~~Provisioning now uses a real `retryable_failure -> queued` path for the first transient/dependency failure, escalates the second failure to `needs_admin_review`, and dead-letters unsafe partial-success cases on the same purchase instead of leaving them in an ambiguous leased state.~~
 - ~~The worker now enforces grace-expired nonpayment suspension by automatically setting `serviceSuspendedAt`, moving the local server from `allocated -> held`, and writing a lifecycle audit entry on the same purchase.~~
+- ~~The lifecycle worker now queues a one-time paid-stall setup reminder after about `24h`, escalates the same stalled paid purchase to admin follow-up after about `72h`, and surfaces that stall in admin diagnostics without releasing reserved capacity.~~
 
 ## State Ownership Matrix
 
