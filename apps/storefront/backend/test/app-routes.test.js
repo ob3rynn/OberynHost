@@ -825,6 +825,335 @@ test("fulfillment worker leases queued setup work and escalates it to admin revi
     assert.match(job.lastError, /Pelican provisioning adapter is not configured/);
 });
 
+test("fulfillment worker retries a transient provisioning failure once before escalating", async t => {
+    const app = await createTestApp(t);
+    const { getQuery, runQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "retry@example.com",
+            "",
+            "paid",
+            Date.now(),
+            "setup_token_worker_retry_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    const setupRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_worker_retry_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Retry Server",
+            minecraftVersion: "1.20.6",
+            pelicanUsername: "retry_customer",
+            pelicanPassword: "retry-password"
+        })
+    });
+    assert.equal(setupRes.status, 200);
+
+    const {
+        DEFAULT_PROVISIONING_RETRY_DELAY_MS,
+        runFulfillmentWorkerIteration
+    } = require("../workers/fulfillmentWorker");
+    const failure = new Error("Pelican timed out");
+    const initialQueueRow = await getQuery(
+        "SELECT availableAt FROM fulfillmentQueue WHERE purchaseId = 1"
+    );
+    const firstNow = Number(initialQueueRow.availableAt);
+
+    const firstIteration = await runFulfillmentWorkerIteration({
+        now: firstNow,
+        provisionInitialServer: async () => {
+            throw failure;
+        }
+    });
+
+    assert.equal(firstIteration.outcome, "retry_scheduled");
+    assert.equal(firstIteration.purchaseId, 1);
+    assert.equal(firstIteration.nextAvailableAt, firstNow + DEFAULT_PROVISIONING_RETRY_DELAY_MS);
+
+    const firstPurchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            fulfillmentFailureClass,
+            needsAdminReviewReason,
+            lastProvisioningError,
+            provisioningAttemptCount,
+            workerLeaseKey,
+            workerLeaseExpiresAt,
+            lastStateOwner
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(firstPurchase.fulfillmentStatus, "retryable_failure");
+    assert.equal(firstPurchase.fulfillmentFailureClass, "transient_external_failure");
+    assert.equal(firstPurchase.needsAdminReviewReason, null);
+    assert.match(firstPurchase.lastProvisioningError, /Pelican provisioning failed before completion: Pelican timed out/);
+    assert.equal(firstPurchase.provisioningAttemptCount, 1);
+    assert.equal(firstPurchase.workerLeaseKey, null);
+    assert.equal(firstPurchase.workerLeaseExpiresAt, null);
+    assert.equal(firstPurchase.lastStateOwner, "worker");
+
+    const firstJob = await getQuery(
+        `SELECT
+            state,
+            attempts,
+            availableAt,
+            completedAt,
+            leaseKey,
+            leaseExpiresAt,
+            lastError
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.equal(firstJob.state, "queued");
+    assert.equal(firstJob.attempts, 1);
+    assert.equal(firstJob.availableAt, firstNow + DEFAULT_PROVISIONING_RETRY_DELAY_MS);
+    assert.equal(firstJob.completedAt, null);
+    assert.equal(firstJob.leaseKey, null);
+    assert.equal(firstJob.leaseExpiresAt, null);
+    assert.match(firstJob.lastError, /Pelican provisioning failed before completion: Pelican timed out/);
+
+    const secondIteration = await runFulfillmentWorkerIteration({
+        now: firstNow + DEFAULT_PROVISIONING_RETRY_DELAY_MS + 1,
+        provisionInitialServer: async () => {
+            throw failure;
+        }
+    });
+
+    assert.equal(secondIteration.outcome, "needs_admin_review");
+    assert.equal(secondIteration.purchaseId, 1);
+
+    const secondPurchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            fulfillmentFailureClass,
+            needsAdminReviewReason,
+            lastProvisioningError,
+            provisioningAttemptCount,
+            workerLeaseKey,
+            workerLeaseExpiresAt
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(secondPurchase.fulfillmentStatus, "needs_admin_review");
+    assert.equal(secondPurchase.fulfillmentFailureClass, "transient_external_failure");
+    assert.match(secondPurchase.needsAdminReviewReason, /Pelican provisioning failed before completion: Pelican timed out/);
+    assert.match(secondPurchase.lastProvisioningError, /Pelican provisioning failed before completion: Pelican timed out/);
+    assert.equal(secondPurchase.provisioningAttemptCount, 2);
+    assert.equal(secondPurchase.workerLeaseKey, null);
+    assert.equal(secondPurchase.workerLeaseExpiresAt, null);
+
+    const secondJob = await getQuery(
+        `SELECT
+            state,
+            attempts,
+            completedAt,
+            leaseKey,
+            leaseExpiresAt,
+            lastError
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.equal(secondJob.state, "needs_admin_review");
+    assert.equal(secondJob.attempts, 2);
+    assert.ok(Number(secondJob.completedAt) > 0);
+    assert.equal(secondJob.leaseKey, null);
+    assert.equal(secondJob.leaseExpiresAt, null);
+    assert.match(secondJob.lastError, /Pelican provisioning failed before completion: Pelican timed out/);
+});
+
+test("fulfillment worker dead-letters unsafe partial provisioning finalization on the same purchase", async t => {
+    const app = await createTestApp(t);
+    const { getQuery, runQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeCustomerId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "deadletter@example.com",
+            "",
+            "paid",
+            "cus_dead_letter",
+            Date.now(),
+            "setup_token_worker_dead_letter_abcdefghijklmnopqrstuvwxyz",
+            Date.now() + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            Date.now(),
+            Date.now()
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    const setupRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_worker_dead_letter_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Dead Letter Server",
+            minecraftVersion: "1.21.11",
+            pelicanUsername: "deadletter_customer",
+            pelicanPassword: "deadletter-password"
+        })
+    });
+    assert.equal(setupRes.status, 200);
+
+    const { runFulfillmentWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runFulfillmentWorkerIteration({
+        provisionInitialServer: async input => ({
+            pelicanUserId: "pelican-user-dead-letter",
+            pelicanUsername: input.pelicanUsername,
+            pelicanServerId: "pelican-server-dead-letter",
+            pelicanServerIdentifier: "srv_dead_letter",
+            pelicanAllocationId: "allocation-dead-letter"
+        }),
+        completeProvisioningJob: async () => false
+    });
+
+    assert.equal(iteration.outcome, "dead_letter");
+    assert.equal(iteration.purchaseId, 1);
+
+    const purchase = await getQuery(
+        `SELECT
+            fulfillmentStatus,
+            fulfillmentFailureClass,
+            needsAdminReviewReason,
+            lastProvisioningError,
+            provisioningAttemptCount,
+            workerLeaseKey,
+            workerLeaseExpiresAt,
+            pelicanServerId,
+            desiredRoutingArtifactJson
+         FROM purchases
+         WHERE id = 1`
+    );
+    assert.equal(purchase.fulfillmentStatus, "dead_letter");
+    assert.equal(purchase.fulfillmentFailureClass, "dead_letter_escalation");
+    assert.match(purchase.needsAdminReviewReason, /local finalization could not complete safely/);
+    assert.match(purchase.lastProvisioningError, /local finalization could not complete safely/);
+    assert.equal(purchase.provisioningAttemptCount, 1);
+    assert.equal(purchase.workerLeaseKey, null);
+    assert.equal(purchase.workerLeaseExpiresAt, null);
+    assert.equal(purchase.pelicanServerId, null);
+    assert.equal(purchase.desiredRoutingArtifactJson, null);
+
+    const queueRow = await getQuery(
+        `SELECT
+            state,
+            attempts,
+            completedAt,
+            leaseKey,
+            leaseExpiresAt,
+            lastError
+         FROM fulfillmentQueue
+         WHERE purchaseId = 1`
+    );
+    assert.equal(queueRow.state, "dead_letter");
+    assert.equal(queueRow.attempts, 1);
+    assert.ok(Number(queueRow.completedAt) > 0);
+    assert.equal(queueRow.leaseKey, null);
+    assert.equal(queueRow.leaseExpiresAt, null);
+    assert.match(queueRow.lastError, /local finalization could not complete safely/);
+
+    const heldServer = await getQuery(
+        "SELECT status, allocatedAt FROM servers WHERE id = ?",
+        [server.id]
+    );
+    assert.equal(heldServer.status, "held");
+    assert.equal(heldServer.allocatedAt, null);
+});
+
 test("fulfillment worker can provision to pending activation through an injected adapter", async t => {
     const app = await createTestApp(t);
     const { getQuery, runQuery } = app.queries;

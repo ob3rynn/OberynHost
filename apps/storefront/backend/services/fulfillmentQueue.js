@@ -132,6 +132,7 @@ async function leaseNextFulfillmentJob(options = {}) {
         }
 
         const nextPurchase = mergeLifecycleState(job, {
+            fulfillmentStatus: FULFILLMENT_STATUS.PROVISIONING,
             workerLeaseKey: leaseKey,
             workerLeaseExpiresAt: leaseExpiresAt,
             lastStateOwner: "worker"
@@ -282,6 +283,210 @@ async function moveLeasedJobToAdminReview(job, details = {}) {
                 failureClass,
                 reviewReason,
                 reviewReason,
+                now,
+                nextPurchase.provisioningAttemptCount,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id,
+                job.leaseKey
+            ]
+        );
+
+        if (purchaseUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        await runQuery("COMMIT");
+        return true;
+    } catch (err) {
+        await rollbackTransaction();
+        throw err;
+    }
+}
+
+async function retryLeasedProvisioningJob(job, details = {}) {
+    const now = Number(details.now || Date.now());
+    const retryDelayMs = Math.max(0, Number(details.retryDelayMs || 0));
+    const nextAvailableAt = now + retryDelayMs;
+    const retryReason = String(details.reason || "").trim() ||
+        "Provisioning failed in a retryable way and will be attempted again automatically.";
+    const failureClass = details.failureClass ||
+        FULFILLMENT_FAILURE_CLASS.TRANSIENT_EXTERNAL_FAILURE;
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getQuery(
+            "SELECT * FROM purchases WHERE id = ?",
+            [job.purchaseId]
+        );
+
+        if (!purchase || purchase.workerLeaseKey !== job.leaseKey) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const nextPurchase = mergeLifecycleState(purchase, {
+            fulfillmentStatus: FULFILLMENT_STATUS.RETRYABLE_FAILURE,
+            fulfillmentFailureClass: failureClass,
+            needsAdminReviewReason: null,
+            lastProvisioningError: retryReason,
+            lastProvisioningAttemptAt: now,
+            provisioningAttemptCount: Number(purchase.provisioningAttemptCount || 0) + 1,
+            workerLeaseKey: null,
+            workerLeaseExpiresAt: null,
+            lastStateOwner: "worker"
+        });
+
+        const queueUpdate = await runQuery(
+            `UPDATE fulfillmentQueue
+             SET state = ?,
+                 availableAt = ?,
+                 lastError = ?,
+                 updatedAt = ?,
+                 completedAt = NULL,
+                 leaseKey = NULL,
+                 leaseExpiresAt = NULL
+             WHERE id = ?
+               AND state = ?
+               AND leaseKey = ?`,
+            [
+                FULFILLMENT_QUEUE_STATE.QUEUED,
+                nextAvailableAt,
+                retryReason,
+                now,
+                job.queueId,
+                FULFILLMENT_QUEUE_STATE.LEASED,
+                job.leaseKey
+            ]
+        );
+
+        if (queueUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const purchaseUpdate = await runQuery(
+            `UPDATE purchases
+             SET fulfillmentStatus = ?,
+                 fulfillmentFailureClass = ?,
+                 needsAdminReviewReason = NULL,
+                 lastProvisioningError = ?,
+                 lastProvisioningAttemptAt = ?,
+                 provisioningAttemptCount = ?,
+                 workerLeaseKey = NULL,
+                 workerLeaseExpiresAt = NULL,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?
+               AND workerLeaseKey = ?`,
+            [
+                nextPurchase.fulfillmentStatus,
+                failureClass,
+                retryReason,
+                now,
+                nextPurchase.provisioningAttemptCount,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id,
+                job.leaseKey
+            ]
+        );
+
+        if (purchaseUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        await runQuery("COMMIT");
+        return {
+            nextAvailableAt
+        };
+    } catch (err) {
+        await rollbackTransaction();
+        throw err;
+    }
+}
+
+async function moveLeasedJobToDeadLetter(job, details = {}) {
+    const now = Number(details.now || Date.now());
+    const deadLetterReason = String(details.reason || "").trim() ||
+        "Provisioning reached an unsafe partial state and now requires explicit operator recovery.";
+    const failureClass = details.failureClass ||
+        FULFILLMENT_FAILURE_CLASS.DEAD_LETTER_ESCALATION;
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getQuery(
+            "SELECT * FROM purchases WHERE id = ?",
+            [job.purchaseId]
+        );
+
+        if (!purchase || purchase.workerLeaseKey !== job.leaseKey) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const nextPurchase = mergeLifecycleState(purchase, {
+            fulfillmentStatus: FULFILLMENT_STATUS.DEAD_LETTER,
+            fulfillmentFailureClass: failureClass,
+            needsAdminReviewReason: deadLetterReason,
+            lastProvisioningError: deadLetterReason,
+            lastProvisioningAttemptAt: now,
+            provisioningAttemptCount: Number(purchase.provisioningAttemptCount || 0) + 1,
+            workerLeaseKey: null,
+            workerLeaseExpiresAt: null,
+            lastStateOwner: "worker"
+        });
+
+        const queueUpdate = await runQuery(
+            `UPDATE fulfillmentQueue
+             SET state = ?,
+                 lastError = ?,
+                 updatedAt = ?,
+                 completedAt = ?,
+                 leaseKey = NULL,
+                 leaseExpiresAt = NULL
+             WHERE id = ?
+               AND state = ?
+               AND leaseKey = ?`,
+            [
+                FULFILLMENT_QUEUE_STATE.DEAD_LETTER,
+                deadLetterReason,
+                now,
+                now,
+                job.queueId,
+                FULFILLMENT_QUEUE_STATE.LEASED,
+                job.leaseKey
+            ]
+        );
+
+        if (queueUpdate.changes === 0) {
+            await rollbackTransaction();
+            return false;
+        }
+
+        const purchaseUpdate = await runQuery(
+            `UPDATE purchases
+             SET fulfillmentStatus = ?,
+                 fulfillmentFailureClass = ?,
+                 needsAdminReviewReason = ?,
+                 lastProvisioningError = ?,
+                 lastProvisioningAttemptAt = ?,
+                 provisioningAttemptCount = ?,
+                 workerLeaseKey = NULL,
+                 workerLeaseExpiresAt = NULL,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?
+               AND workerLeaseKey = ?`,
+            [
+                nextPurchase.fulfillmentStatus,
+                failureClass,
+                deadLetterReason,
+                deadLetterReason,
                 now,
                 nextPurchase.provisioningAttemptCount,
                 now,
@@ -469,5 +674,7 @@ module.exports = {
     completeLeasedProvisioningJob,
     enqueueProvisioningJobForPurchase,
     leaseNextFulfillmentJob,
-    moveLeasedJobToAdminReview
+    moveLeasedJobToAdminReview,
+    moveLeasedJobToDeadLetter,
+    retryLeasedProvisioningJob
 };

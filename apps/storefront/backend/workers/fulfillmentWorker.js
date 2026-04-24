@@ -4,10 +4,12 @@ const {
     completeLeasedProvisioningJob,
     enqueueProvisioningJobForPurchase,
     leaseNextFulfillmentJob,
-    moveLeasedJobToAdminReview
+    moveLeasedJobToAdminReview,
+    moveLeasedJobToDeadLetter,
+    retryLeasedProvisioningJob
 } = require("../services/fulfillmentQueue");
 const { PURCHASE_STATUS } = require("../constants/status");
-const { buildDesiredRoutingArtifact } = require("../services/routingArtifacts");
+const { buildDesiredRoutingArtifact: defaultBuildDesiredRoutingArtifact } = require("../services/routingArtifacts");
 const {
     DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS,
     DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS,
@@ -25,6 +27,8 @@ const { decryptSetupSecret } = require("../services/setupSecrets");
 
 const DEFAULT_WORKER_INTERVAL_MS = 1000 * 5;
 const DEFAULT_WORKER_LEASE_MS = 1000 * 60;
+const DEFAULT_PROVISIONING_RETRY_DELAY_MS = 1000 * 30;
+const DEFAULT_PROVISIONING_MAX_AUTO_RETRIES = 1;
 
 function getProvisioningContractErrors(job) {
     const errors = [];
@@ -123,6 +127,69 @@ async function moveToAdminReview(job, details) {
     };
 }
 
+async function moveToRetryableFailure(job, details, options = {}) {
+    const retryResult = await retryLeasedProvisioningJob(job, {
+        ...details,
+        retryDelayMs: options.provisioningRetryDelayMs ?? DEFAULT_PROVISIONING_RETRY_DELAY_MS
+    });
+
+    if (!retryResult) {
+        return {
+            outcome: "stale_lease",
+            purchaseId: job.purchaseId,
+            queueId: job.queueId
+        };
+    }
+
+    return {
+        outcome: "retry_scheduled",
+        purchaseId: job.purchaseId,
+        queueId: job.queueId,
+        nextAvailableAt: retryResult.nextAvailableAt
+    };
+}
+
+async function moveToDeadLetter(job, details) {
+    const deadLettered = await moveLeasedJobToDeadLetter(job, details);
+
+    if (!deadLettered) {
+        return {
+            outcome: "stale_lease",
+            purchaseId: job.purchaseId,
+            queueId: job.queueId
+        };
+    }
+
+    return {
+        outcome: "dead_letter",
+        purchaseId: job.purchaseId,
+        queueId: job.queueId
+    };
+}
+
+function isRetryableProvisioningFailureClass(failureClass) {
+    return [
+        FULFILLMENT_FAILURE_CLASS.TRANSIENT_EXTERNAL_FAILURE,
+        FULFILLMENT_FAILURE_CLASS.DEPENDENCY_NOT_READY
+    ].includes(failureClass);
+}
+
+function getProvisioningAttemptNumber(job) {
+    return Number(job.attempts || 0) + 1;
+}
+
+function shouldAutoRetryProvisioningFailure(job, failureClass, options = {}) {
+    const maxAutoRetries = Math.max(
+        0,
+        Number(options.provisioningMaxAutoRetries ?? DEFAULT_PROVISIONING_MAX_AUTO_RETRIES)
+    );
+
+    return (
+        isRetryableProvisioningFailureClass(failureClass) &&
+        getProvisioningAttemptNumber(job) <= maxAutoRetries
+    );
+}
+
 async function processInitialServerProvisioning(job, options = {}) {
     const contractErrors = getProvisioningContractErrors(job);
 
@@ -136,6 +203,10 @@ async function processInitialServerProvisioning(job, options = {}) {
 
     const provisionInitialServer = options.provisionInitialServer ||
         defaultProvisioner.provisionInitialServer;
+    const completeProvisioningJob = options.completeProvisioningJob ||
+        completeLeasedProvisioningJob;
+    const buildDesiredRoutingArtifact = options.buildDesiredRoutingArtifact ||
+        defaultBuildDesiredRoutingArtifact;
 
     let rawResult;
 
@@ -143,6 +214,14 @@ async function processInitialServerProvisioning(job, options = {}) {
         rawResult = await provisionInitialServer(buildProvisioningInput(job));
     } catch (err) {
         if (err instanceof ProvisioningBlockedError) {
+            if (shouldAutoRetryProvisioningFailure(job, err.failureClass, options)) {
+                return moveToRetryableFailure(job, {
+                    now: options.now,
+                    failureClass: err.failureClass,
+                    reason: err.message
+                }, options);
+            }
+
             return moveToAdminReview(job, {
                 now: options.now,
                 failureClass: err.failureClass,
@@ -150,10 +229,24 @@ async function processInitialServerProvisioning(job, options = {}) {
             });
         }
 
+        const failureReason = `Pelican provisioning failed before completion: ${err.message || "unknown error"}`;
+
+        if (shouldAutoRetryProvisioningFailure(
+            job,
+            FULFILLMENT_FAILURE_CLASS.TRANSIENT_EXTERNAL_FAILURE,
+            options
+        )) {
+            return moveToRetryableFailure(job, {
+                now: options.now,
+                failureClass: FULFILLMENT_FAILURE_CLASS.TRANSIENT_EXTERNAL_FAILURE,
+                reason: failureReason
+            }, options);
+        }
+
         return moveToAdminReview(job, {
             now: options.now,
             failureClass: FULFILLMENT_FAILURE_CLASS.TRANSIENT_EXTERNAL_FAILURE,
-            reason: `Pelican provisioning failed before completion: ${err.message || "unknown error"}`
+            reason: failureReason
         });
     }
 
@@ -161,27 +254,35 @@ async function processInitialServerProvisioning(job, options = {}) {
     const resultErrors = getProvisioningResultErrors(provisioningResult);
 
     if (resultErrors.length > 0) {
-        return moveToAdminReview(job, {
+        return moveToDeadLetter(job, {
             now: options.now,
-            failureClass: FULFILLMENT_FAILURE_CLASS.VALIDATION_OR_CONFIG_ERROR,
-            reason: `Pelican provisioning returned an incomplete linkage: ${resultErrors.join("; ")}.`
+            failureClass: FULFILLMENT_FAILURE_CLASS.DEAD_LETTER_ESCALATION,
+            reason: `Pelican provisioning returned an incomplete linkage after external side effects may have occurred: ${resultErrors.join("; ")}.`
         });
     }
 
-    const routingArtifact = buildDesiredRoutingArtifact(job, provisioningResult);
-    const completed = await completeLeasedProvisioningJob(
-        job,
-        provisioningResult,
-        routingArtifact,
-        { now: options.now }
-    );
+    try {
+        const routingArtifact = buildDesiredRoutingArtifact(job, provisioningResult);
+        const completed = await completeProvisioningJob(
+            job,
+            provisioningResult,
+            routingArtifact,
+            { now: options.now }
+        );
 
-    if (!completed) {
-        return {
-            outcome: "stale_lease",
-            purchaseId: job.purchaseId,
-            queueId: job.queueId
-        };
+        if (!completed) {
+            return moveToDeadLetter(job, {
+                now: options.now,
+                failureClass: FULFILLMENT_FAILURE_CLASS.DEAD_LETTER_ESCALATION,
+                reason: "Pelican provisioning succeeded, but local finalization could not complete safely and now requires explicit operator recovery."
+            });
+        }
+    } catch (err) {
+        return moveToDeadLetter(job, {
+            now: options.now,
+            failureClass: FULFILLMENT_FAILURE_CLASS.DEAD_LETTER_ESCALATION,
+            reason: `Pelican provisioning succeeded, but local finalization failed: ${err.message || "unknown error"}`
+        });
     }
 
     return {
@@ -353,6 +454,8 @@ function startFulfillmentWorker(options = {}) {
 }
 
 module.exports = {
+    DEFAULT_PROVISIONING_MAX_AUTO_RETRIES,
+    DEFAULT_PROVISIONING_RETRY_DELAY_MS,
     DEFAULT_WORKER_INTERVAL_MS,
     DEFAULT_WORKER_LEASE_MS,
     enqueueProvisioningJobForPurchase,
