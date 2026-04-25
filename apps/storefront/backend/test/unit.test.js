@@ -24,7 +24,7 @@ function createRuntimeEnv(overrides = {}) {
         STRIPE_SECRET_KEY: "sk_test_live_123456",
         STRIPE_API_VERSION: "2026-02-25.clover",
         STRIPE_WEBHOOK_SECRET: "whsec_live_123456",
-        STRIPE_PRICE_3GB: "price_live_3gb",
+        STRIPE_PRICE_PAPER_2GB: "price_live_paper_2gb",
         ...overrides
     };
 }
@@ -47,14 +47,14 @@ function createPelicanTargetsJson(overrides = {}) {
                     "paper-java25": "ghcr.io/pelican-eggs/yolks:java_25"
                 }
             },
-            startup: "java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}}",
+            startup: "java -Xms128M -Xmx2024M -jar {{SERVER_JARFILE}}",
             environment: {
                 SERVER_JARFILE: "server.jar",
                 MINECRAFT_VERSION: "{{minecraftVersion}}",
                 BUILD_NUMBER: "latest"
             },
             limits: {
-                memory: 3072,
+                memory: 2424,
                 swap: 0,
                 disk: 10240,
                 io: 500,
@@ -174,7 +174,7 @@ test("runtime config parses optional Pelican provisioning targets", () => {
     assert.equal(config.pelican.panelUrl, "https://panel.oberyn.net");
     assert.equal(config.pelican.provisioningTargets["paper-launch-default"].allocationIds[0], 9001);
     assert.equal(config.pelican.provisioningTargets["paper-launch-default"].egg.byRuntimeProfile["paper-java21"], 21);
-    assert.equal(config.pelican.provisioningTargets["paper-launch-default"].limits.memory, 3072);
+    assert.equal(config.pelican.provisioningTargets["paper-launch-default"].limits.memory, 2424);
 });
 
 test("runtime config rejects malformed Pelican target JSON when provided", () => {
@@ -202,9 +202,9 @@ test("runtime config rejects shipped placeholder values", () => {
             ADMIN_KEY: "replace-with-a-long-random-secret",
             STRIPE_SECRET_KEY: "sk_test_replace_me",
             STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
-            STRIPE_PRICE_3GB: "price_replace_me"
+            STRIPE_PRICE_PAPER_2GB: "price_replace_me"
         })),
-        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET/
+        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PAPER_2GB/
     );
 });
 

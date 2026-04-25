@@ -93,7 +93,7 @@ async function createTestApp(t, options = {}) {
         "STRIPE_SECRET_KEY",
         "STRIPE_API_VERSION",
         "STRIPE_WEBHOOK_SECRET",
-        "STRIPE_PRICE_3GB",
+        "STRIPE_PRICE_PAPER_2GB",
         "OUTBOUND_EMAIL_FROM",
         "EMAIL_PROVIDER",
         "POSTMARK_SERVER_TOKEN",
@@ -111,7 +111,7 @@ async function createTestApp(t, options = {}) {
     process.env.STRIPE_SECRET_KEY = options.stripeSecretKey || "sk_test_mocked";
     process.env.STRIPE_API_VERSION = options.stripeApiVersion || "2026-02-25.clover";
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
-    process.env.STRIPE_PRICE_3GB = options.stripePrice3GB || "price_test_3gb";
+    process.env.STRIPE_PRICE_PAPER_2GB = options.stripePricePaper2GB || "price_test_paper_2gb";
     process.env.OUTBOUND_EMAIL_FROM = options.outboundEmailFrom || "support@oberynn.com";
     process.env.EMAIL_PROVIDER = "log";
     delete process.env.POSTMARK_SERVER_TOKEN;
@@ -155,7 +155,7 @@ async function createTestApp(t, options = {}) {
                 data: [
                     {
                         current_period_end: Math.floor(Date.now() / 1000) + 86400,
-                        price: { id: process.env.STRIPE_PRICE_3GB }
+                        price: { id: process.env.STRIPE_PRICE_PAPER_2GB }
                     }
                 ]
             }

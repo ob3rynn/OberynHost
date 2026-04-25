@@ -124,7 +124,7 @@ async function seedLaunchCatalog() {
         [
             LAUNCH_PLAN.inventoryBucketCode,
             LAUNCH_PLAN.code,
-            "Paper 3GB Launch Bucket",
+            "Paper 2 GB Launch Bucket",
             LAUNCH_PLAN.launchSlotCount,
             "reserve_on_checkout",
             "release_on_expire_or_cancel",

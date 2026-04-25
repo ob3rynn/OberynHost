@@ -151,7 +151,7 @@ async function createPaidPurchase(options = {}) {
     const serverName = makeRunId(options.serverNamePrefix || "autotest-ops");
 
     try {
-        const checkoutUrl = await startCheckoutThroughUi(page, baseUrl, options.planType || "2GB");
+        const checkoutUrl = await startCheckoutThroughUi(page, baseUrl, options.planType || "paper-2gb");
         await fillHostedCheckout(page, FORM_VALUES);
         await submitHostedCheckout(page, baseUrl);
         await waitForSetupReady(page);
@@ -182,7 +182,7 @@ async function scenarioOutageReconcile() {
 
     try {
         await page.route("**/success*", route => route.abort());
-        checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "2GB");
+        checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "paper-2gb");
         sessionId = parseSessionId(checkoutUrl);
         await fillHostedCheckout(page, FORM_VALUES);
         await page.locator('button[type="submit"]').click();
@@ -233,7 +233,7 @@ async function scenarioExpiryRelease() {
     let sessionId = "";
 
     try {
-        checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "2GB");
+        checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "paper-2gb");
         sessionId = parseSessionId(checkoutUrl);
     } finally {
         await context.close();
@@ -418,7 +418,7 @@ async function scenarioMobilePass() {
         await page.setExtraHTTPHeaders({
             "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         });
-        const checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "2GB");
+        const checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "paper-2gb");
         await fillHostedCheckout(page, FORM_VALUES);
         await submitHostedCheckout(page, baseUrl);
         await waitForSetupReady(page);

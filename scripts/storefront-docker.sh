@@ -130,6 +130,9 @@ Usage:
   bash scripts/storefront-docker.sh audit:runtime
   bash scripts/storefront-docker.sh audit:read-only
   bash scripts/storefront-docker.sh audit:updates
+  bash scripts/storefront-docker.sh audit:liveish
+  bash scripts/storefront-docker.sh smoke:liveish
+  bash scripts/storefront-docker.sh cleanup:liveish
   bash scripts/storefront-docker.sh stripe:login
   bash scripts/storefront-docker.sh stripe:live
   bash scripts/storefront-docker.sh stripe:abuse
@@ -189,6 +192,22 @@ EOF
     audit:updates)
         ensure_env_file
         run_npm_one_shot storefront-dev audit:updates "$@"
+        ;;
+    audit:liveish)
+        ensure_env_file
+        run_npm_one_shot storefront-dev audit:liveish "$@"
+        ;;
+    smoke:liveish)
+        ensure_env_file
+        ensure_service_running storefront-stripe-dev
+        wait_for_service_http_ready storefront-stripe-dev /pricing
+        compose exec -T \
+            -e OBERYNHOST_RUN_LIVEISH="${OBERYNHOST_RUN_LIVEISH:-}" \
+            storefront-stripe-dev npm run smoke:liveish -- "$@"
+        ;;
+    cleanup:liveish)
+        ensure_env_file
+        run_npm_one_shot storefront-dev cleanup:liveish "$@"
         ;;
     stripe:login)
         ensure_env_file

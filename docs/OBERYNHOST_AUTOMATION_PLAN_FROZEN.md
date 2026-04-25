@@ -2,7 +2,7 @@
 
 ## Summary
 
-Direct-replacement launch scope is one live Paper-only 3 GB product at `$11.98/month` with `25` sellable slots. Checkout resolves that product into a real internal chain of `product -> inventory_bucket -> node_group -> provisioning_target`, even though only one product is active at launch.
+Direct-replacement launch scope is one live Paper-only Paper 2 GB product at `$11.98/month` with `25` sellable slots. Checkout resolves that product into a real internal chain of `product -> inventory_bucket -> node_group -> provisioning_target`, even though only one product is active at launch.
 
 The storefront remains the request surface; a separate OberynHost worker becomes the automation owner for queueing follow-up, provisioning, retries, timed lifecycle enforcement, reconcile follow-up, and email outbox delivery.
 
@@ -15,9 +15,9 @@ Customer-facing failure stays generic and calm. Internal state, diagnostics, aud
 Items struck through in this section are already implemented in the current repo so the remaining work is easier to scan.
 
 - ~~Launch catalog now resolves a real internal chain of `product -> inventory_bucket -> node_group -> provisioning_target` instead of a generic launch-plan string.~~
-- ~~Checkout now atomically reserves concrete launch capacity in SQLite for the resolved 3 GB Paper product.~~
+- ~~Checkout now atomically reserves concrete launch capacity in SQLite for the resolved Paper 2 GB product.~~
 - ~~Backend lifecycle modeling now includes explicit `setup_status`, `fulfillment_status`, `service_status`, and `customer_risk_status` fields.~~
-- ~~Legacy launch drift toward generic `2GB/4GB` products has been replaced by one active Paper-only `3GB` launch product while keeping internals future-capable.~~
+- ~~Legacy launch drift toward legacy generic products has been replaced by one active Paper-only `paper-2gb` launch product while keeping internals future-capable.~~
 - ~~Setup submission now updates lifecycle state on the same purchase, records hostname reservation timing, and enqueues fulfillment work instead of treating setup completion as the end of the flow.~~
 - ~~A SQLite-backed fulfillment queue now exists with one active provisioning job per purchase per task kind, worker leasing, and idempotent queue ownership.~~
 - ~~The worker now owns the `queued -> provisioning` boundary and safely escalates unresolved provisioning work to `needs_admin_review` rather than guessing past an undefined contract.~~
@@ -100,7 +100,7 @@ Merge blockers that remain intentionally out of scope:
 
 - Add first-class backend models or equivalents for `customer`, `product`, `inventory_bucket`, `node_group`, `provisioning_target`, `hostname_claim`, `Pelican user linkage`, `Pelican server linkage`, `email outbox`, `fulfillment queue`, and `dead-letter queue`.
 - Preserve existing purchase and server status semantics where possible, but add explicit `setup_status`, `fulfillment_status`, `service_status`, and `customer_risk_status`.
-- Replace current generic `2GB/4GB` launch modeling with one active 3 GB Paper product while keeping internals future-capable for later budget/premium and runtime-family expansion.
+- Replace previous multi-product launch modeling with one active Paper 2 GB product while keeping internals future-capable for later budget/premium and runtime-family expansion.
 - Expand setup intake to include verified customer identity, first-time vs repeat-customer branching, first-time Pelican username, first-time Pelican password, curated Paper version choice, and server name.
 - First-time Pelican password is accepted for provisioning and never retained in retrievable form afterward.
 - Repeat-customer Pelican reuse comes from backend customer linkage, not fresh customer-entered account identifiers.
@@ -204,7 +204,7 @@ Merge blockers that remain intentionally out of scope:
 
 ## Required For Phase-1 Production Launch
 
-- Replace the current Stripe placeholders with live values for `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_3GB`, then verify the webhook endpoint against the real `BASE_URL`.
+- Replace the current Stripe placeholders with live values for `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_PAPER_2GB`, then verify the webhook endpoint against the real `BASE_URL`.
 - Switch email delivery from `EMAIL_PROVIDER=log` to `EMAIL_PROVIDER=postmark`, set `POSTMARK_SERVER_TOKEN`, keep `OUTBOUND_EMAIL_FROM` on a confirmed Postmark sender/domain for `support@oberynn.com`, and run a live ready-access smoke test.
 - Fill `PELICAN_PANEL_URL`, `PELICAN_APPLICATION_API_KEY`, and `PELICAN_PROVISIONING_TARGETS_JSON` with the confirmed live panel URL, application API key, real egg IDs, allocation IDs, and resource limits for the launch target.
 - Keep the phase-1 operator routing apply/verification runbook in [PHASE1_OPERATOR_RUNBOOK.md](./PHASE1_OPERATOR_RUNBOOK.md) in place because the code only generates desired routing state; host-side apply and verification still gate `pending_activation -> ready`.
@@ -217,7 +217,7 @@ Merge blockers that remain intentionally out of scope:
 
 ## Assumptions And Defaults
 
-- Launch product: one Paper-only 3 GB product, `$11.98/month`, `25` slots.
+- Launch product: one Paper-only Paper 2 GB product, `$11.98/month`, `25` slots.
 - Supported versions: curated backend-defined Paper version list.
 - Email delivery runs behind a provider boundary; local default is `log`, production target is Postmark.
 - Sender identity: `support@oberynn.com`.

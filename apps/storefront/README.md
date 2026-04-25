@@ -91,8 +91,7 @@ cp apps/storefront/backend/.env.example apps/storefront/backend/.env
 | `STRIPE_SECRET_KEY` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
 | `STRIPE_API_VERSION` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
 | `STRIPE_WEBHOOK_SECRET` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | blank in Compose for the helper process; the helper injects a temporary secret only into the backend child process |
-| `STRIPE_PRICE_2GB` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
-| `STRIPE_PRICE_4GB` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
+| `STRIPE_PRICE_PAPER_2GB` | `backend/.env` via `env_file` | `backend/.env` via `env_file` | `backend/.env` via `env_file` |
 
 Notes:
 
@@ -108,8 +107,7 @@ Replace these example values before treating the storefront as runnable:
 - `ADMIN_KEY=replace-with-a-long-random-secret`
 - `STRIPE_SECRET_KEY=sk_test_replace_me`
 - `STRIPE_WEBHOOK_SECRET=whsec_replace_me`
-- `STRIPE_PRICE_2GB=price_replace_me`
-- `STRIPE_PRICE_4GB=price_replace_me`
+- `STRIPE_PRICE_PAPER_2GB=price_replace_me`
 
 ## Supported commands
 Use the wrapper from the repo root:
@@ -193,6 +191,9 @@ Before CI is added, validate the storefront through Docker only:
 - `bash scripts/storefront-docker.sh stripe:live`
 - `bash scripts/storefront-docker.sh stripe:abuse`
 - `bash scripts/storefront-docker.sh stripe:ops`
+- `bash scripts/storefront-docker.sh audit:liveish`
+- `bash scripts/storefront-docker.sh smoke:liveish`
+- `bash scripts/storefront-docker.sh cleanup:liveish`
 
 Useful runtime smoke checks once `up` or `dev` is running:
 

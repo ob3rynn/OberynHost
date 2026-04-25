@@ -22,7 +22,7 @@ const { validateCustomerHostnameSlug } = require("../../services/hostnames");
 
 const router = express.Router();
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
-const DEFAULT_PLAN_DEFINITION = PLAN_DEFINITIONS["3GB"] || Object.values(PLAN_DEFINITIONS)[0] || null;
+const DEFAULT_PLAN_DEFINITION = PLAN_DEFINITIONS["paper-2gb"] || Object.values(PLAN_DEFINITIONS)[0] || null;
 const setupStatusLimiter = createRateLimiter({
     windowMs: 1000 * 60,
     max: 20,

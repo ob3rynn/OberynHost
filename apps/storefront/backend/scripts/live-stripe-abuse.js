@@ -55,7 +55,7 @@ async function scenarioPendingSetupBlocked(browser, baseUrl, evidenceDir) {
     const page = await context.newPage();
 
     try {
-        const checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "2GB");
+        const checkoutUrl = await startCheckoutThroughUi(page, baseUrl, "paper-2gb");
         await page.goto(`${baseUrl}/success`, { waitUntil: "domcontentloaded" });
         await page.waitForTimeout(1500);
         await snap(page, evidenceDir, "pending-setup-status");
@@ -84,38 +84,38 @@ async function scenarioPendingSetupBlocked(browser, baseUrl, evidenceDir) {
     }
 }
 
-async function scenarioResumeConflict(browser, baseUrl) {
+async function scenarioResumeAndInvalidPlan(browser, baseUrl) {
     const context = await createContext(browser);
     const page = await context.newPage();
 
     try {
-        const firstCheckoutUrl = await startCheckoutThroughUi(page, baseUrl, "2GB");
+        const firstCheckoutUrl = await startCheckoutThroughUi(page, baseUrl, "paper-2gb");
         await gotoPricing(page, baseUrl);
 
         const samePlanResume = await apiRequest(page, "/api/create-checkout", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ planType: "2GB" })
+            body: JSON.stringify({ planType: "paper-2gb" })
         });
 
-        const differentPlanConflict = await apiRequest(page, "/api/create-checkout", {
+        const invalidPlanAttempt = await apiRequest(page, "/api/create-checkout", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ planType: "4GB" })
+            body: JSON.stringify({ planType: "invalid-plan" })
         });
 
         const pending = await latestPendingPurchases(5);
 
         return {
-            name: "resume_conflict_and_no_second_hold",
+            name: "single_product_resume_and_invalid_plan",
             ok: samePlanResume.ok &&
                 samePlanResume.json?.url === firstCheckoutUrl &&
-                differentPlanConflict.status === 409 &&
-                Boolean(differentPlanConflict.json?.resumeUrl),
+                invalidPlanAttempt.status === 400 &&
+                /invalid plan/i.test(invalidPlanAttempt.json?.error || ""),
             details: {
                 firstCheckoutUrl,
                 samePlanResume,
-                differentPlanConflict,
+                invalidPlanAttempt,
                 latestPending: pending
             }
         };
@@ -138,12 +138,12 @@ async function scenarioParallelTabsDuplicateHold(browser, baseUrl) {
             apiRequest(pageOne, "/api/create-checkout", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ planType: "2GB" })
+                body: JSON.stringify({ planType: "paper-2gb" })
             }),
             apiRequest(pageTwo, "/api/create-checkout", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ planType: "2GB" })
+                body: JSON.stringify({ planType: "paper-2gb" })
             })
         ]);
 
@@ -175,7 +175,7 @@ async function scenarioSetupDoubleSubmitLocked(browser, baseUrl) {
     const serverName = makeRunId("autotest-abuse");
 
     try {
-        await startCheckoutThroughUi(page, baseUrl, "2GB");
+        await startCheckoutThroughUi(page, baseUrl, "paper-2gb");
         await fillHostedCheckout(page, FORM_VALUES);
         await submitHostedCheckout(page, baseUrl);
         await waitForSetupReady(page);
@@ -215,7 +215,7 @@ async function scenarioSuccessWithoutCookie(browser, baseUrl, evidenceDir) {
     const serverName = makeRunId("autotest-cookie");
 
     try {
-        await startCheckoutThroughUi(primaryPage, baseUrl, "2GB");
+        await startCheckoutThroughUi(primaryPage, baseUrl, "paper-2gb");
         await fillHostedCheckout(primaryPage, FORM_VALUES);
         await submitHostedCheckout(primaryPage, baseUrl);
         await waitForSetupReady(primaryPage);
@@ -257,7 +257,7 @@ async function scenarioSuccessWithSessionIdRecovers(browser, baseUrl, evidenceDi
     const serverName = makeRunId("autotest-recovered");
 
     try {
-        await startCheckoutThroughUi(primaryPage, baseUrl, "2GB");
+        await startCheckoutThroughUi(primaryPage, baseUrl, "paper-2gb");
         await fillHostedCheckout(primaryPage, FORM_VALUES);
         await submitHostedCheckout(primaryPage, baseUrl);
         await waitForSetupReady(primaryPage);
@@ -310,7 +310,7 @@ async function main() {
         const results = [];
 
         results.push(await scenarioPendingSetupBlocked(browser, baseUrl, evidenceDir));
-        results.push(await scenarioResumeConflict(browser, baseUrl));
+        results.push(await scenarioResumeAndInvalidPlan(browser, baseUrl));
         results.push(await scenarioParallelTabsDuplicateHold(browser, baseUrl));
         results.push(await scenarioSetupDoubleSubmitLocked(browser, baseUrl));
         results.push(await scenarioSuccessWithoutCookie(browser, baseUrl, evidenceDir));

@@ -5,14 +5,23 @@ const dotenv = require("dotenv");
 
 const projectRoot = path.join(__dirname, "..");
 const envPath = path.join(projectRoot, ".env");
+const liveishEnvPath = path.join(projectRoot, ".env.liveish");
 
 // This helper is intentionally dev-only. It can read backend/.env for BASE_URL so
 // the backend runtime itself does not need to load dotenv at startup.
 const parsedEnv = fs.existsSync(envPath)
     ? dotenv.parse(fs.readFileSync(envPath))
     : {};
+const parsedLiveishEnv = fs.existsSync(liveishEnvPath)
+    ? dotenv.parse(fs.readFileSync(liveishEnvPath))
+    : {};
+const helperEnv = {
+    ...process.env,
+    ...parsedEnv,
+    ...parsedLiveishEnv
+};
 
-const baseUrl = (process.env.BASE_URL || parsedEnv.BASE_URL || "").trim();
+const baseUrl = (helperEnv.BASE_URL || "").trim();
 
 if (!baseUrl) {
     console.error("BASE_URL must be available through the environment or backend/.env to start local Stripe forwarding.");
@@ -97,7 +106,7 @@ function startServer() {
     serverProcess = spawn(process.execPath, nodeArgs, {
         cwd: projectRoot,
         env: {
-            ...process.env,
+            ...helperEnv,
             STRIPE_WEBHOOK_SECRET: stripeSecret
         },
         stdio: "inherit"
@@ -129,7 +138,7 @@ function handleStripeOutput(chunk) {
 
 const stripeProcess = spawn(resolveStripeCommand(), stripeArgs, {
     cwd: projectRoot,
-    env: process.env,
+    env: helperEnv,
     stdio: ["inherit", "pipe", "pipe"]
 });
 

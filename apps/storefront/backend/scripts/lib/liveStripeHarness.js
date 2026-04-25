@@ -3,7 +3,7 @@ const sqlite3 = require("sqlite3").verbose();
 const { chromium } = require("playwright");
 const dotenv = require("dotenv");
 
-dotenv.config({ path: path.join(__dirname, "../../.env") });
+dotenv.config({ path: path.join(__dirname, "../../.env"), quiet: true });
 
 function resolveDatabasePath() {
     const configuredDatabasePath = (process.env.DATABASE_PATH || "").trim();
@@ -208,8 +208,29 @@ async function waitForSetupReady(page, timeoutMs = 30000) {
     throw new Error(`Server name input never became editable. Final status: ${await page.locator("#status").innerText()}`);
 }
 
-async function submitServerDetails(page, serverName) {
+function buildDefaultPelicanUsername(serverName) {
+    const normalized = String(serverName || "autotest")
+        .replace(/[^A-Za-z0-9._-]/g, "-")
+        .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "")
+        .slice(0, 32)
+        .replace(/[^A-Za-z0-9]+$/g, "");
+
+    return normalized.length >= 3 ? normalized : `user${Date.now().toString().slice(-8)}`;
+}
+
+async function submitServerDetails(page, serverName, options = {}) {
+    const minecraftVersion = options.minecraftVersion || "1.20.6";
+    const pelicanUsername = options.pelicanUsername || buildDefaultPelicanUsername(serverName);
+    const pelicanPassword = options.pelicanPassword || `${serverName}-password1`;
+
     await page.locator("#serverName").fill(serverName);
+    await page.locator("#minecraftVersion").selectOption(minecraftVersion);
+
+    if (await page.locator("#pelicanUsername:enabled").count()) {
+        await page.locator("#pelicanUsername").fill(pelicanUsername);
+        await page.locator("#pelicanPassword").fill(pelicanPassword);
+    }
+
     await page.locator("#completeBtn").click();
 
     const startedAt = Date.now();
@@ -252,6 +273,7 @@ async function latestPurchases(limit = 10) {
 
 module.exports = {
     apiRequest,
+    buildDefaultPelicanUsername,
     createContext,
     dbAll,
     dbGet,

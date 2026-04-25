@@ -21,14 +21,14 @@ function createPelicanTargetsJson() {
                     "paper-java25": "ghcr.io/pelican-eggs/yolks:java_25"
                 }
             },
-            startup: "java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}}",
+            startup: "java -Xms128M -Xmx2024M -jar {{SERVER_JARFILE}}",
             environment: {
                 SERVER_JARFILE: "server.jar",
                 MINECRAFT_VERSION: "{{minecraftVersion}}",
                 BUILD_NUMBER: "latest"
             },
             limits: {
-                memory: 3072,
+                memory: 2424,
                 swap: 0,
                 disk: 10240,
                 io: 500,
@@ -89,10 +89,10 @@ test("plans api returns seeded inventory counts", async t => {
     const plans = await res.json();
     const byType = Object.fromEntries(plans.map(plan => [plan.type, plan]));
 
-    assert.equal(byType["3GB"].available, 25);
-    assert.match(byType["3GB"].features.join(" "), /Paper server software/);
+    assert.equal(byType["paper-2gb"].available, 25);
+    assert.match(byType["paper-2gb"].features.join(" "), /Paper server software/);
 
-    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "3GB"]);
+    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "paper-2gb"]);
 
     const soldOutRes = await app.request("/api/plans");
     assert.equal(soldOutRes.status, 200);
@@ -100,8 +100,8 @@ test("plans api returns seeded inventory counts", async t => {
     const soldOutPlans = await soldOutRes.json();
     const soldOutByType = Object.fromEntries(soldOutPlans.map(plan => [plan.type, plan]));
 
-    assert.equal(soldOutByType["3GB"].available, 0);
-    assert.equal(soldOutByType["3GB"].price, 11.98);
+    assert.equal(soldOutByType["paper-2gb"].available, 0);
+    assert.equal(soldOutByType["paper-2gb"].price, 11.98);
 });
 
 test("checkout creates a pending purchase, reserves inventory, and sets setup cookie", async t => {
@@ -120,7 +120,7 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
 
     assert.equal(res.status, 200);
@@ -128,7 +128,7 @@ test("checkout creates a pending purchase, reserves inventory, and sets setup co
     assert.equal(payload.url, "https://checkout.stripe.test/success");
     assert.match(app.parseSetCookie(res), /setup_session=/);
     assert.equal(app.stripeState.lastCreatedSessionParams.mode, "subscription");
-    assert.equal(app.stripeState.lastCreatedSessionParams.line_items[0].price, "price_test_3gb");
+    assert.equal(app.stripeState.lastCreatedSessionParams.line_items[0].price, "price_test_paper_2gb");
     assert.ok(app.stripeState.constructors.length > 0);
     assert.ok(app.stripeState.constructors.every(({ options }) => options?.apiVersion === "2026-02-25.clover"));
 
@@ -164,7 +164,7 @@ test("resume checkout endpoint surfaces an open pending checkout for the same br
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     const setupCookie = app.parseSetCookie(checkoutRes);
 
@@ -175,7 +175,7 @@ test("resume checkout endpoint surfaces an open pending checkout for the same br
 
     const resumeData = await resumeRes.json();
     assert.equal(resumeData.resumable, true);
-    assert.equal(resumeData.planType, "3GB");
+    assert.equal(resumeData.planType, "paper-2gb");
     assert.equal(resumeData.url, "https://checkout.stripe.test/resume-visible");
 });
 
@@ -206,7 +206,7 @@ test("retrying the same server resumes the existing checkout instead of reservin
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     const setupCookie = app.parseSetCookie(firstRes);
 
@@ -217,7 +217,7 @@ test("retrying the same server resumes the existing checkout instead of reservin
             origin: app.baseUrl,
             cookie: setupCookie
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     assert.equal(secondRes.status, 200);
 
@@ -253,18 +253,18 @@ test("checkout rejects invalid plan types and foreign origins", async t => {
             "content-type": "application/json",
             origin: "https://evil.example"
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     assert.equal(foreignOrigin.status, 403);
 
-    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "3GB"]);
+    await runQuery("UPDATE servers SET status = ? WHERE type = ?", ["held", "paper-2gb"]);
     const soldOut = await app.request("/api/create-checkout", {
         method: "POST",
         headers: {
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     assert.equal(soldOut.status, 400);
 });
@@ -285,7 +285,7 @@ test("checkout failure cleans up held inventory and cancels the purchase", async
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
 
     assert.equal(res.status, 500);
@@ -304,7 +304,7 @@ test("checkout failure cleans up held inventory and cancels the purchase", async
 
     const heldServer = await getQuery(
         "SELECT id, status FROM servers WHERE type = ? AND status = ? LIMIT 1",
-        ["3GB", "held"]
+        ["paper-2gb", "held"]
     );
     assert.equal(heldServer || null, null);
 });
@@ -326,7 +326,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
                     data: [
                         {
                             current_period_end: 1_900_000_000,
-                            price: { id: "price_test_3gb" }
+                            price: { id: "price_test_paper_2gb" }
                         }
                     ]
                 }
@@ -341,7 +341,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     const setupCookie = app.parseSetCookie(checkoutRes);
 
@@ -357,7 +357,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
                 metadata: {
                     purchaseId: String(purchase.id),
                     serverId: String(purchase.serverId),
-                    planType: "3GB"
+                    planType: "paper-2gb"
                 },
                 subscription: "sub_test_paid_flow",
                 customer: "cus_test_paid_flow",
@@ -385,7 +385,7 @@ test("webhook completed marks purchase paid, stores email, and unlocks setup", a
     assert.equal(paidPurchase.stripeCustomerId, "cus_test_paid_flow");
     assert.equal(paidPurchase.stripeSubscriptionStatus, "active");
     assert.equal(paidPurchase.stripeCurrentPeriodEnd, 1_900_000_000_000);
-    assert.equal(paidPurchase.stripePriceId, "price_test_3gb");
+    assert.equal(paidPurchase.stripePriceId, "price_test_paper_2gb");
 
     const statusRes = await app.request("/api/setup-status", {
         method: "POST",
@@ -422,7 +422,7 @@ test("setup status can recover a paid purchase from Stripe session id when the s
                 metadata: {
                     purchaseId: "1",
                     serverId: "1",
-                    planType: "3GB"
+                    planType: "paper-2gb"
                 }
             }),
             retrieveSubscription: async id => ({
@@ -434,7 +434,7 @@ test("setup status can recover a paid purchase from Stripe session id when the s
                     data: [
                         {
                             current_period_end: 1_900_000_100,
-                            price: { id: "price_test_3gb" }
+                            price: { id: "price_test_paper_2gb" }
                         }
                     ]
                 }
@@ -449,7 +449,7 @@ test("setup status can recover a paid purchase from Stripe session id when the s
             "content-type": "application/json",
             origin: app.baseUrl
         },
-        body: JSON.stringify({ planType: "3GB" })
+        body: JSON.stringify({ planType: "paper-2gb" })
     });
     assert.equal(checkoutRes.status, 200);
 
@@ -1483,7 +1483,7 @@ test("fulfillment worker uses configured Pelican Application API adapter", async
     assert.equal(serverCreatePayload.docker_image, "ghcr.io/pelican-eggs/yolks:java_21");
     assert.equal(serverCreatePayload.environment.MINECRAFT_VERSION, "1.20.6");
     assert.equal(serverCreatePayload.allocation.default, 9001);
-    assert.equal(serverCreatePayload.limits.memory, 3072);
+    assert.equal(serverCreatePayload.limits.memory, 2424);
 
     const purchase = await getQuery(
         `SELECT
@@ -1792,7 +1792,7 @@ test("subscription runtime webhooks update and release fulfilled servers when su
             "active",
             Date.now() + 86_400_000,
             0,
-            "price_test_3gb"
+            "price_test_paper_2gb"
         ]
     );
     await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 5]);
@@ -1815,7 +1815,7 @@ test("subscription runtime webhooks update and release fulfilled servers when su
                         data: [
                             {
                                 current_period_end: 1_900_000_100,
-                                price: { id: "price_test_3gb" }
+                                price: { id: "price_test_paper_2gb" }
                             }
                         ]
                     }
@@ -1859,7 +1859,7 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
             "active",
             Date.now() + 86_400_000,
             0,
-            "price_test_3gb"
+            "price_test_paper_2gb"
         ]
     );
     await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 6]);
@@ -1876,7 +1876,7 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
                 object: {
                     subscription: "sub_renewal",
                     customer: "cus_renewal",
-                    lines: { data: [{ price: { id: "price_test_3gb" } }] }
+                    lines: { data: [{ price: { id: "price_test_paper_2gb" } }] }
                 }
             }
         })
@@ -1901,7 +1901,7 @@ test("failed renewal enters grace period and paid invoice clears delinquency", a
                 object: {
                     subscription: "sub_renewal",
                     customer: "cus_renewal",
-                    lines: { data: [{ price: { id: "price_test_3gb" } }] }
+                    lines: { data: [{ price: { id: "price_test_paper_2gb" } }] }
                 }
             }
         })
@@ -1960,7 +1960,7 @@ test("lifecycle worker suspends a completed delinquent service after grace expir
             "past_due",
             now + 86_400_000,
             0,
-            "price_test_3gb",
+            "price_test_paper_2gb",
             now - SUBSCRIPTION_GRACE_PERIOD_MS - 1000,
             "setup_submitted",
             "ready",
@@ -2058,7 +2058,7 @@ test("lifecycle worker does not suspend subscriptions that are still in grace", 
             "past_due",
             now + 86_400_000,
             0,
-            "price_test_3gb",
+            "price_test_paper_2gb",
             now - SUBSCRIPTION_GRACE_PERIOD_MS + 60_000,
             "setup_submitted",
             "ready",
@@ -2686,7 +2686,7 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
                     data: [
                         {
                             current_period_end: 1_900_000_200,
-                            price: { id: "price_test_3gb" }
+                            price: { id: "price_test_paper_2gb" }
                         }
                     ]
                 }
@@ -4001,7 +4001,7 @@ test("admin guardrails block cancelling or releasing a live subscription, but al
             "past_due",
             Date.now() + 86_400_000,
             0,
-            "price_test_3gb",
+            "price_test_paper_2gb",
             Date.now() - (1000 * 60 * 60 * 24 * 8)
         ]
     );

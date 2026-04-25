@@ -25,7 +25,7 @@ const FORM_VALUES = {
 
 async function main() {
     const baseUrl = getBaseUrl();
-    const planType = process.argv.includes("--4gb") ? "4GB" : "2GB";
+    const planType = "paper-2gb";
     const screenshotDir = process.argv.includes("--screenshots")
         ? "/tmp/oberynn-live-stripe"
         : "";

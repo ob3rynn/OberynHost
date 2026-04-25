@@ -20,7 +20,7 @@ Before treating the storefront as production-capable, fill and verify these valu
 - `SETUP_SECRET_KEY`: long random secret, preferably distinct from `ADMIN_KEY`.
 - `STRIPE_SECRET_KEY`: live Stripe secret key.
 - `STRIPE_WEBHOOK_SECRET`: webhook secret for the deployed endpoint.
-- `STRIPE_PRICE_3GB`: live recurring price for the Paper 3 GB product.
+- `STRIPE_PRICE_PAPER_2GB`: live recurring price for the Paper 2 GB product.
 - `EMAIL_PROVIDER=postmark`.
 - `POSTMARK_SERVER_TOKEN`: Postmark token with access to the chosen server/message stream.
 - `OUTBOUND_EMAIL_FROM=support@oberynn.com`: verified sender or domain.
@@ -45,7 +45,7 @@ Confirm:
 - tests pass,
 - no placeholder production env values remain,
 - no production-readiness audit warnings remain unless they are intentionally accepted for a non-production smoke test,
-- the launch catalog still exposes one active Paper-only 3 GB product,
+- the launch catalog still exposes one active Paper 2 GB product,
 - the sellable launch inventory matches the frozen plan,
 - Postmark sender/domain is verified,
 - Stripe webhook endpoint points at the deployed `BASE_URL`,
@@ -109,7 +109,7 @@ For purge-review cases:
 
 Run this sequence before production launch or after changing Stripe, Postmark, Pelican, or routing config:
 
-1. Create a real low-risk checkout with the live 3 GB price.
+1. Create a real low-risk checkout with the live Paper 2 GB price.
 2. Confirm Stripe marks payment/subscription facts onto the same purchase.
 3. Submit setup with an approved Minecraft version.
 4. Let the worker provision to `pending_activation`.

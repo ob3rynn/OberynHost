@@ -4,7 +4,7 @@ const REQUIRED_RUNTIME_ENV_NAMES = [
     "STRIPE_SECRET_KEY",
     "STRIPE_API_VERSION",
     "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_PRICE_3GB"
+    "STRIPE_PRICE_PAPER_2GB"
 ];
 
 const PLACEHOLDER_ENV_NAMES = [
@@ -22,6 +22,9 @@ const EXACT_PLACEHOLDER_VALUES = {
     STRIPE_WEBHOOK_SECRET: new Set([
         "whsec_replace_me"
     ]),
+    STRIPE_PRICE_PAPER_2GB: new Set([
+        "price_replace_me"
+    ])
 };
 
 const OPTIONAL_PELICAN_ENV_NAMES = [
@@ -377,7 +380,7 @@ function buildRuntimeConfig(env = process.env) {
     const stripeWebhookSecret = getTrimmedEnvValue(env, "STRIPE_WEBHOOK_SECRET");
     const setupSecretKey = getTrimmedEnvValue(env, "SETUP_SECRET_KEY") || adminKey;
     const stripePriceIds = {
-        "3GB": getTrimmedEnvValue(env, "STRIPE_PRICE_3GB")
+        "paper-2gb": getTrimmedEnvValue(env, "STRIPE_PRICE_PAPER_2GB")
     };
 
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
