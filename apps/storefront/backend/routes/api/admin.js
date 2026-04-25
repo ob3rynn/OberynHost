@@ -430,6 +430,52 @@ function getReadyReleaseErrors(purchase) {
     return errors;
 }
 
+function getRoutingVerificationErrors(purchase) {
+    const errors = [];
+
+    if (purchase.status !== PURCHASE_STATUS.PAID) {
+        errors.push("purchase is not paid");
+    }
+
+    if (purchase.fulfillmentStatus !== FULFILLMENT_STATUS.PENDING_ACTIVATION) {
+        errors.push("fulfillment is not pending activation");
+    }
+
+    if (purchase.serverStatus !== SERVER_STATUS.ALLOCATED) {
+        errors.push("local inventory slot has not been consumed");
+    }
+
+    if (!purchase.hostname || !purchase.hostnameReservationKey) {
+        errors.push("hostname reservation is missing");
+    }
+
+    if (!purchase.pelicanServerIdentifier) {
+        errors.push("Pelican server identifier is missing");
+    }
+
+    if (!purchase.pelicanAllocationId) {
+        errors.push("Pelican allocation linkage is missing");
+    }
+
+    const artifact = parseDesiredRoutingArtifact(purchase, errors);
+
+    if (artifact) {
+        if (artifact.hostname !== purchase.hostname) {
+            errors.push("desired routing artifact hostname does not match the purchase");
+        }
+
+        if (String(artifact.pelicanServerIdentifier || "") !== String(purchase.pelicanServerIdentifier || "")) {
+            errors.push("desired routing artifact server identifier does not match the purchase");
+        }
+
+        if (String(artifact.pelicanAllocationId || "") !== String(purchase.pelicanAllocationId || "")) {
+            errors.push("desired routing artifact allocation does not match the purchase");
+        }
+    }
+
+    return errors;
+}
+
 function getFulfillmentRequeueErrors(purchase) {
     const errors = [];
     const requeueableStates = new Set([
@@ -1368,6 +1414,91 @@ router.post("/admin/purchases/:purchaseId/reopen-setup", async (req, res) => {
         await rollbackTransaction();
         console.error("Setup reopen failed:", err);
         res.status(500).json({ error: "Could not reopen setup" });
+    }
+});
+
+router.post("/admin/purchases/:purchaseId/verify-routing", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        const verificationErrors = getRoutingVerificationErrors(purchase);
+
+        if (verificationErrors.length > 0) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: `Routing cannot be verified yet: ${verificationErrors.join("; ")}.`
+            });
+        }
+
+        if (purchase.routingVerifiedAt) {
+            await rollbackTransaction();
+            const serialized = await loadSerializedPurchase(purchaseId);
+
+            return res.json({
+                success: true,
+                action: "already_verified",
+                purchase: serialized
+            });
+        }
+
+        const now = Date.now();
+
+        await runQuery(
+            `UPDATE purchases
+             SET routingVerifiedAt = ?,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?
+               AND routingVerifiedAt IS NULL`,
+            [
+                now,
+                now,
+                "admin",
+                purchaseId
+            ]
+        );
+
+        await recordAdminAction(req, purchaseId, "verify_routing", adminNote.value || "", {
+            hostname: purchase.hostname,
+            pelicanServerIdentifier: purchase.pelicanServerIdentifier,
+            pelicanAllocationId: purchase.pelicanAllocationId,
+            desiredRoutingArtifactGeneratedAt: purchase.desiredRoutingArtifactGeneratedAt || null,
+            routingVerifiedAt: now
+        });
+
+        await runQuery("COMMIT");
+
+        const serialized = await loadSerializedPurchase(purchaseId);
+
+        res.json({
+            success: true,
+            action: "verified",
+            purchase: serialized
+        });
+    } catch (err) {
+        await rollbackTransaction();
+        console.error("Routing verification failed:", err);
+        res.status(500).json({ error: "Could not verify routing" });
     }
 });
 

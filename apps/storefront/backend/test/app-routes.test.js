@@ -2687,6 +2687,20 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     assert.equal(unverifiedReleaseRes.status, 400);
     assert.match((await unverifiedReleaseRes.json()).error, /routing verification/i);
 
+    const verifyRoutingRes = await app.request("/api/admin/purchases/1/verify-routing", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ adminNote: "HAProxy applied and checked" })
+    });
+    assert.equal(verifyRoutingRes.status, 200);
+    const verifyRoutingData = await verifyRoutingRes.json();
+    assert.equal(verifyRoutingData.action, "verified");
+    assert.ok(Number(verifyRoutingData.purchase.routingVerifiedAt) > 0);
+
     const completeRes = await app.request("/api/complete", {
         method: "POST",
         headers: {
@@ -2694,7 +2708,7 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
             cookie: adminCookie,
             origin: app.baseUrl
         },
-        body: JSON.stringify({ purchaseId: 1, adminNote: "Delivered", routingVerified: true })
+        body: JSON.stringify({ purchaseId: 1, adminNote: "Delivered" })
     });
     assert.equal(completeRes.status, 200);
 
@@ -2750,7 +2764,7 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     );
     assert.deepEqual(
         auditRows.map(row => row.actionType),
-        ["reconcile_stripe", "release_ready"]
+        ["reconcile_stripe", "verify_routing", "release_ready"]
     );
 
     const logoutRes = await app.request("/api/admin/logout", {

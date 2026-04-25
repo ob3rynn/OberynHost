@@ -39,6 +39,7 @@ Items struck through in this section are already implemented in the current repo
 - ~~The lifecycle worker now opens a non-destructive admin purge review task when suspended retention expires, leaving local capacity and Pelican resources held until an operator handles cleanup.~~
 - ~~Admin can now reopen setup on the same paid purchase after pre-provisioning review, clearing submitted setup/provisioning failure details while preserving payment, token access, and reserved capacity so the customer can resubmit without cloning an order.~~
 - ~~Admin can now run a read-only Pelican reconcile that fetches cached user/server facts, stores the latest Pelican snapshots, records audit details, and surfaces drift in diagnostics without changing fulfillment state, capacity, release status, or external resources.~~
+- ~~Operator routing verification is now a separate admin checkpoint before release: admins can mark routing verified after applying the desired artifact, and final ready release consumes that stored verification instead of silently verifying at release time.~~
 
 ## State Ownership Matrix
 

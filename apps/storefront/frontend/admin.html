@@ -1900,7 +1900,9 @@ function renderBulkToolbar(items) {
 
     actions.appendChild(createGuardedAction("Bulk Release Ready", "primary", "Confirm Bulk Release", async () => {
         const releasable = selectedItems.filter(item =>
-            item.status === "paid" && item.fulfillmentStatus === "pending_activation"
+            item.status === "paid" &&
+            item.fulfillmentStatus === "pending_activation" &&
+            item.routingVerifiedAt
         );
         await runBulkAction(
             releasable,
@@ -1909,15 +1911,18 @@ function renderBulkToolbar(items) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     purchaseId: item.id,
-                    adminNote: getOperatorNote(noteInput),
-                    routingVerified: true
+                    adminNote: getOperatorNote(noteInput)
                 })
             }),
             `Released ${releasable.length} selected order(s) and queued ready emails.`
         );
-    }, !selectedItems.some(item => item.status === "paid" && item.fulfillmentStatus === "pending_activation"),
-    "Routing has been applied and verified for every selected pending-activation server.",
-    "This releases selected servers and queues customer ready emails."));
+    }, !selectedItems.some(item =>
+        item.status === "paid" &&
+        item.fulfillmentStatus === "pending_activation" &&
+        item.routingVerifiedAt
+    ),
+    "Every selected pending-activation server already has routing marked verified.",
+    "This releases selected servers that already passed the separate routing verification gate."));
 
     actions.appendChild(createActionButton("Bulk Repair State", "warning", async () => {
         const repairable = selectedItems.filter(item =>
@@ -2090,9 +2095,17 @@ async function completePurchase(id, adminNote = "") {
         await requestJson("/api/complete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ purchaseId: id, adminNote, routingVerified: true })
+            body: JSON.stringify({ purchaseId: id, adminNote })
         });
     }, `Released order #${id} and queued the ready email.`);
+}
+
+async function verifyRouting(id, adminNote = "") {
+    await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/verify-routing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminNote })
+    }), `Marked routing verified for order #${id}.`);
 }
 
 async function reconcileStripe(id, adminNote = "") {
@@ -2553,10 +2566,18 @@ function renderPurchaseCard(purchase) {
         purchase.fulfillmentStatus === "pending_activation";
 
     if (canReleaseReady) {
+        if (!purchase.routingVerifiedAt) {
+            actions.appendChild(createGuardedAction("Mark Routing Verified", "secondary", "Confirm Verification", async () => {
+                await verifyRouting(purchase.id, getOperatorNote(noteInput));
+            }, false,
+            "The desired routing artifact has been applied and verified for this server.",
+            "This records the operator routing checkpoint without releasing the customer yet."));
+        }
+
         actions.appendChild(createGuardedAction("Release Ready", "primary", "Confirm Release", async () => {
             await completePurchase(purchase.id, getOperatorNote(noteInput));
-        }, false,
-        "Routing has been applied and verified for this server.",
+        }, !purchase.routingVerifiedAt,
+        "Routing has already been marked verified for this server.",
         "This is the final admin release gate and will queue the customer ready email."));
     } else if (purchase.status === "paid") {
         actions.appendChild(createElement(
