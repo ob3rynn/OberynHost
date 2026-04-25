@@ -11,6 +11,7 @@ function parseOptions(argv = process.argv) {
     return {
         applyLocal: argv.includes("--apply-local"),
         cancelStripe: argv.includes("--cancel-stripe"),
+        forceReleaseLocalCapacityWithoutPelicanCleanup: argv.includes("--force-release-local-capacity-without-pelican-cleanup"),
         json: argv.includes("--json")
     };
 }
@@ -28,8 +29,17 @@ function summarizePurchase(purchase) {
         stripeCustomerId: purchase.stripeCustomerId,
         stripeSubscriptionId: purchase.stripeSubscriptionId,
         pelicanServerId: purchase.pelicanServerId,
-        pelicanServerIdentifier: purchase.pelicanServerIdentifier
+        pelicanServerIdentifier: purchase.pelicanServerIdentifier,
+        pelicanAllocationId: purchase.pelicanAllocationId
     };
+}
+
+function hasPelicanResourceLinkage(purchase = {}) {
+    return Boolean(
+        String(purchase.pelicanServerId || "").trim() ||
+        String(purchase.pelicanServerIdentifier || "").trim() ||
+        String(purchase.pelicanAllocationId || "").trim()
+    );
 }
 
 async function cancelStripeSubscriptions(purchases, options = {}) {
@@ -70,13 +80,17 @@ async function applyLocalCleanup(database, purchases, options = {}) {
         return {
             updatedPurchases: 0,
             releasedServers: 0,
-            removedLinks: 0
+            removedLinks: 0,
+            manualPelicanCleanupRequired: [],
+            forcedCapacityReleaseWithoutPelicanCleanup: []
         };
     }
 
     let updatedPurchases = 0;
     let releasedServers = 0;
     let removedLinks = 0;
+    const manualPelicanCleanupRequired = [];
+    const forcedCapacityReleaseWithoutPelicanCleanup = [];
     const now = Date.now();
 
     await dbRun(database, "BEGIN IMMEDIATE TRANSACTION");
@@ -99,7 +113,21 @@ async function applyLocalCleanup(database, purchases, options = {}) {
             );
             updatedPurchases += purchaseUpdate.changes;
 
-            if (purchase.serverId) {
+            const hasPelicanResources = hasPelicanResourceLinkage(purchase);
+            const mayReleaseCapacity = purchase.serverId &&
+                (!hasPelicanResources || options.forceReleaseLocalCapacityWithoutPelicanCleanup);
+
+            if (hasPelicanResources) {
+                const summary = summarizePurchase(purchase);
+
+                if (options.forceReleaseLocalCapacityWithoutPelicanCleanup) {
+                    forcedCapacityReleaseWithoutPelicanCleanup.push(summary);
+                } else {
+                    manualPelicanCleanupRequired.push(summary);
+                }
+            }
+
+            if (mayReleaseCapacity) {
                 const serverUpdate = await dbRun(
                     database,
                     `UPDATE servers
@@ -132,7 +160,9 @@ async function applyLocalCleanup(database, purchases, options = {}) {
     return {
         updatedPurchases,
         releasedServers,
-        removedLinks
+        removedLinks,
+        manualPelicanCleanupRequired,
+        forcedCapacityReleaseWithoutPelicanCleanup
     };
 }
 
@@ -147,6 +177,9 @@ async function cleanupLiveishHarness(options = {}) {
         return {
             ok: true,
             dryRun: !options.applyLocal && !options.cancelStripe,
+            forceReleaseLocalCapacityWithoutPelicanCleanup: Boolean(
+                options.forceReleaseLocalCapacityWithoutPelicanCleanup
+            ),
             pelicanDestructiveCleanup: "not_implemented",
             localCleanup,
             stripeCancelled,
@@ -164,10 +197,15 @@ function formatCleanupResult(result) {
             ? "Mode: dry-run. No local rows or Stripe subscriptions were changed."
             : "Mode: apply. Only marked live-ish artifacts were targeted.",
         "Pelican destructive cleanup: not implemented.",
+        result.forceReleaseLocalCapacityWithoutPelicanCleanup
+            ? "WARNING: forced local capacity release ran without Pelican cleanup confirmation."
+            : "Local capacity with Pelican linkage is retained unless the explicit force flag is used.",
         `Candidates: ${result.candidates.length}`,
         `Local purchases updated: ${result.localCleanup.updatedPurchases}`,
         `Local servers released: ${result.localCleanup.releasedServers}`,
         `Local customer links removed: ${result.localCleanup.removedLinks}`,
+        `Requires manual Pelican cleanup before local capacity release: ${result.localCleanup.manualPelicanCleanupRequired.length}`,
+        `Forced local capacity releases without Pelican cleanup: ${result.localCleanup.forcedCapacityReleaseWithoutPelicanCleanup.length}`,
         `Stripe test subscriptions cancelled: ${result.stripeCancelled.length}`
     ];
 
@@ -175,6 +213,20 @@ function formatCleanupResult(result) {
         lines.push(
             `- #${candidate.id} ${candidate.serverName || candidate.email || "unnamed"} ` +
             `status=${candidate.status} fulfillment=${candidate.fulfillmentStatus || "unknown"}`
+        );
+    }
+
+    for (const candidate of result.localCleanup.manualPelicanCleanupRequired) {
+        lines.push(
+            `- requires manual Pelican cleanup before local capacity release: ` +
+            `#${candidate.id} ${candidate.serverName || candidate.email || "unnamed"}`
+        );
+    }
+
+    for (const candidate of result.localCleanup.forcedCapacityReleaseWithoutPelicanCleanup) {
+        lines.push(
+            `- forced local capacity release without Pelican cleanup: ` +
+            `#${candidate.id} ${candidate.serverName || candidate.email || "unnamed"}`
         );
     }
 
@@ -205,6 +257,7 @@ module.exports = {
     applyLocalCleanup,
     cleanupLiveishHarness,
     formatCleanupResult,
+    hasPelicanResourceLinkage,
     parseOptions,
     summarizePurchase
 };
