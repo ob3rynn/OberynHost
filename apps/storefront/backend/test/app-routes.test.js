@@ -2768,6 +2768,175 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     assert.equal(afterLogout.status, 401);
 });
 
+test("admin Pelican reconcile stores read-only facts and surfaces drift", async t => {
+    const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.net",
+            PELICAN_APPLICATION_API_KEY: "ptla_test_key"
+        }
+    });
+    const { runQuery, getQuery, allQuery } = app.queries;
+    const now = Date.now();
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeCustomerId,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt,
+                setupStatus,
+                fulfillmentStatus,
+                hostname,
+                hostnameReservationKey,
+                pelicanUserId,
+                pelicanUsername,
+                pelicanServerId,
+                pelicanServerIdentifier,
+                pelicanAllocationId,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            4,
+            "pelican-reconcile@example.com",
+            "Pelican Reconcile",
+            "paid",
+            "cus_pelican_reconcile",
+            "cs_test_pelican_reconcile",
+            now,
+            "setup_token_pelican_reconcile_abcdefghijklmnopqrstuvwxyz",
+            now + 60_000,
+            now,
+            "setup_submitted",
+            "pending_activation",
+            "pelican-reconcile.oberyn.net",
+            "pelican-reconcile",
+            "321",
+            "reconcile_customer",
+            "654",
+            "srv_reconcile",
+            "9001",
+            now
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["allocated", 4]);
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    assert.equal(loginRes.status, 200);
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const originalFetch = global.fetch;
+    const calls = [];
+
+    global.fetch = async (url, options = {}) => {
+        const urlText = String(url);
+
+        if (urlText.startsWith(app.baseUrl)) {
+            return originalFetch(url, options);
+        }
+
+        const requestUrl = new URL(urlText);
+        calls.push(`${options.method || "GET"} ${requestUrl.pathname}`);
+
+        if (requestUrl.pathname === "/api/application/servers/external/purchase%3A1") {
+            return jsonResponse(200, {
+                object: "server",
+                attributes: {
+                    id: 654,
+                    identifier: "srv_reconcile",
+                    allocation: 9999,
+                    user: 321
+                }
+            });
+        }
+
+        if (requestUrl.pathname === "/api/application/users/external/stripe%3Acus_pelican_reconcile") {
+            return jsonResponse(200, {
+                object: "user",
+                attributes: {
+                    id: 321,
+                    username: "reconcile_customer"
+                }
+            });
+        }
+
+        return jsonResponse(500, { error: "unexpected Pelican API call" });
+    };
+    t.after(() => {
+        global.fetch = originalFetch;
+    });
+
+    const reconcileRes = await app.request("/api/admin/purchases/1/reconcile-pelican", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ adminNote: "Check panel drift" })
+    });
+    assert.equal(reconcileRes.status, 200);
+    const reconcileData = await reconcileRes.json();
+    assert.equal(reconcileData.reconcileStatus, "allocation_mismatch");
+    assert.ok(
+        reconcileData.purchase.diagnostics.issues.includes(
+            "Last Pelican reconcile reported allocation mismatch."
+        )
+    );
+    assert.deepEqual(calls, [
+        "GET /api/application/servers/external/purchase%3A1",
+        "GET /api/application/users/external/stripe%3Acus_pelican_reconcile"
+    ]);
+
+    const purchase = await getQuery(
+        `SELECT
+            status,
+            fulfillmentStatus,
+            pelicanReconcileStatus,
+            pelicanReconciledAt,
+            pelicanServerStateJson,
+            pelicanUserStateJson,
+            lastStateOwner
+         FROM purchases
+         WHERE id = ?`,
+        [1]
+    );
+    assert.equal(purchase.status, "paid");
+    assert.equal(purchase.fulfillmentStatus, "pending_activation");
+    assert.equal(purchase.pelicanReconcileStatus, "allocation_mismatch");
+    assert.ok(Number(purchase.pelicanReconciledAt) > 0);
+    assert.equal(JSON.parse(purchase.pelicanServerStateJson).allocation, 9999);
+    assert.equal(JSON.parse(purchase.pelicanUserStateJson).username, "reconcile_customer");
+    assert.equal(purchase.lastStateOwner, "admin");
+
+    const server = await getQuery("SELECT status FROM servers WHERE id = ?", [4]);
+    assert.equal(server.status, "allocated");
+
+    const auditRows = await allQuery(
+        "SELECT actionType, note, detailsJson FROM adminAuditLog WHERE purchaseId = 1 ORDER BY id ASC"
+    );
+    assert.deepEqual(
+        auditRows.map(row => row.actionType),
+        ["reconcile_pelican"]
+    );
+    assert.equal(auditRows[0].note, "Check panel drift");
+    assert.equal(JSON.parse(auditRows[0].detailsJson).reconcileStatus, "allocation_mismatch");
+});
+
 test("admin can requeue fulfillment on the same purchase after admin review", async t => {
     const app = await createTestApp(t);
     const { runQuery, getQuery, allQuery } = app.queries;

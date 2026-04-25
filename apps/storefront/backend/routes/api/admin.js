@@ -15,6 +15,10 @@ const {
     FULFILLMENT_TASK_TYPE
 } = require("../../services/fulfillmentQueue");
 const { PAID_SETUP_ADMIN_ESCALATION_DELAY_MS } = require("../../services/lifecycleEnforcement");
+const {
+    ProvisioningBlockedError,
+    fetchPelicanPurchaseFacts
+} = require("../../services/pelicanProvisioner");
 const { clearCookie, parseCookies, serializeCookie } = require("../../utils/cookies");
 const { allQuery, getQuery, runQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
@@ -203,6 +207,11 @@ function buildDiagnostics(purchase) {
         policy.purgeRequired,
         "Suspended service has reached the 30-day retention limit and is ready for purge handling."
     );
+    addIssue(
+        issues,
+        purchase.pelicanReconcileStatus && purchase.pelicanReconcileStatus !== "ok",
+        `Last Pelican reconcile reported ${String(purchase.pelicanReconcileStatus).replace(/_/g, " ")}.`
+    );
 
     return {
         issues,
@@ -235,11 +244,25 @@ function parseAuditDetails(value) {
     }
 }
 
+function parseStateJson(value) {
+    if (!value) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
+    }
+}
+
 function serializePurchase(purchase, stripeState = null, auditLog = []) {
     const purchaseWithLifecycle = mergeLifecycleState(purchase);
 
     return {
         ...purchaseWithLifecycle,
+        pelicanUserState: parseStateJson(purchaseWithLifecycle.pelicanUserStateJson),
+        pelicanServerState: parseStateJson(purchaseWithLifecycle.pelicanServerStateJson),
         auditLog: auditLog.map(entry => ({
             ...entry,
             details: parseAuditDetails(entry.detailsJson)
@@ -458,6 +481,74 @@ function getFulfillmentRequeueErrors(purchase) {
     return errors;
 }
 
+function getRemoteString(value) {
+    return String(value ?? "").trim();
+}
+
+function getRemoteServerIdentifier(server) {
+    return getRemoteString(server?.identifier || server?.uuid_short || server?.uuid);
+}
+
+function getRemoteServerAllocationId(server) {
+    return getRemoteString(server?.allocation || server?.allocation_id);
+}
+
+function getRemoteServerUserId(server) {
+    return getRemoteString(server?.user);
+}
+
+function getPelicanReconcileStatus(purchase, facts) {
+    const server = facts.server;
+    const user = facts.user;
+    const localServerId = getRemoteString(purchase.pelicanServerId);
+    const localServerIdentifier = getRemoteString(purchase.pelicanServerIdentifier);
+    const localAllocationId = getRemoteString(purchase.pelicanAllocationId);
+    const localUserId = getRemoteString(purchase.pelicanUserId);
+    const localUsername = getRemoteString(purchase.pelicanUsername);
+
+    if (!localServerId && !localServerIdentifier && !localAllocationId && !localUserId && !localUsername) {
+        return "no_local_linkage";
+    }
+
+    if ((localServerId || localServerIdentifier || localAllocationId) && !server) {
+        return "missing_server";
+    }
+
+    if (server) {
+        if (localServerId && getRemoteString(server.id) !== localServerId) {
+            return "server_mismatch";
+        }
+
+        if (localServerIdentifier && getRemoteServerIdentifier(server) !== localServerIdentifier) {
+            return "server_mismatch";
+        }
+
+        if (localAllocationId && getRemoteServerAllocationId(server) !== localAllocationId) {
+            return "allocation_mismatch";
+        }
+
+        if (localUserId && getRemoteServerUserId(server) && getRemoteServerUserId(server) !== localUserId) {
+            return "user_mismatch";
+        }
+    }
+
+    if ((localUserId || localUsername) && !user) {
+        return "missing_user";
+    }
+
+    if (user) {
+        if (localUserId && getRemoteString(user.id) !== localUserId) {
+            return "user_mismatch";
+        }
+
+        if (localUsername && getRemoteString(user.username) !== localUsername) {
+            return "user_mismatch";
+        }
+    }
+
+    return "ok";
+}
+
 function getSetupReopenErrors(purchase, existingJob) {
     const errors = [];
     const reopenableFulfillmentStates = new Set([
@@ -648,6 +739,109 @@ router.post("/admin/purchases/:purchaseId/reconcile-stripe", async (req, res) =>
     } catch (err) {
         console.error("Stripe reconcile failed:", err);
         res.status(500).json({ error: "Could not reconcile purchase with Stripe" });
+    }
+});
+
+router.post("/admin/purchases/:purchaseId/reconcile-pelican", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        await runQuery("COMMIT");
+
+        const facts = await fetchPelicanPurchaseFacts(purchase);
+        const reconcileStatus = getPelicanReconcileStatus(purchase, facts);
+        const now = Date.now();
+
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const currentPurchase = await getPurchaseRecord(purchaseId);
+
+        if (!currentPurchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        await runQuery(
+            `UPDATE purchases
+             SET pelicanUserStateJson = ?,
+                 pelicanServerStateJson = ?,
+                 pelicanReconcileStatus = ?,
+                 pelicanReconciledAt = ?,
+                 reconciledAt = ?,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?`,
+            [
+                facts.user ? JSON.stringify(facts.user) : null,
+                facts.server ? JSON.stringify(facts.server) : null,
+                reconcileStatus,
+                now,
+                now,
+                now,
+                "admin",
+                purchaseId
+            ]
+        );
+
+        await recordAdminAction(req, purchaseId, "reconcile_pelican", adminNote.value || "", {
+            reconcileStatus,
+            lookup: facts.lookup,
+            serverFound: Boolean(facts.server),
+            userFound: Boolean(facts.user),
+            local: {
+                pelicanUserId: currentPurchase.pelicanUserId || null,
+                pelicanUsername: currentPurchase.pelicanUsername || null,
+                pelicanServerId: currentPurchase.pelicanServerId || null,
+                pelicanServerIdentifier: currentPurchase.pelicanServerIdentifier || null,
+                pelicanAllocationId: currentPurchase.pelicanAllocationId || null
+            },
+            remote: {
+                userId: facts.user?.id || null,
+                username: facts.user?.username || null,
+                serverId: facts.server?.id || null,
+                serverIdentifier: getRemoteServerIdentifier(facts.server),
+                allocationId: getRemoteServerAllocationId(facts.server)
+            }
+        });
+
+        await runQuery("COMMIT");
+
+        const serialized = await loadSerializedPurchase(purchaseId);
+
+        res.json({
+            success: true,
+            reconcileStatus,
+            purchase: serialized
+        });
+    } catch (err) {
+        await rollbackTransaction();
+
+        if (err instanceof ProvisioningBlockedError) {
+            return res.status(400).json({ error: err.message });
+        }
+
+        console.error("Pelican reconcile failed:", err);
+        res.status(500).json({ error: "Could not reconcile purchase with Pelican" });
     }
 });
 

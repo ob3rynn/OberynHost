@@ -48,6 +48,20 @@ function assertLiveConfig(pelicanConfig) {
     }
 }
 
+function assertApiConfig(pelicanConfig) {
+    const missing = [];
+
+    if (!pelicanConfig.panelUrl) missing.push("PELICAN_PANEL_URL");
+    if (!pelicanConfig.applicationApiKey) missing.push("PELICAN_APPLICATION_API_KEY");
+
+    if (missing.length > 0) {
+        throw new ProvisioningBlockedError(
+            `Pelican Application API is not configured for reconcile yet. Missing: ${missing.join(", ")}.`,
+            FULFILLMENT_FAILURE_CLASS.MANUAL_APPROVAL_REQUIRED
+        );
+    }
+}
+
 function unwrapAttributes(payload) {
     return payload?.attributes || payload?.data?.attributes || payload?.data || payload || {};
 }
@@ -123,9 +137,39 @@ async function getUserByExternalId(externalId, requestOptions) {
     return payload ? unwrapAttributes(payload) : null;
 }
 
+async function getUserById(userId, requestOptions) {
+    const normalizedUserId = String(userId || "").trim();
+
+    if (!normalizedUserId) {
+        return null;
+    }
+
+    const payload = await pelicanRequest(
+        `/api/application/users/${encodeExternalId(normalizedUserId)}`,
+        { ...requestOptions, notFoundOk: true }
+    );
+
+    return payload ? unwrapAttributes(payload) : null;
+}
+
 async function getServerByExternalId(externalId, requestOptions) {
     const payload = await pelicanRequest(
         `/api/application/servers/external/${encodeExternalId(externalId)}`,
+        { ...requestOptions, notFoundOk: true }
+    );
+
+    return payload ? unwrapAttributes(payload) : null;
+}
+
+async function getServerById(serverId, requestOptions) {
+    const normalizedServerId = String(serverId || "").trim();
+
+    if (!normalizedServerId) {
+        return null;
+    }
+
+    const payload = await pelicanRequest(
+        `/api/application/servers/${encodeExternalId(normalizedServerId)}`,
         { ...requestOptions, notFoundOk: true }
     );
 
@@ -139,7 +183,7 @@ function buildCustomerExternalId(input) {
 }
 
 function buildPurchaseExternalId(input) {
-    return `purchase:${input.purchaseId}`;
+    return `purchase:${input.purchaseId || input.id}`;
 }
 
 function normalizeNumericId(name, value) {
@@ -413,9 +457,39 @@ async function provisionInitialServer(input, options = {}) {
     }
 }
 
+async function fetchPelicanPurchaseFacts(input, options = {}) {
+    const pelicanConfig = getPelicanConfig(options);
+    assertApiConfig(pelicanConfig);
+
+    const requestOptions = {
+        pelicanConfig,
+        fetchImpl: options.fetchImpl
+    };
+    const purchaseExternalId = buildPurchaseExternalId(input);
+    const customerExternalId = buildCustomerExternalId(input);
+    const server = await getServerByExternalId(purchaseExternalId, requestOptions) ||
+        await getServerById(input.pelicanServerId, requestOptions);
+    const user = customerExternalId
+        ? await getUserByExternalId(customerExternalId, requestOptions) ||
+            await getUserById(input.pelicanUserId, requestOptions)
+        : await getUserById(input.pelicanUserId, requestOptions);
+
+    return {
+        server,
+        user,
+        lookup: {
+            purchaseExternalId,
+            customerExternalId: customerExternalId || null,
+            fallbackServerId: input.pelicanServerId || null,
+            fallbackUserId: input.pelicanUserId || null
+        }
+    };
+}
+
 module.exports = {
     PelicanApiError,
     ProvisioningBlockedError,
     buildPurchaseExternalId,
+    fetchPelicanPurchaseFacts,
     provisionInitialServer
 };

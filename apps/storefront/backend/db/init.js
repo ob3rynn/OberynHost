@@ -530,6 +530,10 @@ const ready = (async () => {
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanUsername", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanServerIdentifier", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanAllocationId", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanUserStateJson", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanServerStateJson", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanReconcileStatus", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanReconciledAt", "INTEGER");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordCiphertext", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordIv", "TEXT");
         await addColumnIfMissing("purchases", purchaseColumnNames, "pelicanPasswordAuthTag", "TEXT");

@@ -1243,6 +1243,7 @@ const DETAIL_HELP = {
     "Pelican Username": "The Pelican account username that will be sent in the ready email.",
     "Pelican Server": "The Pelican server linkage returned by provisioning.",
     "Pelican Allocation": "The Pelican allocation assigned to this purchase.",
+    "Pelican Reconcile": "The last read-only Pelican fact check result for this purchase.",
     "Routing Verified": "When an operator confirmed the desired routing artifact was applied.",
     "Ready Email Queued": "When the customer-ready access email was added to the local outbox.",
     "Stripe Session": "The Checkout Session used to start the purchase flow.",
@@ -2119,6 +2120,19 @@ async function requeueFulfillment(id, adminNote = "") {
     }), `Requeued fulfillment for order #${id}.`);
 }
 
+async function reconcilePelican(id, adminNote = "") {
+    const result = await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/reconcile-pelican`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminNote })
+    }), `Re-checked Pelican for order #${id}.`);
+
+    if (result?.reconcileStatus) {
+        showBanner(`Pelican reconcile result for order #${id}: ${result.reconcileStatus.replace(/_/g, " ")}.`, "info");
+        await load();
+    }
+}
+
 async function reopenSetup(id, adminNote = "") {
     await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/reopen-setup`, {
         method: "POST",
@@ -2501,6 +2515,12 @@ function renderPurchaseCard(purchase) {
         section.appendChild(createDetailLine("Pelican Username", purchase.pelicanUsername));
         section.appendChild(createDetailLine("Pelican Server", purchase.pelicanServerIdentifier || purchase.pelicanServerId));
         section.appendChild(createDetailLine("Pelican Allocation", purchase.pelicanAllocationId));
+        section.appendChild(createDetailLine(
+            "Pelican Reconcile",
+            purchase.pelicanReconcileStatus
+                ? `${purchase.pelicanReconcileStatus.replace(/_/g, " ")} at ${formatTimestamp(purchase.pelicanReconciledAt)}`
+                : "Not checked"
+        ));
         section.appendChild(createDetailLine("Routing Verified", formatTimestamp(purchase.routingVerifiedAt)));
         section.appendChild(createDetailLine("Ready Email Queued", formatTimestamp(purchase.readyEmailQueuedAt)));
         section.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
@@ -2549,6 +2569,17 @@ function renderPurchaseCard(purchase) {
     if (purchase.stripeSessionId) {
         actions.appendChild(createActionButton("Re-check Stripe", "secondary", async () => {
             await reconcileStripe(purchase.id, getOperatorNote(noteInput));
+        }));
+    }
+
+    if (
+        purchase.stripeCustomerId ||
+        purchase.pelicanUserId ||
+        purchase.pelicanServerId ||
+        purchase.pelicanServerIdentifier
+    ) {
+        actions.appendChild(createActionButton("Re-check Pelican", "secondary", async () => {
+            await reconcilePelican(purchase.id, getOperatorNote(noteInput));
         }));
     }
 
