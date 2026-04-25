@@ -23,8 +23,10 @@ const {
 } = require("../services/emailProvider");
 const {
     escalateNextPaidStalledPurchase,
+    openNextSuspendedPurgeReviewTask,
     remindNextPaidStalledPurchase,
-    suspendNextPurchasePastGrace
+    suspendNextPurchasePastGrace,
+    warnNextSuspendedPurchaseBeforeDelete
 } = require("../services/lifecycleEnforcement");
 const defaultProvisioner = require("../services/pelicanProvisioner");
 const { ProvisioningBlockedError } = require("../services/pelicanProvisioner");
@@ -413,6 +415,18 @@ async function runLifecycleWorkerIteration(options = {}) {
 
     if (escalation) {
         return escalation;
+    }
+
+    const deleteWarning = await warnNextSuspendedPurchaseBeforeDelete(options);
+
+    if (deleteWarning) {
+        return deleteWarning;
+    }
+
+    const purgeReview = await openNextSuspendedPurgeReviewTask(options);
+
+    if (purgeReview) {
+        return purgeReview;
     }
 
     return suspendNextPurchasePastGrace(options);

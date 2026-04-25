@@ -12,7 +12,25 @@ const EMAIL_OUTBOX_STATE = {
 
 const EMAIL_KIND = {
     READY_ACCESS: "ready_access",
-    SETUP_REMINDER: "setup_reminder"
+    SETUP_REMINDER: "setup_reminder",
+    SUSPENSION_DELETE_WARNING_72H: "suspension_delete_warning_72h",
+    SUSPENSION_DELETE_WARNING_48H: "suspension_delete_warning_48h",
+    SUSPENSION_DELETE_WARNING_24H: "suspension_delete_warning_24h"
+};
+
+const SUSPENSION_DELETE_WARNING_CONFIG = {
+    [EMAIL_KIND.SUSPENSION_DELETE_WARNING_72H]: {
+        label: "72 hours",
+        hoursRemaining: 72
+    },
+    [EMAIL_KIND.SUSPENSION_DELETE_WARNING_48H]: {
+        label: "48 hours",
+        hoursRemaining: 48
+    },
+    [EMAIL_KIND.SUSPENSION_DELETE_WARNING_24H]: {
+        label: "24 hours",
+        hoursRemaining: 24
+    }
 };
 
 const DEFAULT_EMAIL_OUTBOX_LEASE_MS = 1000 * 60;
@@ -25,6 +43,10 @@ function buildReadyEmailIdempotencyKey(purchaseId) {
 
 function buildSetupReminderIdempotencyKey(purchaseId) {
     return `purchase:${purchaseId}:email:${EMAIL_KIND.SETUP_REMINDER}`;
+}
+
+function buildSuspensionDeleteWarningIdempotencyKey(purchaseId, kind) {
+    return `purchase:${purchaseId}:email:${kind}`;
 }
 
 function parsePayloadJson(value) {
@@ -146,6 +168,50 @@ function buildSetupReminderEmailMessage(purchase) {
     };
 }
 
+function buildSuspensionDeleteWarningEmailMessage(purchase, kind) {
+    const warning = SUSPENSION_DELETE_WARNING_CONFIG[kind];
+    const recipientEmail = String(purchase?.email || "").trim();
+    const serverName = String(purchase?.serverName || "your server").trim();
+    const purgeEligibleAt = Number(purchase?.purgeEligibleAt || 0) || null;
+
+    if (!warning) {
+        throw new Error(`Unsupported suspension warning email kind: ${kind}`);
+    }
+
+    if (!recipientEmail) {
+        throw new Error("Customer email is required before queueing a suspension warning.");
+    }
+
+    const deadlineText = purgeEligibleAt
+        ? new Date(purgeEligibleAt).toISOString()
+        : "the scheduled deletion deadline";
+    const subject = `Action required: ${serverName} deletion in ${warning.label}`;
+    const bodyText = [
+        `Your OberynHost server "${serverName}" is still suspended for nonpayment.`,
+        "",
+        `If payment is not restored, this server becomes eligible for deletion in ${warning.label}.`,
+        `Deletion eligibility time: ${deadlineText}`,
+        "",
+        "Please update payment or contact support@oberynn.com if you need help recovering the service."
+    ].join("\n");
+
+    return {
+        kind,
+        recipientEmail,
+        senderEmail: config.outboundEmailFrom,
+        subject,
+        bodyText,
+        payload: {
+            kind,
+            purchaseId: purchase.id,
+            serverName,
+            hoursRemaining: warning.hoursRemaining,
+            purgeEligibleAt,
+            email: recipientEmail
+        }
+    };
+}
+
 async function enqueueReadyEmailForPurchase(purchase, options = {}) {
     const now = Number(options.now || Date.now());
     const message = buildReadyEmailMessage(purchase);
@@ -195,6 +261,51 @@ async function enqueueSetupReminderEmailForPurchase(purchase, options = {}) {
     const now = Number(options.now || Date.now());
     const message = buildSetupReminderEmailMessage(purchase);
     const idempotencyKey = buildSetupReminderIdempotencyKey(purchase.id);
+
+    await runQuery(
+        `INSERT INTO emailOutbox
+            (
+                purchaseId,
+                kind,
+                state,
+                idempotencyKey,
+                recipientEmail,
+                senderEmail,
+                subject,
+                bodyText,
+                payloadJson,
+                availableAt,
+                createdAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(idempotencyKey) DO NOTHING`,
+        [
+            purchase.id,
+            message.kind,
+            EMAIL_OUTBOX_STATE.QUEUED,
+            idempotencyKey,
+            message.recipientEmail,
+            message.senderEmail,
+            message.subject,
+            message.bodyText,
+            JSON.stringify(message.payload),
+            now,
+            now,
+            now
+        ]
+    );
+
+    return {
+        ...message,
+        idempotencyKey
+    };
+}
+
+async function enqueueSuspensionDeleteWarningEmailForPurchase(purchase, kind, options = {}) {
+    const now = Number(options.now || Date.now());
+    const message = buildSuspensionDeleteWarningEmailMessage(purchase, kind);
+    const idempotencyKey = buildSuspensionDeleteWarningIdempotencyKey(purchase.id, kind);
 
     await runQuery(
         `INSERT INTO emailOutbox
@@ -435,12 +546,16 @@ module.exports = {
     DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS,
     EMAIL_KIND,
     EMAIL_OUTBOX_STATE,
+    SUSPENSION_DELETE_WARNING_CONFIG,
     buildReadyEmailIdempotencyKey,
     buildReadyEmailMessage,
     buildSetupReminderEmailMessage,
     buildSetupReminderIdempotencyKey,
+    buildSuspensionDeleteWarningEmailMessage,
+    buildSuspensionDeleteWarningIdempotencyKey,
     enqueueReadyEmailForPurchase,
     enqueueSetupReminderEmailForPurchase,
+    enqueueSuspensionDeleteWarningEmailForPurchase,
     leaseNextEmailOutboxMessage,
     recoverExpiredEmailOutboxLeases,
     markEmailOutboxFailed,

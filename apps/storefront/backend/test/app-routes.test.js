@@ -2092,6 +2092,243 @@ test("lifecycle worker does not suspend subscriptions that are still in grace", 
     assert.equal(auditCount.count, 0);
 });
 
+test("lifecycle worker does not queue delete warnings before the suspended service warning window", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { SUSPENSION_RETENTION_MS } = require("../services/policyRules");
+    const now = Date.now();
+    const seventyTwoHoursMs = 1000 * 60 * 60 * 72;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt,
+                completedAt,
+                serviceSuspendedAt,
+                setupStatus,
+                fulfillmentStatus,
+                serviceStatus,
+                customerRiskStatus
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            8,
+            "no-warning-yet@example.com",
+            "Not Yet Warning",
+            "completed",
+            "cs_test_no_delete_warning_yet",
+            now - (1000 * 60 * 60 * 24 * 40),
+            "setup_token_no_delete_warning_abcdefghijklmnopqrstuvwxyz",
+            now + (1000 * 60 * 60),
+            now - (1000 * 60 * 60 * 24 * 35),
+            now - (1000 * 60 * 60 * 24 * 35),
+            now - SUSPENSION_RETENTION_MS + seventyTwoHoursMs + 60_000,
+            "setup_submitted",
+            "ready",
+            "suspended_final_recovery",
+            "purchase_blocked_delinquent"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 8]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration, null);
+
+    const outboxCount = await getQuery(
+        "SELECT COUNT(*) AS count FROM emailOutbox WHERE purchaseId = 1"
+    );
+    assert.equal(outboxCount.count, 0);
+});
+
+test("lifecycle worker queues the most urgent suspended delete warning once", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { SUSPENSION_RETENTION_MS } = require("../services/policyRules");
+    const now = Date.now();
+    const fortyEightHoursMs = 1000 * 60 * 60 * 48;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt,
+                completedAt,
+                serviceSuspendedAt,
+                setupStatus,
+                fulfillmentStatus,
+                serviceStatus,
+                customerRiskStatus
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            8,
+            "warning-due@example.com",
+            "Warning Due",
+            "completed",
+            "cs_test_delete_warning_due",
+            now - (1000 * 60 * 60 * 24 * 40),
+            "setup_token_delete_warning_due_abcdefghijklmnopqrstuvwxyz",
+            now + (1000 * 60 * 60),
+            now - (1000 * 60 * 60 * 24 * 35),
+            now - (1000 * 60 * 60 * 24 * 35),
+            now - SUSPENSION_RETENTION_MS + fortyEightHoursMs - 1000,
+            "setup_submitted",
+            "ready",
+            "suspended_final_recovery",
+            "purchase_blocked_delinquent"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 8]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration.outcome, "suspension_delete_warning_queued");
+    assert.equal(iteration.purchaseId, 1);
+    assert.equal(iteration.emailKind, "suspension_delete_warning_48h");
+    assert.equal(iteration.idempotencyKey, "purchase:1:email:suspension_delete_warning_48h");
+
+    const outboxRow = await getQuery(
+        `SELECT kind, state, idempotencyKey, subject, bodyText, payloadJson
+         FROM emailOutbox
+         WHERE purchaseId = 1`
+    );
+    assert.equal(outboxRow.kind, "suspension_delete_warning_48h");
+    assert.equal(outboxRow.state, "queued");
+    assert.match(outboxRow.subject, /deletion in 48 hours/);
+    assert.match(outboxRow.bodyText, /support@oberynn\.com/);
+
+    const payload = JSON.parse(outboxRow.payloadJson);
+    assert.equal(payload.kind, "suspension_delete_warning_48h");
+    assert.equal(payload.serverName, "Warning Due");
+    assert.equal(payload.hoursRemaining, 48);
+
+    const secondIteration = await runLifecycleWorkerIteration({ now: now + 1000 });
+    assert.equal(secondIteration, null);
+
+    const outboxCount = await getQuery(
+        "SELECT COUNT(*) AS count FROM emailOutbox WHERE purchaseId = 1"
+    );
+    assert.equal(outboxCount.count, 1);
+});
+
+test("lifecycle worker opens one admin purge review task after suspended retention expires", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { SUSPENSION_RETENTION_MS } = require("../services/policyRules");
+    const now = Date.now();
+    const suspendedAt = now - SUSPENSION_RETENTION_MS - 1000;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt,
+                completedAt,
+                serviceSuspendedAt,
+                setupStatus,
+                fulfillmentStatus,
+                serviceStatus,
+                customerRiskStatus,
+                pelicanServerId,
+                pelicanServerIdentifier,
+                pelicanAllocationId
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            8,
+            "purge-review@example.com",
+            "Purge Review Due",
+            "completed",
+            "cs_test_purge_review_due",
+            now - (1000 * 60 * 60 * 24 * 45),
+            "setup_token_purge_review_due_abcdefghijklmnopqrstuvwxyz",
+            now + (1000 * 60 * 60),
+            now - (1000 * 60 * 60 * 24 * 40),
+            now - (1000 * 60 * 60 * 24 * 40),
+            suspendedAt,
+            "setup_submitted",
+            "ready",
+            "suspended_final_recovery",
+            "purchase_blocked_delinquent",
+            "pelican-server-purge",
+            "srv_purge",
+            "allocation-purge"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 8]);
+
+    const { runLifecycleWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runLifecycleWorkerIteration({ now });
+
+    assert.equal(iteration.outcome, "purge_review_task_opened");
+    assert.equal(iteration.purchaseId, 1);
+    assert.equal(iteration.purgeEligibleAt, suspendedAt + SUSPENSION_RETENTION_MS);
+
+    const server = await getQuery("SELECT status FROM servers WHERE id = ?", [8]);
+    assert.equal(server.status, "held");
+
+    const purchase = await getQuery(
+        `SELECT status, serviceSuspendedAt, serviceStatus, customerRiskStatus
+         FROM purchases
+         WHERE id = ?`,
+        [1]
+    );
+    assert.equal(purchase.status, "completed");
+    assert.equal(purchase.serviceSuspendedAt, suspendedAt);
+    assert.equal(purchase.serviceStatus, "suspended_final_recovery");
+    assert.equal(purchase.customerRiskStatus, "purchase_blocked_delinquent");
+
+    const auditRow = await getQuery(
+        `SELECT actionType, note, detailsJson
+         FROM adminAuditLog
+         WHERE purchaseId = ?
+         ORDER BY id ASC`,
+        [1]
+    );
+    assert.equal(auditRow.actionType, "worker_open_purge_review");
+    assert.match(auditRow.note, /admin purge review is required/);
+
+    const details = JSON.parse(auditRow.detailsJson);
+    assert.equal(details.serviceSuspendedAt, suspendedAt);
+    assert.equal(details.purgeEligibleAt, suspendedAt + SUSPENSION_RETENTION_MS);
+    assert.equal(details.serverStatus, "held");
+    assert.equal(details.pelicanServerIdentifier, "srv_purge");
+
+    const secondIteration = await runLifecycleWorkerIteration({ now: now + 1000 });
+    assert.equal(secondIteration, null);
+
+    const auditCount = await getQuery(
+        "SELECT COUNT(*) AS count FROM adminAuditLog WHERE purchaseId = ?",
+        [1]
+    );
+    assert.equal(auditCount.count, 1);
+});
+
 test("lifecycle worker queues one setup reminder email for paid purchases stalled over 24 hours", async t => {
     const app = await createTestApp(t);
     const { runQuery, getQuery } = app.queries;

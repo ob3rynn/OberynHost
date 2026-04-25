@@ -1,8 +1,13 @@
-const { getQuery, runQuery } = require("../db/queries");
+const { allQuery, getQuery, runQuery } = require("../db/queries");
 const { rollbackTransaction } = require("../db/transactions");
 const { PURCHASE_STATUS, SERVER_STATUS } = require("../constants/status");
-const { enqueueSetupReminderEmailForPurchase, EMAIL_KIND } = require("./emailOutbox");
 const {
+    EMAIL_KIND,
+    enqueueSetupReminderEmailForPurchase,
+    enqueueSuspensionDeleteWarningEmailForPurchase
+} = require("./emailOutbox");
+const {
+    SUSPENSION_RETENTION_MS,
     SUBSCRIPTION_GRACE_PERIOD_MS,
     TERMINAL_SUBSCRIPTION_STATUSES,
     getPurchasePolicyState
@@ -11,6 +16,20 @@ const { mergeLifecycleState } = require("./lifecycle");
 
 const PAID_SETUP_REMINDER_DELAY_MS = 1000 * 60 * 60 * 24;
 const PAID_SETUP_ADMIN_ESCALATION_DELAY_MS = 1000 * 60 * 60 * 24 * 3;
+const SUSPENSION_DELETE_WARNING_WINDOWS = [
+    {
+        kind: EMAIL_KIND.SUSPENSION_DELETE_WARNING_24H,
+        beforeMs: 1000 * 60 * 60 * 24
+    },
+    {
+        kind: EMAIL_KIND.SUSPENSION_DELETE_WARNING_48H,
+        beforeMs: 1000 * 60 * 60 * 48
+    },
+    {
+        kind: EMAIL_KIND.SUSPENSION_DELETE_WARNING_72H,
+        beforeMs: 1000 * 60 * 60 * 72
+    }
+];
 
 async function recordLifecycleAuditAction(
     purchaseId,
@@ -128,6 +147,144 @@ async function escalateNextPaidStalledPurchase(options = {}) {
         return {
             outcome: "paid_setup_admin_escalation",
             purchaseId: purchase.id
+        };
+    } catch (err) {
+        await rollbackTransaction();
+        throw err;
+    }
+}
+
+async function warnNextSuspendedPurchaseBeforeDelete(options = {}) {
+    const now = Number(options.now || Date.now());
+    const earliestWarningSuspendedAt = now - (SUSPENSION_RETENTION_MS - SUSPENSION_DELETE_WARNING_WINDOWS.at(-1).beforeMs);
+
+    const candidates = await allQuery(
+        `SELECT p.*
+         FROM purchases p
+         WHERE p.status = ?
+           AND p.serviceSuspendedAt IS NOT NULL
+           AND p.serviceSuspendedAt <= ?
+           AND p.serviceSuspendedAt > ?
+           AND TRIM(COALESCE(p.email, '')) != ''
+         ORDER BY p.serviceSuspendedAt ASC, p.id ASC
+         LIMIT 25`,
+        [
+            PURCHASE_STATUS.COMPLETED,
+            earliestWarningSuspendedAt,
+            now - SUSPENSION_RETENTION_MS
+        ]
+    );
+
+    if (!candidates.length) {
+        return null;
+    }
+
+    for (const purchase of candidates) {
+        const purgeEligibleAt = Number(purchase.serviceSuspendedAt) + SUSPENSION_RETENTION_MS;
+        const msUntilPurge = purgeEligibleAt - now;
+        const warning = SUSPENSION_DELETE_WARNING_WINDOWS.find(candidate =>
+            msUntilPurge <= candidate.beforeMs
+        );
+
+        if (!warning) {
+            continue;
+        }
+
+        const existingWarning = await getQuery(
+            `SELECT id
+             FROM emailOutbox
+             WHERE purchaseId = ?
+               AND kind = ?
+             LIMIT 1`,
+            [
+                purchase.id,
+                warning.kind
+            ]
+        );
+
+        if (existingWarning) {
+            continue;
+        }
+
+        const message = await enqueueSuspensionDeleteWarningEmailForPurchase({
+            ...purchase,
+            purgeEligibleAt
+        }, warning.kind, { now });
+
+        return {
+            outcome: "suspension_delete_warning_queued",
+            purchaseId: purchase.id,
+            emailKind: message.kind,
+            idempotencyKey: message.idempotencyKey,
+            purgeEligibleAt
+        };
+    }
+
+    return null;
+}
+
+async function openNextSuspendedPurgeReviewTask(options = {}) {
+    const now = Number(options.now || Date.now());
+    const purgeThreshold = now - SUSPENSION_RETENTION_MS;
+    const recordAuditAction = options.recordAuditAction || recordLifecycleAuditAction;
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getQuery(
+            `SELECT
+                p.*,
+                s.status AS serverStatus
+             FROM purchases p
+             LEFT JOIN servers s ON s.id = p.serverId
+             WHERE p.status = ?
+               AND p.serviceSuspendedAt IS NOT NULL
+               AND p.serviceSuspendedAt <= ?
+               AND NOT EXISTS (
+                    SELECT 1
+                    FROM adminAuditLog a
+                    WHERE a.purchaseId = p.id
+                      AND a.actionType = ?
+               )
+             ORDER BY p.serviceSuspendedAt ASC, p.id ASC
+             LIMIT 1`,
+            [
+                PURCHASE_STATUS.COMPLETED,
+                purgeThreshold,
+                "worker_open_purge_review"
+            ]
+        );
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return null;
+        }
+
+        const purgeEligibleAt = Number(purchase.serviceSuspendedAt) + SUSPENSION_RETENTION_MS;
+
+        await recordAuditAction(
+            purchase.id,
+            "worker_open_purge_review",
+            "Suspended service reached the retention limit; admin purge review is required before destructive cleanup.",
+            {
+                serviceSuspendedAt: Number(purchase.serviceSuspendedAt || 0) || null,
+                purgeEligibleAt,
+                status: purchase.status,
+                serverId: purchase.serverId || null,
+                serverStatus: purchase.serverStatus || null,
+                pelicanServerId: purchase.pelicanServerId || null,
+                pelicanServerIdentifier: purchase.pelicanServerIdentifier || null,
+                pelicanAllocationId: purchase.pelicanAllocationId || null
+            },
+            { now }
+        );
+
+        await runQuery("COMMIT");
+
+        return {
+            outcome: "purge_review_task_opened",
+            purchaseId: purchase.id,
+            purgeEligibleAt
         };
     } catch (err) {
         await rollbackTransaction();
@@ -263,8 +420,11 @@ async function suspendNextPurchasePastGrace(options = {}) {
 module.exports = {
     PAID_SETUP_ADMIN_ESCALATION_DELAY_MS,
     PAID_SETUP_REMINDER_DELAY_MS,
+    SUSPENSION_DELETE_WARNING_WINDOWS,
     escalateNextPaidStalledPurchase,
+    openNextSuspendedPurgeReviewTask,
     remindNextPaidStalledPurchase,
     recordLifecycleAuditAction,
-    suspendNextPurchasePastGrace
+    suspendNextPurchasePastGrace,
+    warnNextSuspendedPurchaseBeforeDelete
 };

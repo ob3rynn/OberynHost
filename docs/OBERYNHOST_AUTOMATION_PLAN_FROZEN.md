@@ -35,6 +35,8 @@ Items struck through in this section are already implemented in the current repo
 - ~~Provisioning now uses a real `retryable_failure -> queued` path for the first transient/dependency failure, escalates the second failure to `needs_admin_review`, and dead-letters unsafe partial-success cases on the same purchase instead of leaving them in an ambiguous leased state.~~
 - ~~The worker now enforces grace-expired nonpayment suspension by automatically setting `serviceSuspendedAt`, moving the local server from `allocated -> held`, and writing a lifecycle audit entry on the same purchase.~~
 - ~~The lifecycle worker now queues a one-time paid-stall setup reminder after about `24h`, escalates the same stalled paid purchase to admin follow-up after about `72h`, and surfaces that stall in admin diagnostics without releasing reserved capacity.~~
+- ~~The lifecycle worker now queues one-time suspended-service pre-delete warning emails at the `72h`, `48h`, and `24h` thresholds before purge eligibility, using the existing email outbox without making destructive cleanup decisions.~~
+- ~~The lifecycle worker now opens a non-destructive admin purge review task when suspended retention expires, leaving local capacity and Pelican resources held until an operator handles cleanup.~~
 
 ## State Ownership Matrix
 
@@ -51,7 +53,7 @@ Items struck through in this section are already implemented in the current repo
 - `processing failure -> dead_letter`: `worker` for exhausted or unsafe automation cases that need explicit operator recovery.
 - `pending_activation -> ready`: `admin` only, with ready email enqueued atomically in the same release transaction.
 - billing-derived service-state projections like `active -> cancel_scheduled` and `active -> grace_live`: `webhook` immediately on Stripe fact arrival.
-- timed lifecycle transitions like reminder clocks, grace expiry, suspension, pre-delete warnings, final deletion, and hard-flag creation: `worker` only.
+- timed lifecycle transitions like reminder clocks, grace expiry, suspension, pre-delete warnings, purge-review task creation, final deletion, and hard-flag creation: `worker` only, with destructive purge still operator-gated until that explicit cleanup phase exists.
 - drift detection and fact refresh: `reconcile` may refresh external facts, update cached Stripe or Pelican runtime facts, record diagnostics, and create review actions or issues, but may not silently release, delete, or otherwise make major customer-facing fulfillment decisions.
 - recovery from `needs_admin_review` or `dead_letter`: `admin` resolves on the same purchase and may requeue the same lifecycle record after fixing the underlying issue.
 
@@ -184,6 +186,7 @@ Items struck through in this section are already implemented in the current repo
 - Switch email delivery from `EMAIL_PROVIDER=log` to `EMAIL_PROVIDER=postmark`, set `POSTMARK_SERVER_TOKEN`, keep `OUTBOUND_EMAIL_FROM` on a confirmed Postmark sender/domain for `support@oberynn.com`, and run a live ready-access smoke test.
 - Fill `PELICAN_PANEL_URL`, `PELICAN_APPLICATION_API_KEY`, and `PELICAN_PROVISIONING_TARGETS_JSON` with the confirmed live panel URL, application API key, real egg IDs, allocation IDs, and resource limits for the launch target.
 - Keep the phase-1 operator routing apply/verification runbook in place because the code only generates desired routing state; host-side apply and verification still gate `pending_activation -> ready`.
+- Define the production destructive-purge runbook/API path for admin-approved suspended services; the worker currently opens a purge review task but intentionally does not delete Pelican resources or release capacity.
 - Decide whether we want a provider-backed, duplicate-safe reconciliation path for `sending` rows that may have been accepted by the provider before the app crashed; the current implementation fails those closed on lease expiry instead of blindly resending.
 
 ## Assumptions And Defaults
@@ -195,6 +198,6 @@ Items struck through in this section are already implemented in the current repo
 - Hostname model: customer hostnames under node hostnames on `oberyn.net`.
 - Phase-1 edge model: repo owns desired HAProxy mapping; operator still applies and verifies host-side routing.
 - Immediate or user-requested cancellation uses the short `3-day` reversal window.
-- Delinquency uses `7-day` live grace, then automatic suspension, then `30-day` suspended recovery, then automatic deletion with urgent warnings at `24h`, `48h`, and `72h` prior to deletion.
+- Delinquency uses `7-day` live grace, then automatic suspension, then `30-day` suspended recovery, then urgent warnings at `72h`, `48h`, and `24h` before a non-destructive admin purge review task opens.
 - Pre-delete warning sequence applies to delinquency deletion, not user-requested cancellation deletion.
 - Waitlist and reserve mode are intentionally deferred, but the catalog and inventory model must leave room for them without redesign.
