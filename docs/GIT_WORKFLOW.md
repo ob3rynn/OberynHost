@@ -69,4 +69,4 @@ bash scripts/setup-git.sh
 - Before risky changes, commit first.
 - When moving the project to another machine, copy the whole repo including `.git/`.
 - Keep secrets out of Git even though the repo is local-first.
-- Use the Docker-first setup in [`docs/LOCAL_SETUP.md`](./LOCAL_SETUP.md) when bringing the storefront up on a new WSL/Linux shell or machine.
+- Use the Docker-first setup in [`docs/LOCAL_SETUP.md`](./LOCAL_SETUP.md) when bringing the storefront up on a native Linux shell or machine.

@@ -211,5 +211,5 @@ The storefront is ready for GitHub Actions image build/publish work when:
 - the `runtime` and `devtools` Docker targets both build successfully
 - all supported storefront commands work through `bash scripts/storefront-docker.sh ...`
 - no supported storefront workflow requires host `node`, host `npm`, or Windows tooling
-- the repo guidance consistently assumes a WSL/Linux checkout path
+- the repo guidance consistently assumes a native Linux checkout path
 - runtime docs and Docker behavior agree on env rules, persistence, and Stripe handling

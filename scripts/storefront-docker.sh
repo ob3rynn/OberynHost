@@ -7,8 +7,8 @@ storefront_dir="${repo_root}/apps/storefront"
 storefront_env="${storefront_dir}/backend/.env"
 
 if [[ "$repo_root" == /mnt/* ]]; then
-    echo "Storefront Docker workflows must run from a WSL/Linux checkout path, not ${repo_root}." >&2
-    echo "Move the repo under /home/<user>/... and rerun this command from WSL." >&2
+    echo "Storefront Docker workflows must run from a native Linux filesystem path, not ${repo_root}." >&2
+    echo "Use a Linux checkout such as /home/<user>/... on WSL dev or the Ubuntu production VM." >&2
     exit 1
 fi
 

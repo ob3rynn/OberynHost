@@ -4,9 +4,11 @@ const { execFileSync } = require("child_process");
 const sqlite3 = require("sqlite3").verbose();
 const dotenv = require("dotenv");
 const {
+    OPTIONAL_PELICAN_ENV_NAMES,
     REQUIRED_RUNTIME_ENV_NAMES,
     findPlaceholderEnvNames
 } = require("../../config/validation");
+const { PLAN_DEFINITIONS } = require("../../config/plans");
 
 const {
     ACTIVE_SUBSCRIPTION_STATUSES,
@@ -22,6 +24,8 @@ const PACKAGE_LOCK_PATH = path.join(BACKEND_ROOT, "package-lock.json");
 const ENV_PATH = path.join(BACKEND_ROOT, ".env");
 const NVMRC_PATH = path.join(REPO_ROOT, ".nvmrc");
 const SHARED_STRIPE_CLIENT_PATH = path.join(BACKEND_ROOT, "lib", "stripeClient.js");
+const PRODUCTION_EMAIL_PROVIDER = "postmark";
+const PRODUCTION_OUTBOUND_EMAIL_FROM = "support@oberynn.com";
 
 const AUDIT_SCRIPT_SUFFIXES = new Set([
     path.join("scripts", "audit-config.js"),
@@ -290,6 +294,112 @@ function findRawStripeClients() {
     return offenders.sort();
 }
 
+function getActiveProvisioningTargetCodes() {
+    return Array.from(new Set(
+        Object.values(PLAN_DEFINITIONS)
+            .map(plan => plan.provisioningTargetCode)
+            .filter(Boolean)
+    )).sort();
+}
+
+function addProductionReadinessChecks(report) {
+    const emailProvider = String(process.env.EMAIL_PROVIDER || "log").trim().toLowerCase() || "log";
+    const postmarkServerToken = String(process.env.POSTMARK_SERVER_TOKEN || "").trim();
+    const outboundEmailFrom = String(process.env.OUTBOUND_EMAIL_FROM || PRODUCTION_OUTBOUND_EMAIL_FROM).trim();
+    const setupSecretKey = String(process.env.SETUP_SECRET_KEY || "").trim();
+    const adminKey = String(process.env.ADMIN_KEY || "").trim();
+
+    if (emailProvider === PRODUCTION_EMAIL_PROVIDER && postmarkServerToken) {
+        addResult(report, "production-readiness", "pass", "Production email delivery is configured for Postmark");
+    } else {
+        addResult(
+            report,
+            "production-readiness",
+            "warn",
+            "Production email delivery is not Postmark-ready",
+            `EMAIL_PROVIDER=${emailProvider || "unset"}, POSTMARK_SERVER_TOKEN=${postmarkServerToken ? "set" : "missing"}`
+        );
+    }
+
+    if (outboundEmailFrom.toLowerCase() === PRODUCTION_OUTBOUND_EMAIL_FROM) {
+        addResult(report, "production-readiness", "pass", "Production sender identity matches the launch sender", outboundEmailFrom);
+    } else {
+        addResult(
+            report,
+            "production-readiness",
+            "warn",
+            "Production sender identity differs from the launch sender",
+            `expected ${PRODUCTION_OUTBOUND_EMAIL_FROM}, found ${outboundEmailFrom || "unset"}`
+        );
+    }
+
+    if (setupSecretKey && adminKey && setupSecretKey !== adminKey) {
+        addResult(report, "production-readiness", "pass", "SETUP_SECRET_KEY is set separately from ADMIN_KEY");
+    } else {
+        addResult(
+            report,
+            "production-readiness",
+            "warn",
+            "SETUP_SECRET_KEY is not independently configured",
+            "Production should use a long random setup secret distinct from ADMIN_KEY."
+        );
+    }
+
+    const missingPelicanEnv = OPTIONAL_PELICAN_ENV_NAMES.filter(name => !String(process.env[name] || "").trim());
+    const rawPelicanTargets = String(process.env.PELICAN_PROVISIONING_TARGETS_JSON || "").trim();
+    const requiredTargetCodes = getActiveProvisioningTargetCodes();
+
+    if (missingPelicanEnv.length > 0) {
+        addResult(
+            report,
+            "production-readiness",
+            "warn",
+            "Live Pelican provisioning is not fully configured",
+            missingPelicanEnv.join(", ")
+        );
+        return;
+    }
+
+    let parsedPelicanTargets = null;
+
+    try {
+        parsedPelicanTargets = JSON.parse(rawPelicanTargets);
+    } catch {
+        addResult(
+            report,
+            "production-readiness",
+            "fail",
+            "PELICAN_PROVISIONING_TARGETS_JSON is not valid JSON"
+        );
+        return;
+    }
+
+    const missingTargetCodes = requiredTargetCodes.filter(code =>
+        !parsedPelicanTargets ||
+        typeof parsedPelicanTargets !== "object" ||
+        Array.isArray(parsedPelicanTargets) ||
+        !Object.prototype.hasOwnProperty.call(parsedPelicanTargets, code)
+    );
+
+    if (missingTargetCodes.length === 0) {
+        addResult(
+            report,
+            "production-readiness",
+            "pass",
+            "Pelican provisioning targets cover every active launch product",
+            requiredTargetCodes.join(", ")
+        );
+    } else {
+        addResult(
+            report,
+            "production-readiness",
+            "warn",
+            "Pelican provisioning targets are missing active launch target codes",
+            missingTargetCodes.join(", ")
+        );
+    }
+}
+
 async function buildConfigAuditReport() {
     loadLocalEnv();
 
@@ -322,6 +432,8 @@ async function buildConfigAuditReport() {
     if (placeholderEnv.length > 0) {
         addResult(report, "config", "fail", "Placeholder environment values are still in use", placeholderEnv.join(", "));
     }
+
+    addProductionReadinessChecks(report);
 
     const baseUrl = (process.env.BASE_URL || "").trim();
 

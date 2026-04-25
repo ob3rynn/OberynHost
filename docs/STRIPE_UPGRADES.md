@@ -8,7 +8,7 @@ Use this checklist any time we change the Stripe SDK version, `STRIPE_API_VERSIO
 - Keep `STRIPE_API_VERSION` explicit in every environment. The app fails fast if it is missing.
 - Upgrade the app request version and the webhook endpoint version as separate steps.
 - Treat the live sandbox scripts as part of the release gate, not optional smoke tests.
-- Run storefront validation through Docker from the WSL/Linux checkout, not from host `npm` or Windows tooling.
+- Run storefront validation through Docker from a native Linux checkout, not from host `npm` or Windows tooling.
 
 ## Before changing anything
 

@@ -14,6 +14,7 @@ These commands are intended to be safe and read-only for routine use:
 
 ```bash
 bash scripts/run-read-only-audits.sh
+bash scripts/check-phase1-operator-runbook.sh
 bash scripts/run-update-review.sh
 bash scripts/storefront-docker.sh audit:config
 bash scripts/storefront-docker.sh audit:runtime
@@ -29,8 +30,10 @@ What the audit scripts inspect:
 - required environment/config presence
 - pinned Stripe package and API version settings
 - whether Stripe clients are centralized through the shared helper
+- production-readiness warnings for Postmark, setup secret separation, Pelican target config, and launch sender identity
 - available npm package updates in the storefront backend workspace
 - current branch and worktree cleanliness
+- phase-1 operator runbook guardrails before the Docker audit starts
 - read-only SQLite health checks for checkout, setup, subscription, and policy drift
 
 ## Forbidden actions on the live host
@@ -86,5 +89,5 @@ Each audit report should include:
 
 - The runtime audit opens the SQLite database in read-only mode.
 - The audit scripts do not call Stripe, mutate the database, or write files.
-- The supported storefront audit path is Docker-only and assumes the repo is checked out on the native WSL/Linux filesystem.
+- The supported storefront audit path is Docker-only and assumes the repo is checked out on a native Linux filesystem, such as WSL for dev or the Ubuntu production VM.
 - For machine-readable output, use `bash scripts/storefront-docker.sh audit:read-only --json`.

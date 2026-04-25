@@ -82,3 +82,7 @@ bash scripts/run-update-review.sh
 ```
 
 Those wrappers now call the storefront Docker workflow directly. For guardrails and reporting rules, see [docs/CODEX_READ_ONLY_AUDITS.md](./CODEX_READ_ONLY_AUDITS.md).
+
+## Phase-1 operator checklist
+
+Before launch or production-adjacent smoke testing, use [docs/PHASE1_OPERATOR_RUNBOOK.md](./PHASE1_OPERATOR_RUNBOOK.md). It covers required Stripe, Postmark, and Pelican inputs; the native-Linux workflow for WSL dev or the Ubuntu production VM; routing verification; admin release; and the current no-destructive-purge boundary.

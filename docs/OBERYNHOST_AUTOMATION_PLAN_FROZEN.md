@@ -40,6 +40,25 @@ Items struck through in this section are already implemented in the current repo
 - ~~Admin can now reopen setup on the same paid purchase after pre-provisioning review, clearing submitted setup/provisioning failure details while preserving payment, token access, and reserved capacity so the customer can resubmit without cloning an order.~~
 - ~~Admin can now run a read-only Pelican reconcile that fetches cached user/server facts, stores the latest Pelican snapshots, records audit details, and surfaces drift in diagnostics without changing fulfillment state, capacity, release status, or external resources.~~
 - ~~Operator routing verification is now a separate admin checkpoint before release: admins can mark routing verified after applying the desired artifact, and final ready release consumes that stored verification instead of silently verifying at release time.~~
+- ~~A phase-1 operator runbook now documents production inputs, native-Linux execution for WSL dev or the Ubuntu production VM, routing apply/verification, live smoke tests, same-purchase admin recovery paths, and the explicit no-destructive-purge boundary.~~
+- ~~The read-only audit entrypoint now performs a Linux-filesystem phase-1 operator readiness check before the Docker audit, catching runbook/plan drift around routing verification, production inputs, Windows-mounted path avoidance, launch capacity, and non-destructive purge boundaries.~~
+- ~~The config audit now surfaces production-readiness warnings for Postmark delivery, launch sender identity, separate setup-secret encryption, and Pelican target coverage for every active launch product.~~
+- ~~Email outbox delivery now persists provider, provider message id, status code, and provider error code on sent/failed rows, and Postmark sends carry the outbox idempotency key in metadata for later provider-backed reconciliation.~~
+- ~~Admin purchase details now surface recent email outbox rows and provider delivery evidence so operators can verify ready-access, setup reminder, and suspension-warning delivery state without opening SQLite.~~
+- ~~Admins can now explicitly hard-flag purge-eligible delinquency cases after operator review, recording terminal customer risk without deleting Pelican resources or releasing local capacity.~~
+- ~~Admin purchase details now parse and display the desired routing artifact with copyable JSON so phase-1 host-side routing apply can use the generated source of truth without opening SQLite.~~
+- ~~Expired `sending` email leases can now reconcile against Postmark by outbox idempotency metadata before failing closed: a single provider match marks the row sent, while no proof still avoids duplicate resend.~~
+
+## Phase-1 Merge Readiness
+
+The storefront automation branch is code-complete for the phase-1 contract in dev. Remaining launch work is environment and operator validation on the Ubuntu VM, not additional storefront feature work.
+
+Merge blockers that remain intentionally out of scope:
+
+- live Stripe, Postmark, and Pelican secrets/config values,
+- host-side HAProxy apply/reload practice,
+- live smoke tests against Stripe, Postmark, Pelican, and routing,
+- post-phase-1 destructive purge automation.
 
 ## State Ownership Matrix
 
@@ -56,7 +75,7 @@ Items struck through in this section are already implemented in the current repo
 - `processing failure -> dead_letter`: `worker` for exhausted or unsafe automation cases that need explicit operator recovery.
 - `pending_activation -> ready`: `admin` only, with ready email enqueued atomically in the same release transaction.
 - billing-derived service-state projections like `active -> cancel_scheduled` and `active -> grace_live`: `webhook` immediately on Stripe fact arrival.
-- timed lifecycle transitions like reminder clocks, grace expiry, suspension, pre-delete warnings, purge-review task creation, final deletion, and hard-flag creation: `worker` only, with destructive purge still operator-gated until that explicit cleanup phase exists.
+- timed lifecycle transitions like reminder clocks, grace expiry, suspension, pre-delete warnings, and purge-review task creation: `worker` only. Phase 1 does not automate destructive deletion; hard-flagging purge-eligible delinquency cases is an explicit admin action after operator review.
 - drift detection and fact refresh: `reconcile` may refresh external facts, update cached Stripe or Pelican runtime facts, record diagnostics, and create review actions or issues, but may not silently release, delete, or otherwise make major customer-facing fulfillment decisions.
 - recovery from `needs_admin_review` or `dead_letter`: `admin` resolves on the same purchase and may requeue the same lifecycle record after fixing the underlying issue.
 
@@ -180,17 +199,21 @@ Items struck through in this section are already implemented in the current repo
 - Inventory tests for reserve, hold, consume, release, sold-out gating, paid-stall reminder at `24h`, and admin issue escalation at `72h`.
 - Release tests for pending activation gating, routing-verification requirement, atomic ready-email enqueue, and invariant enforcement around ready state.
 - Reconcile tests for fact refresh, issue generation, and enforcement that reconcile cannot silently mutate major lifecycle decisions.
-- Lifecycle tests for webhook-projected cancel scheduling, webhook-projected grace entry, worker-driven suspension, delinquency warning sequence at `24h/48h/72h` before deletion, worker deletion, and automatic hard-flag creation after terminal delinquency deletion.
+- Lifecycle tests for webhook-projected cancel scheduling, webhook-projected grace entry, worker-driven suspension, delinquency warning sequence at `24h/48h/72h`, non-destructive purge review, and explicit admin hard-flagging after operator review.
 - Security tests for one-time password handling, outbox behavior, Stripe idempotency, queue uniqueness, and absence of retrievable password storage.
 
-## Still Required Before Production
+## Required For Phase-1 Production Launch
 
 - Replace the current Stripe placeholders with live values for `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_3GB`, then verify the webhook endpoint against the real `BASE_URL`.
 - Switch email delivery from `EMAIL_PROVIDER=log` to `EMAIL_PROVIDER=postmark`, set `POSTMARK_SERVER_TOKEN`, keep `OUTBOUND_EMAIL_FROM` on a confirmed Postmark sender/domain for `support@oberynn.com`, and run a live ready-access smoke test.
 - Fill `PELICAN_PANEL_URL`, `PELICAN_APPLICATION_API_KEY`, and `PELICAN_PROVISIONING_TARGETS_JSON` with the confirmed live panel URL, application API key, real egg IDs, allocation IDs, and resource limits for the launch target.
-- Keep the phase-1 operator routing apply/verification runbook in place because the code only generates desired routing state; host-side apply and verification still gate `pending_activation -> ready`.
-- Define the production destructive-purge runbook/API path for admin-approved suspended services; the worker currently opens a purge review task but intentionally does not delete Pelican resources or release capacity.
-- Decide whether we want a provider-backed, duplicate-safe reconciliation path for `sending` rows that may have been accepted by the provider before the app crashed; the current implementation fails those closed on lease expiry instead of blindly resending.
+- Keep the phase-1 operator routing apply/verification runbook in [PHASE1_OPERATOR_RUNBOOK.md](./PHASE1_OPERATOR_RUNBOOK.md) in place because the code only generates desired routing state; host-side apply and verification still gate `pending_activation -> ready`.
+- Keep validating the Postmark-backed duplicate-safe reconciliation path during live smoke tests; it now searches by outbox idempotency metadata before failing expired `sending` leases closed.
+
+## Deferred Beyond Phase 1
+
+- Define the production destructive-purge runbook/API path for admin-approved suspended services. The current phase-1 runbook explicitly stops at purge review and does not delete Pelican resources or release capacity.
+- Decide whether destructive cleanup should remain operator-runbook-only or become an admin-confirmed API path later.
 
 ## Assumptions And Defaults
 

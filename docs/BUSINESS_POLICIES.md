@@ -29,7 +29,7 @@ Working source of truth for pre-launch business rules, support boundaries, and c
 - If a renewal payment fails, a 7-day grace period begins.
 - If payment is not received within that 7-day grace period, the server will be suspended.
 - Suspended services may remain recoverable for up to 30 days from suspension, or until payment is received.
-- If the subscription remains unpaid for 30 days after suspension, the server and associated user account may be permanently removed.
+- If the subscription remains unpaid for 30 days after suspension, the service becomes eligible for operator-reviewed permanent removal.
 
 ## 5. Customer Handoff And Delivery Email
 
@@ -57,7 +57,7 @@ Each fulfillment email should include:
 
 ## 7. Launch Capacity And Inventory Limits
 
-- Capacity is limited to 22 active server slots.
+- Capacity is limited to 25 active server slots for the launch product.
 - Orders are accepted only while inventory is available.
 - Once all slots are filled, new purchases stop until a slot becomes available.
 - Each server slot is hard-allocated with fixed resources.
