@@ -240,7 +240,9 @@ function parseProvisioningTarget(code, rawTarget) {
                 minimum: 0
             }),
             disk: parseInteger(`PELICAN_PROVISIONING_TARGETS_JSON.${code}.limits.disk`, rawTarget.limits?.disk),
-            io: parseInteger(`PELICAN_PROVISIONING_TARGETS_JSON.${code}.limits.io`, rawTarget.limits?.io),
+            io: parseInteger(`PELICAN_PROVISIONING_TARGETS_JSON.${code}.limits.io`, rawTarget.limits?.io, {
+                minimum: 0
+            }),
             cpu: parseInteger(`PELICAN_PROVISIONING_TARGETS_JSON.${code}.limits.cpu`, rawTarget.limits?.cpu, {
                 minimum: 0
             }),

@@ -338,7 +338,7 @@ async function runReusableUserScenario(browser, database, baseUrl, screenshotDir
         const applicationApi = await verifyApplicationApiLinkage(purchase, {
             expectExternalUser: false
         });
-        const resources = await fetchClientServerResources(
+        const resources = await waitForClientServerResources(
             process.env.PELICAN_PANEL_URL,
             process.env.LIVEISH_HARNESS_PELICAN_CLIENT_API_KEY,
             purchase.pelicanServerIdentifier
@@ -365,6 +365,32 @@ async function runReusableUserScenario(browser, database, baseUrl, screenshotDir
     } finally {
         await checkout.context.close();
     }
+}
+
+function isClientResourcesNotReadyError(err) {
+    return /HTTP 409/.test(String(err?.message || "")) &&
+        /not yet completed its installation process/i.test(String(err?.message || ""));
+}
+
+async function waitForClientServerResources(panelUrl, clientApiKey, serverIdentifier) {
+    return waitFor(async () => {
+        try {
+            const resources = await fetchClientServerResources(panelUrl, clientApiKey, serverIdentifier);
+            const resourceAttributes = resources?.attributes || resources || {};
+
+            return resourceAttributes.current_state ? resources : null;
+        } catch (err) {
+            if (isClientResourcesNotReadyError(err)) {
+                return null;
+            }
+
+            throw err;
+        }
+    }, {
+        timeoutMs: 180000,
+        intervalMs: 2500,
+        message: `Pelican Client API resources were not ready for server ${serverIdentifier}.`
+    });
 }
 
 function summarizePurchase(purchase) {
@@ -443,6 +469,7 @@ if (require.main === module) {
 
 module.exports = {
     assertPendingActivationPurchase,
+    isClientResourcesNotReadyError,
     makePelicanUsername,
     runSmoke,
     shouldRunLiveish

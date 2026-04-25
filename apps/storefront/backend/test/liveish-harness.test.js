@@ -15,7 +15,10 @@ const {
 } = require("../scripts/lib/liveishHarness");
 const { buildLiveishAuditReport, summarize } = require("../scripts/audit-liveish-harness");
 const { buildCandidate } = require("../scripts/build-liveish-pelican-target");
-const { shouldRunLiveish } = require("../scripts/run-liveish-fulfillment-smoke");
+const {
+    isClientResourcesNotReadyError,
+    shouldRunLiveish
+} = require("../scripts/run-liveish-fulfillment-smoke");
 const {
     applyLocalCleanup,
     formatCleanupResult,
@@ -173,6 +176,14 @@ test("target builder prints only validated operator-provided target JSON", async
     assert.equal(candidate.ok, true);
     assert.match(candidate.json, /paper-launch-default/);
     assert.match(candidate.messages.join(" "), /memory=2424/);
+});
+
+test("live-ish reusable user client resources treats Pelican install 409 as retryable", () => {
+    assert.equal(isClientResourcesNotReadyError(new Error(
+        "Pelican API GET /api/client/servers/example/resources failed with HTTP 409. This server has not yet completed its installation process, please try again later."
+    )), true);
+    assert.equal(isClientResourcesNotReadyError(new Error("HTTP 409 different conflict")), false);
+    assert.equal(isClientResourcesNotReadyError(new Error("HTTP 500")), false);
 });
 
 test("live-ish audit fails product/env drift and warns for missing external harness config in safe mode", async () => {

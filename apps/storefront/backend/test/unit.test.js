@@ -177,6 +177,25 @@ test("runtime config parses optional Pelican provisioning targets", () => {
     assert.equal(config.pelican.provisioningTargets["paper-launch-default"].limits.memory, 2424);
 });
 
+test("runtime config allows zero Pelican IO weight for local Docker targets", () => {
+    const config = buildRuntimeConfig(createRuntimeEnv({
+        PELICAN_PANEL_URL: "http://127.0.0.1:8081",
+        PELICAN_APPLICATION_API_KEY: "papp_test",
+        PELICAN_PROVISIONING_TARGETS_JSON: createPelicanTargetsJson({
+            limits: {
+                memory: 2424,
+                swap: 0,
+                disk: 10240,
+                io: 0,
+                cpu: 0,
+                threads: null
+            }
+        })
+    }));
+
+    assert.equal(config.pelican.provisioningTargets["paper-launch-default"].limits.io, 0);
+});
+
 test("runtime config rejects malformed Pelican target JSON when provided", () => {
     assert.throws(
         () => buildRuntimeConfig(createRuntimeEnv({
