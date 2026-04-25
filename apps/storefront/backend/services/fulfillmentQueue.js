@@ -57,6 +57,7 @@ async function enqueueProvisioningJobForPurchase(purchase, options = {}) {
     const now = Number(options.now || Date.now());
     const taskType = FULFILLMENT_TASK_TYPE.PROVISION_INITIAL_SERVER;
     const idempotencyKey = buildProvisioningIdempotencyKey(purchase.id);
+    const payloadJson = JSON.stringify(buildProvisioningPayload(purchase));
 
     await runQuery(
         `INSERT INTO fulfillmentQueue
@@ -77,10 +78,39 @@ async function enqueueProvisioningJobForPurchase(purchase, options = {}) {
             taskType,
             FULFILLMENT_QUEUE_STATE.QUEUED,
             idempotencyKey,
-            JSON.stringify(buildProvisioningPayload(purchase)),
+            payloadJson,
             now,
             now,
             now
+        ]
+    );
+
+    await runQuery(
+        `UPDATE fulfillmentQueue
+         SET purchaseId = ?,
+             taskType = ?,
+             state = ?,
+             payloadJson = ?,
+             availableAt = ?,
+             lockedAt = NULL,
+             attempts = 0,
+             lastError = NULL,
+             leaseKey = NULL,
+             leaseExpiresAt = NULL,
+             completedAt = NULL,
+             updatedAt = ?
+         WHERE idempotencyKey = ?
+           AND state IN (?, ?)`,
+        [
+            purchase.id,
+            taskType,
+            FULFILLMENT_QUEUE_STATE.QUEUED,
+            payloadJson,
+            now,
+            now,
+            idempotencyKey,
+            FULFILLMENT_QUEUE_STATE.NEEDS_ADMIN_REVIEW,
+            FULFILLMENT_QUEUE_STATE.DEAD_LETTER
         ]
     );
 

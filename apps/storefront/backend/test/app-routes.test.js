@@ -2979,6 +2979,245 @@ test("admin can requeue fulfillment on the same purchase after admin review", as
     assert.equal(recoveredPurchase.pelicanServerIdentifier, "srv_requeued");
 });
 
+test("admin can reopen setup on the same purchase after pre-provisioning review", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery, allQuery } = app.queries;
+    const server = await getQuery(
+        `SELECT
+            id,
+            type,
+            productCode,
+            inventoryBucketCode,
+            nodeGroupCode,
+            provisioningTargetCode,
+            runtimeFamily,
+            runtimeTemplate
+         FROM servers
+         WHERE id = 1`
+    );
+    const now = Date.now();
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeCustomerId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                planType,
+                productCode,
+                inventoryBucketCode,
+                nodeGroupCode,
+                provisioningTargetCode,
+                runtimeFamily,
+                runtimeTemplate,
+                runtimeProfileCode,
+                runtimeJavaVersion,
+                minecraftVersion,
+                setupStatus,
+                fulfillmentStatus,
+                fulfillmentFailureClass,
+                needsAdminReviewReason,
+                lastProvisioningError,
+                hostname,
+                hostnameReservationKey,
+                hostnameReservedAt,
+                pelicanUsername,
+                pelicanPasswordCiphertext,
+                pelicanPasswordIv,
+                pelicanPasswordAuthTag,
+                pelicanPasswordStoredAt,
+                paidAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            server.id,
+            "reopen@example.com",
+            "Wrong Setup",
+            "paid",
+            "cus_reopen",
+            now,
+            "setup_token_reopen_abcdefghijklmnopqrstuvwxyz",
+            now + 60_000,
+            server.type,
+            server.productCode,
+            server.inventoryBucketCode,
+            server.nodeGroupCode,
+            server.provisioningTargetCode,
+            server.runtimeFamily,
+            server.runtimeTemplate,
+            "paper-java21",
+            21,
+            "1.21.11",
+            "setup_submitted",
+            "needs_admin_review",
+            "validation_or_config_error",
+            "Customer chose wrong setup values",
+            "Customer chose wrong setup values",
+            "wrong-setup.oberyn.net",
+            "wrong-setup",
+            now,
+            "wrong_customer",
+            "encrypted-password",
+            "iv",
+            "tag",
+            now,
+            now,
+            now
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", server.id]);
+
+    await runQuery(
+        `INSERT INTO fulfillmentQueue
+            (
+                purchaseId,
+                taskType,
+                state,
+                idempotencyKey,
+                payloadJson,
+                availableAt,
+                lockedAt,
+                attempts,
+                lastError,
+                createdAt,
+                updatedAt,
+                completedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            1,
+            "provision_initial_server",
+            "needs_admin_review",
+            "purchase:1:task:provision_initial_server",
+            JSON.stringify({ stale: true }),
+            now,
+            now,
+            1,
+            "Customer chose wrong setup values",
+            now,
+            now,
+            now
+        ]
+    );
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    assert.equal(loginRes.status, 200);
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const reopenRes = await app.request("/api/admin/purchases/1/reopen-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ adminNote: "Customer needs to correct setup" })
+    });
+    assert.equal(reopenRes.status, 200);
+
+    const reopenedPurchase = await getQuery(
+        `SELECT
+            serverName,
+            hostname,
+            hostnameReservationKey,
+            hostnameReservedAt,
+            minecraftVersion,
+            runtimeProfileCode,
+            runtimeJavaVersion,
+            setupStatus,
+            fulfillmentStatus,
+            fulfillmentFailureClass,
+            needsAdminReviewReason,
+            lastProvisioningError,
+            pelicanUsername,
+            pelicanPasswordCiphertext,
+            pelicanPasswordIv,
+            pelicanPasswordAuthTag,
+            lastStateOwner
+         FROM purchases
+         WHERE id = ?`,
+        [1]
+    );
+    assert.equal(reopenedPurchase.serverName, null);
+    assert.equal(reopenedPurchase.hostname, null);
+    assert.equal(reopenedPurchase.hostnameReservationKey, null);
+    assert.equal(reopenedPurchase.hostnameReservedAt, null);
+    assert.equal(reopenedPurchase.minecraftVersion, null);
+    assert.equal(reopenedPurchase.runtimeProfileCode, null);
+    assert.equal(reopenedPurchase.runtimeJavaVersion, null);
+    assert.equal(reopenedPurchase.setupStatus, "setup_pending");
+    assert.equal(reopenedPurchase.fulfillmentStatus, "not_started");
+    assert.equal(reopenedPurchase.fulfillmentFailureClass, null);
+    assert.equal(reopenedPurchase.needsAdminReviewReason, null);
+    assert.equal(reopenedPurchase.lastProvisioningError, null);
+    assert.equal(reopenedPurchase.pelicanUsername, null);
+    assert.equal(reopenedPurchase.pelicanPasswordCiphertext, null);
+    assert.equal(reopenedPurchase.pelicanPasswordIv, null);
+    assert.equal(reopenedPurchase.pelicanPasswordAuthTag, null);
+    assert.equal(reopenedPurchase.lastStateOwner, "admin");
+
+    const setupStatusRes = await app.request("/api/setup-status", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_reopen_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+    assert.equal(setupStatusRes.status, 200);
+    assert.equal((await setupStatusRes.json()).ready, true);
+
+    const completeAgainRes = await app.request("/api/complete-setup", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: "setup_session=setup_token_reopen_abcdefghijklmnopqrstuvwxyz",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({
+            serverName: "Corrected Setup",
+            minecraftVersion: "1.20.6",
+            pelicanUsername: "corrected_customer",
+            pelicanPassword: "corrected-password"
+        })
+    });
+    assert.equal(completeAgainRes.status, 200);
+
+    const queueRow = await getQuery(
+        `SELECT state, payloadJson, attempts, lastError, completedAt
+         FROM fulfillmentQueue
+         WHERE purchaseId = ?`,
+        [1]
+    );
+    assert.equal(queueRow.state, "queued");
+    assert.equal(queueRow.attempts, 0);
+    assert.equal(queueRow.lastError, null);
+    assert.equal(queueRow.completedAt, null);
+    assert.equal(JSON.parse(queueRow.payloadJson).serverName, "Corrected Setup");
+
+    const auditRows = await allQuery(
+        "SELECT actionType, note FROM adminAuditLog WHERE purchaseId = 1 ORDER BY id ASC"
+    );
+    assert.deepEqual(
+        auditRows.map(row => row.actionType),
+        ["reopen_setup"]
+    );
+});
+
 test("email outbox worker marks queued ready-access email sent through an injected provider", async t => {
     const app = await createTestApp(t, {
         pelicanEnv: {

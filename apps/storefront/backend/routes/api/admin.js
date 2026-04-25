@@ -458,6 +458,49 @@ function getFulfillmentRequeueErrors(purchase) {
     return errors;
 }
 
+function getSetupReopenErrors(purchase, existingJob) {
+    const errors = [];
+    const reopenableFulfillmentStates = new Set([
+        FULFILLMENT_STATUS.NOT_STARTED,
+        FULFILLMENT_STATUS.NEEDS_ADMIN_REVIEW,
+        FULFILLMENT_STATUS.DEAD_LETTER,
+        FULFILLMENT_STATUS.RETRYABLE_FAILURE
+    ]);
+
+    if (purchase.status !== PURCHASE_STATUS.PAID) {
+        errors.push("purchase is not paid");
+    }
+
+    if (!purchase.serverId || purchase.serverStatus !== SERVER_STATUS.HELD) {
+        errors.push("reserved capacity is not held");
+    }
+
+    if (!reopenableFulfillmentStates.has(purchase.fulfillmentStatus)) {
+        errors.push("fulfillment is not in a setup-reopenable state");
+    }
+
+    if (purchase.pelicanUserId || purchase.pelicanServerId || purchase.pelicanServerIdentifier || purchase.pelicanAllocationId) {
+        errors.push("Pelican linkage already exists; use explicit operator recovery instead");
+    }
+
+    if (purchase.desiredRoutingArtifactJson || purchase.desiredRoutingArtifactGeneratedAt) {
+        errors.push("routing artifact already exists; setup cannot be reopened safely");
+    }
+
+    if (
+        existingJob &&
+        (
+            existingJob.state === FULFILLMENT_QUEUE_STATE.QUEUED ||
+            existingJob.state === FULFILLMENT_QUEUE_STATE.LEASED ||
+            existingJob.state === FULFILLMENT_QUEUE_STATE.COMPLETED
+        )
+    ) {
+        errors.push("purchase has an active or completed provisioning job");
+    }
+
+    return errors;
+}
+
 router.use((req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -999,6 +1042,138 @@ router.post("/admin/purchases/:purchaseId/requeue-fulfillment", async (req, res)
         await rollbackTransaction();
         console.error("Fulfillment requeue failed:", err);
         res.status(500).json({ error: "Could not requeue fulfillment" });
+    }
+});
+
+router.post("/admin/purchases/:purchaseId/reopen-setup", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        const idempotencyKey = buildProvisioningIdempotencyKey(purchase.id);
+        const existingJob = await getQuery(
+            `SELECT *
+             FROM fulfillmentQueue
+             WHERE idempotencyKey = ?`,
+            [idempotencyKey]
+        );
+        const reopenErrors = getSetupReopenErrors(purchase, existingJob);
+
+        if (reopenErrors.length > 0) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: `Setup cannot be reopened yet: ${reopenErrors.join("; ")}.`
+            });
+        }
+
+        const now = Date.now();
+        const nextPurchase = mergeLifecycleState(purchase, {
+            serverName: null,
+            hostname: null,
+            hostnameReservationKey: null,
+            minecraftVersion: null,
+            runtimeProfileCode: null,
+            runtimeJavaVersion: null,
+            pelicanUsername: null,
+            fulfillmentStatus: FULFILLMENT_STATUS.NOT_STARTED,
+            fulfillmentFailureClass: null,
+            needsAdminReviewReason: null,
+            lastProvisioningError: null,
+            lastProvisioningAttemptAt: null,
+            workerLeaseKey: null,
+            workerLeaseExpiresAt: null,
+            lastStateOwner: "admin"
+        });
+
+        await runQuery(
+            `UPDATE purchases
+             SET serverName = NULL,
+                 hostname = NULL,
+                 hostnameReservationKey = NULL,
+                 hostnameReservedAt = NULL,
+                 hostnameReleasedAt = NULL,
+                 minecraftVersion = NULL,
+                 runtimeProfileCode = NULL,
+                 runtimeJavaVersion = NULL,
+                 pelicanUsername = NULL,
+                 pelicanPasswordCiphertext = NULL,
+                 pelicanPasswordIv = NULL,
+                 pelicanPasswordAuthTag = NULL,
+                 pelicanPasswordStoredAt = NULL,
+                 setupStatus = ?,
+                 fulfillmentStatus = ?,
+                 serviceStatus = ?,
+                 customerRiskStatus = ?,
+                 fulfillmentFailureClass = NULL,
+                 needsAdminReviewReason = NULL,
+                 lastProvisioningError = NULL,
+                 lastProvisioningAttemptAt = NULL,
+                 workerLeaseKey = NULL,
+                 workerLeaseExpiresAt = NULL,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?`,
+            [
+                nextPurchase.setupStatus,
+                nextPurchase.fulfillmentStatus,
+                nextPurchase.serviceStatus,
+                nextPurchase.customerRiskStatus,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id
+            ]
+        );
+
+        await recordAdminAction(req, purchaseId, "reopen_setup", adminNote.value || "", {
+            from: {
+                setupStatus: purchase.setupStatus,
+                fulfillmentStatus: purchase.fulfillmentStatus,
+                serverName: purchase.serverName || "",
+                hostname: purchase.hostname || "",
+                minecraftVersion: purchase.minecraftVersion || "",
+                runtimeProfileCode: purchase.runtimeProfileCode || "",
+                pelicanUsername: purchase.pelicanUsername || "",
+                queueState: existingJob?.state || null
+            },
+            to: {
+                setupStatus: nextPurchase.setupStatus,
+                fulfillmentStatus: nextPurchase.fulfillmentStatus,
+                setupTokenExpiresAt: purchase.setupTokenExpiresAt || null,
+                queueState: existingJob?.state || null
+            }
+        });
+
+        await runQuery("COMMIT");
+
+        const serialized = await loadSerializedPurchase(purchaseId);
+
+        res.json({
+            success: true,
+            purchase: serialized
+        });
+    } catch (err) {
+        await rollbackTransaction();
+        console.error("Setup reopen failed:", err);
+        res.status(500).json({ error: "Could not reopen setup" });
     }
 });
 

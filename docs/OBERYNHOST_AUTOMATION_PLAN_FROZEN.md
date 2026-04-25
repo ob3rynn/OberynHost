@@ -37,6 +37,7 @@ Items struck through in this section are already implemented in the current repo
 - ~~The lifecycle worker now queues a one-time paid-stall setup reminder after about `24h`, escalates the same stalled paid purchase to admin follow-up after about `72h`, and surfaces that stall in admin diagnostics without releasing reserved capacity.~~
 - ~~The lifecycle worker now queues one-time suspended-service pre-delete warning emails at the `72h`, `48h`, and `24h` thresholds before purge eligibility, using the existing email outbox without making destructive cleanup decisions.~~
 - ~~The lifecycle worker now opens a non-destructive admin purge review task when suspended retention expires, leaving local capacity and Pelican resources held until an operator handles cleanup.~~
+- ~~Admin can now reopen setup on the same paid purchase after pre-provisioning review, clearing submitted setup/provisioning failure details while preserving payment, token access, and reserved capacity so the customer can resubmit without cloning an order.~~
 
 ## State Ownership Matrix
 

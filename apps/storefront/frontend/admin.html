@@ -1300,6 +1300,17 @@ function isFulfillmentRequeueable(purchase) {
     ].includes(purchase.fulfillmentStatus);
 }
 
+function isSetupReopenable(purchase) {
+    return purchase.status === "paid" &&
+        purchase.serverStatus === "held" &&
+        ["not_started", "needs_admin_review", "dead_letter", "retryable_failure"].includes(purchase.fulfillmentStatus) &&
+        !purchase.pelicanUserId &&
+        !purchase.pelicanServerId &&
+        !purchase.pelicanServerIdentifier &&
+        !purchase.pelicanAllocationId &&
+        !purchase.desiredRoutingArtifactJson;
+}
+
 function hasNonStaleIssues(purchase) {
     const issueCount = purchase.diagnostics?.issueCount || 0;
     const staleOffset = isStaleCheckout(purchase) ? 1 : 0;
@@ -2108,6 +2119,14 @@ async function requeueFulfillment(id, adminNote = "") {
     }), `Requeued fulfillment for order #${id}.`);
 }
 
+async function reopenSetup(id, adminNote = "") {
+    await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/reopen-setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminNote })
+    }), `Reopened setup for order #${id}.`);
+}
+
 async function applyOverride(id, payload, successMessage) {
     await withCardAction(async () => requestJson(`/api/admin/purchases/${id}`, {
         method: "PATCH",
@@ -2539,6 +2558,14 @@ function renderPurchaseCard(purchase) {
         }, false,
         "The underlying issue is fixed and this same purchase should return to the provisioning queue.",
         "This clears the current admin-review fulfillment failure and requeues the existing purchase instead of creating a replacement order."));
+    }
+
+    if (isSetupReopenable(purchase)) {
+        actions.appendChild(createGuardedAction("Reopen Setup", "warning", "Confirm Reopen", async () => {
+            await reopenSetup(purchase.id, getOperatorNote(noteInput));
+        }, false,
+        "This purchase has no Pelican server linkage and should go back to customer setup on the same order.",
+        "This clears submitted setup details and provisioning failure fields, but keeps payment and reserved capacity attached to the same purchase."));
     }
 
     if (purchase.diagnostics?.policy?.suspensionRequired) {
