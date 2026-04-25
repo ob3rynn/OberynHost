@@ -19,6 +19,7 @@ const {
 } = require("../services/emailOutbox");
 const {
     isRetryableEmailDeliveryError,
+    reconcileProviderAcceptedEmail: defaultReconcileProviderAcceptedEmail,
     sendEmailMessage: defaultSendEmailMessage
 } = require("../services/emailProvider");
 const {
@@ -344,7 +345,8 @@ async function processEmailOutboxMessage(message, options = {}) {
         });
 
         const markedSent = await markEmailOutboxSent(message, {
-            now: options.now
+            now: options.now,
+            deliveryResult
         });
 
         if (!markedSent) {
@@ -394,7 +396,8 @@ async function runEmailOutboxWorkerIteration(options = {}) {
     const message = await leaseNextEmailOutboxMessage({
         now: options.now,
         leaseMs: options.emailLeaseMs,
-        maxAttempts: options.emailMaxAttempts
+        maxAttempts: options.emailMaxAttempts,
+        reconcileDelivery: options.reconcileEmailDelivery || defaultReconcileProviderAcceptedEmail
     });
 
     if (!message) {

@@ -27,6 +27,10 @@ function buildPostmarkMetadata(message = {}) {
         purchaseId: message.purchaseId === undefined || message.purchaseId === null
             ? String(message?.payload?.purchaseId || "").trim()
             : String(message.purchaseId).trim(),
+        idempotencyKey: String(message.idempotencyKey || "").trim(),
+        emailOutboxId: message.id === undefined || message.id === null
+            ? ""
+            : String(message.id).trim(),
         pelicanUsername: String(message?.payload?.pelicanUsername || "").trim(),
         hostname: String(message?.payload?.hostname || "").trim()
     };
@@ -153,6 +157,74 @@ async function sendWithPostmark(message, options = {}) {
     };
 }
 
+async function reconcilePostmarkAcceptedMessage(message, options = {}) {
+    const fetchImpl = options.fetchImpl || global.fetch;
+
+    if (typeof fetchImpl !== "function") {
+        return null;
+    }
+
+    const serverToken = String(config.email?.postmarkServerToken || "").trim();
+    const idempotencyKey = String(message.idempotencyKey || "").trim();
+
+    if (!serverToken || !idempotencyKey) {
+        return null;
+    }
+
+    const searchParams = new URLSearchParams({
+        count: "10",
+        offset: "0",
+        metadata_idempotencyKey: idempotencyKey,
+        messagestream: config.email?.postmarkMessageStream || "outbound"
+    });
+
+    const response = await fetchImpl(`https://api.postmarkapp.com/messages/outbound?${searchParams.toString()}`, {
+        method: "GET",
+        headers: {
+            Accept: "application/json",
+            "X-Postmark-Server-Token": serverToken
+        }
+    });
+
+    if (!response.ok) {
+        return null;
+    }
+
+    let payload = null;
+
+    try {
+        payload = await response.json();
+    } catch {
+        return null;
+    }
+
+    const messages = Array.isArray(payload?.Messages)
+        ? payload.Messages.filter(candidate =>
+            String(candidate?.Metadata?.idempotencyKey || "").trim() === idempotencyKey
+        )
+        : [];
+
+    if (messages.length !== 1) {
+        return null;
+    }
+
+    return {
+        provider: EMAIL_PROVIDER.POSTMARK,
+        providerMessageId: String(messages[0].MessageID || "").trim(),
+        statusCode: 200
+    };
+}
+
+async function reconcileProviderAcceptedEmail(message, options = {}) {
+    const provider = String(options.provider || config.email?.provider || EMAIL_PROVIDER.LOG).trim().toLowerCase();
+
+    if (provider === EMAIL_PROVIDER.POSTMARK) {
+        return reconcilePostmarkAcceptedMessage(message, options);
+    }
+
+    return null;
+}
+
 async function sendEmailMessage(message, options = {}) {
     const provider = String(options.provider || config.email?.provider || EMAIL_PROVIDER.LOG).trim().toLowerCase();
 
@@ -173,5 +245,6 @@ module.exports = {
     EMAIL_PROVIDER,
     EmailDeliveryError,
     isRetryableEmailDeliveryError,
+    reconcileProviderAcceptedEmail,
     sendEmailMessage
 };

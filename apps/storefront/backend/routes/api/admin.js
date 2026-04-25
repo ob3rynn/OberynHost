@@ -3,7 +3,13 @@ const express = require("express");
 const requireAdmin = require("../../middleware/auth");
 const config = require("../../config");
 const { createRateLimiter } = require("../../middleware/rateLimit");
-const { PURCHASE_STATUS, SERVER_STATUS, SETUP_STATUS, FULFILLMENT_STATUS } = require("../../constants/status");
+const {
+    PURCHASE_STATUS,
+    SERVER_STATUS,
+    SETUP_STATUS,
+    FULFILLMENT_STATUS,
+    CUSTOMER_RISK_STATUS
+} = require("../../constants/status");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { createAdminSession, destroyAdminSession } = require("../../services/adminSessions");
 const { markPurchasePaid, expirePurchase } = require("../../services/purchases");
@@ -209,6 +215,11 @@ function buildDiagnostics(purchase) {
     );
     addIssue(
         issues,
+        purchase.customerRiskStatus === CUSTOMER_RISK_STATUS.HARD_FLAGGED,
+        "Customer is hard-flagged after terminal delinquency handling."
+    );
+    addIssue(
+        issues,
         purchase.pelicanReconcileStatus && purchase.pelicanReconcileStatus !== "ok",
         `Last Pelican reconcile reported ${String(purchase.pelicanReconcileStatus).replace(/_/g, " ")}.`
     );
@@ -256,17 +267,19 @@ function parseStateJson(value) {
     }
 }
 
-function serializePurchase(purchase, stripeState = null, auditLog = []) {
+function serializePurchase(purchase, stripeState = null, auditLog = [], emailOutbox = []) {
     const purchaseWithLifecycle = mergeLifecycleState(purchase);
 
     return {
         ...purchaseWithLifecycle,
         pelicanUserState: parseStateJson(purchaseWithLifecycle.pelicanUserStateJson),
         pelicanServerState: parseStateJson(purchaseWithLifecycle.pelicanServerStateJson),
+        desiredRoutingArtifact: parseStateJson(purchaseWithLifecycle.desiredRoutingArtifactJson),
         auditLog: auditLog.map(entry => ({
             ...entry,
             details: parseAuditDetails(entry.detailsJson)
         })),
+        emailOutbox,
         diagnostics: {
             ...buildDiagnostics(purchaseWithLifecycle),
             stripe: stripeState
@@ -341,6 +354,53 @@ async function getAuditLogMap(purchaseIds) {
     return map;
 }
 
+async function getEmailOutboxMap(purchaseIds) {
+    if (!purchaseIds.length) {
+        return new Map();
+    }
+
+    const placeholders = purchaseIds.map(() => "?").join(", ");
+    const rows = await allQuery(
+        `SELECT
+            id,
+            purchaseId,
+            kind,
+            state,
+            idempotencyKey,
+            recipientEmail,
+            subject,
+            availableAt,
+            attempts,
+            createdAt,
+            updatedAt,
+            sentAt,
+            provider,
+            providerMessageId,
+            providerStatusCode,
+            providerErrorCode,
+            lastError
+         FROM emailOutbox
+         WHERE purchaseId IN (${placeholders})
+         ORDER BY createdAt DESC, id DESC`,
+        purchaseIds
+    );
+    const map = new Map();
+
+    for (const row of rows) {
+        if (!map.has(row.purchaseId)) {
+            map.set(row.purchaseId, []);
+        }
+
+        const entries = map.get(row.purchaseId);
+
+        if (entries.length < 5) {
+            entries.push(row);
+        }
+    }
+
+    return map;
+}
+
 async function loadSerializedPurchase(purchaseId, stripeState = null) {
     const purchase = await getPurchaseRecord(purchaseId);
 
@@ -349,7 +409,13 @@ async function loadSerializedPurchase(purchaseId, stripeState = null) {
     }
 
     const auditMap = await getAuditLogMap([purchaseId]);
-    return serializePurchase(purchase, stripeState, auditMap.get(purchaseId) || []);
+    const emailOutboxMap = await getEmailOutboxMap([purchaseId]);
+    return serializePurchase(
+        purchase,
+        stripeState,
+        auditMap.get(purchaseId) || [],
+        emailOutboxMap.get(purchaseId) || []
+    );
 }
 
 async function recordAdminAction(req, purchaseId, actionType, note = "", details = null) {
@@ -704,12 +770,14 @@ router.get("/purchases", async (req, res) => {
              ORDER BY COALESCE(p.createdAt, 0) DESC, p.id DESC`
         );
         const auditMap = await getAuditLogMap(purchases.map(purchase => purchase.id));
+        const emailOutboxMap = await getEmailOutboxMap(purchases.map(purchase => purchase.id));
 
         res.json(
             purchases.map(purchase => serializePurchase(
                 purchase,
                 null,
-                auditMap.get(purchase.id) || []
+                auditMap.get(purchase.id) || [],
+                emailOutboxMap.get(purchase.id) || []
             ))
         );
     } catch (err) {
@@ -1414,6 +1482,104 @@ router.post("/admin/purchases/:purchaseId/reopen-setup", async (req, res) => {
         await rollbackTransaction();
         console.error("Setup reopen failed:", err);
         res.status(500).json({ error: "Could not reopen setup" });
+    }
+});
+
+router.post("/admin/purchases/:purchaseId/mark-hard-flag", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        const policy = getPurchasePolicyState(purchase);
+
+        if (!policy.purgeRequired) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Purchase cannot be hard-flagged until suspended retention has reached purge review."
+            });
+        }
+
+        if (purchase.customerRiskStatus === CUSTOMER_RISK_STATUS.HARD_FLAGGED) {
+            await rollbackTransaction();
+            return res.status(400).json({
+                error: "Purchase is already hard-flagged."
+            });
+        }
+
+        const now = Date.now();
+        const nextPurchase = mergeLifecycleState(purchase, {
+            customerRiskStatus: CUSTOMER_RISK_STATUS.HARD_FLAGGED,
+            lastStateOwner: "admin"
+        });
+
+        await runQuery(
+            `UPDATE purchases
+             SET customerRiskStatus = ?,
+                 setupStatus = ?,
+                 fulfillmentStatus = ?,
+                 serviceStatus = ?,
+                 updatedAt = ?,
+                 lastStateOwner = ?
+             WHERE id = ?`,
+            [
+                nextPurchase.customerRiskStatus,
+                nextPurchase.setupStatus,
+                nextPurchase.fulfillmentStatus,
+                nextPurchase.serviceStatus,
+                now,
+                nextPurchase.lastStateOwner,
+                purchase.id
+            ]
+        );
+
+        await recordAdminAction(
+            req,
+            purchase.id,
+            "admin_mark_hard_flag",
+            adminNote.value || "",
+            {
+                serviceSuspendedAt: Number(purchase.serviceSuspendedAt || 0) || null,
+                purgeEligibleAt: policy.purgeEligibleAt || null,
+                serverId: purchase.serverId || null,
+                serverStatus: purchase.serverStatus || null,
+                pelicanServerId: purchase.pelicanServerId || null,
+                pelicanServerIdentifier: purchase.pelicanServerIdentifier || null,
+                pelicanAllocationId: purchase.pelicanAllocationId || null,
+                destructiveCleanupPerformedExternally: true
+            }
+        );
+
+        await runQuery("COMMIT");
+
+        const serialized = await loadSerializedPurchase(purchaseId);
+
+        res.json({
+            success: true,
+            purchase: serialized
+        });
+    } catch (err) {
+        await rollbackTransaction();
+        console.error("Hard flag failed:", err);
+        res.status(500).json({ error: "Could not mark purchase hard-flagged" });
     }
 });
 

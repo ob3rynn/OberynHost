@@ -1232,6 +1232,7 @@ const META_HELP = {
     "Period End": "When the current paid billing period ends in Stripe.",
     "Renewal": "Whether the subscription will renew or end at the current period boundary.",
     "Policy State": "The admin policy summary for grace, suspension, or purge timing.",
+    "Customer Risk": "Whether this customer/order has a delinquency block or hard flag.",
     "Service Access": "Whether the delivered service is currently live or manually suspended.",
     "Created": "When the order was first created in your system."
 };
@@ -1245,7 +1246,10 @@ const DETAIL_HELP = {
     "Pelican Allocation": "The Pelican allocation assigned to this purchase.",
     "Pelican Reconcile": "The last read-only Pelican fact check result for this purchase.",
     "Routing Verified": "When an operator confirmed the desired routing artifact was applied.",
+    "Routing Artifact": "The generated desired routing state operators use for host-side HAProxy/backend apply.",
     "Ready Email Queued": "When the customer-ready access email was added to the local outbox.",
+    "Latest Email State": "The most recent local outbox state for customer email delivery.",
+    "Latest Email Provider": "Provider evidence from the latest email attempt, such as Postmark message id and status.",
     "Stripe Session": "The Checkout Session used to start the purchase flow.",
     "Stripe Customer": "The Stripe customer record associated with the order.",
     "Stripe Subscription": "The recurring Stripe subscription created for this server.",
@@ -1347,6 +1351,11 @@ function formatPolicyState(purchase) {
     }
 
     return "Normal";
+}
+
+function formatCustomerRiskStatus(status) {
+    if (!status) return "clear";
+    return String(status).replace(/_/g, " ");
 }
 
 function getStatusView(status) {
@@ -2071,6 +2080,99 @@ function renderAuditLog(purchase) {
     return container;
 }
 
+function renderEmailOutbox(purchase) {
+    const container = createElement("div", "audit-log");
+    container.appendChild(createElement("h3", "", "Recent Email Delivery"));
+
+    if (!Array.isArray(purchase.emailOutbox) || purchase.emailOutbox.length === 0) {
+        container.appendChild(createElement(
+            "div",
+            "helper-text",
+            "No customer email delivery rows have been recorded for this order yet."
+        ));
+        return container;
+    }
+
+    purchase.emailOutbox.forEach(entry => {
+        const item = createElement("div", "audit-entry");
+        const providerParts = [];
+
+        if (entry.provider) providerParts.push(entry.provider);
+        if (entry.providerMessageId) providerParts.push(`message ${entry.providerMessageId}`);
+        if (entry.providerStatusCode) providerParts.push(`status ${entry.providerStatusCode}`);
+        if (entry.providerErrorCode) providerParts.push(`error ${entry.providerErrorCode}`);
+
+        item.appendChild(createElement(
+            "div",
+            "audit-entry-meta",
+            `${String(entry.kind || "email").replace(/_/g, " ")} • ${String(entry.state || "unknown").replace(/_/g, " ")} • ${formatTimestamp(entry.updatedAt)}`
+        ));
+
+        const detailParts = [
+            entry.subject ? `Subject: ${entry.subject}` : "",
+            entry.recipientEmail ? `To: ${entry.recipientEmail}` : "",
+            providerParts.length ? `Provider: ${providerParts.join(", ")}` : "",
+            entry.sentAt ? `Sent: ${formatTimestamp(entry.sentAt)}` : "",
+            entry.lastError ? `Last error: ${entry.lastError}` : "",
+            entry.idempotencyKey ? `Key: ${entry.idempotencyKey}` : ""
+        ].filter(Boolean);
+
+        item.appendChild(createElement(
+            "div",
+            "audit-entry-note",
+            detailParts.join(" | ") || "No delivery details."
+        ));
+        container.appendChild(item);
+    });
+
+    return container;
+}
+
+function renderRoutingArtifact(purchase) {
+    const container = createElement("div", "audit-log");
+    container.appendChild(createElement("h3", "", "Desired Routing Artifact"));
+
+    const artifact = purchase.desiredRoutingArtifact || null;
+
+    if (!artifact) {
+        container.appendChild(createElement(
+            "div",
+            "helper-text",
+            "No routing artifact has been generated for this order yet."
+        ));
+        return container;
+    }
+
+    const summary = [
+        artifact.hostname ? `Hostname: ${artifact.hostname}` : "",
+        artifact.provisioningTargetCode ? `Target: ${artifact.provisioningTargetCode}` : "",
+        artifact.pelicanServerIdentifier ? `Server: ${artifact.pelicanServerIdentifier}` : "",
+        artifact.pelicanAllocationId ? `Allocation: ${artifact.pelicanAllocationId}` : "",
+        artifact.generatedAt ? `Generated: ${formatTimestamp(artifact.generatedAt)}` : ""
+    ].filter(Boolean).join(" | ");
+
+    container.appendChild(createElement("div", "audit-entry-note", summary || "Routing artifact details unavailable."));
+
+    const pre = document.createElement("pre");
+    pre.className = "routing-artifact";
+    pre.textContent = JSON.stringify(artifact, null, 2);
+    container.appendChild(pre);
+
+    const copyButton = createElement("button", "button button--secondary", "Copy Routing JSON");
+    copyButton.type = "button";
+    copyButton.onclick = async () => {
+        try {
+            await navigator.clipboard.writeText(pre.textContent);
+            showBanner("Routing artifact copied.", "success");
+        } catch {
+            showBanner("Could not copy routing artifact automatically.", "error");
+        }
+    };
+    container.appendChild(copyButton);
+
+    return container;
+}
+
 function createDetailSection(title, bodyBuilder, helperText = "") {
     const section = document.createElement("details");
     section.className = "detail-section";
@@ -2152,6 +2254,14 @@ async function reopenSetup(id, adminNote = "") {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ adminNote })
     }), `Reopened setup for order #${id}.`);
+}
+
+async function markHardFlag(id, adminNote = "") {
+    await withCardAction(async () => requestJson(`/api/admin/purchases/${id}/mark-hard-flag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminNote })
+    }), `Hard-flagged order #${id}.`);
 }
 
 async function applyOverride(id, payload, successMessage) {
@@ -2508,6 +2618,10 @@ function renderPurchaseCard(purchase) {
     ));
     metaGrid.appendChild(createMetaBlock("Policy State", formatPolicyState(purchase)));
     metaGrid.appendChild(createMetaBlock(
+        "Customer Risk",
+        formatCustomerRiskStatus(purchase.customerRiskStatus)
+    ));
+    metaGrid.appendChild(createMetaBlock(
         "Service Access",
         purchase.serviceSuspendedAt ? "Suspended" : "Live"
     ));
@@ -2534,8 +2648,27 @@ function renderPurchaseCard(purchase) {
                 ? `${purchase.pelicanReconcileStatus.replace(/_/g, " ")} at ${formatTimestamp(purchase.pelicanReconciledAt)}`
                 : "Not checked"
         ));
+        section.appendChild(createDetailLine(
+            "Routing Artifact",
+            purchase.desiredRoutingArtifactGeneratedAt
+                ? `Generated ${formatTimestamp(purchase.desiredRoutingArtifactGeneratedAt)}`
+                : "Not generated"
+        ));
         section.appendChild(createDetailLine("Routing Verified", formatTimestamp(purchase.routingVerifiedAt)));
         section.appendChild(createDetailLine("Ready Email Queued", formatTimestamp(purchase.readyEmailQueuedAt)));
+        const latestEmail = Array.isArray(purchase.emailOutbox) ? purchase.emailOutbox[0] : null;
+        section.appendChild(createDetailLine(
+            "Latest Email State",
+            latestEmail
+                ? `${String(latestEmail.kind || "email").replace(/_/g, " ")}: ${String(latestEmail.state || "unknown").replace(/_/g, " ")}`
+                : "No outbox row"
+        ));
+        section.appendChild(createDetailLine(
+            "Latest Email Provider",
+            latestEmail?.providerMessageId
+                ? `${latestEmail.provider || "provider"} message ${latestEmail.providerMessageId}`
+                : (latestEmail?.provider || "No provider response")
+        ));
         section.appendChild(createDetailLine("Stripe Session", purchase.stripeSessionId));
         section.appendChild(createDetailLine("Stripe Customer", purchase.stripeCustomerId));
         section.appendChild(createDetailLine("Stripe Subscription", purchase.stripeSubscriptionId));
@@ -2639,6 +2772,17 @@ function renderPurchaseCard(purchase) {
     }
 
     if (
+        purchase.diagnostics?.policy?.purgeRequired &&
+        purchase.customerRiskStatus !== "hard_flagged"
+    ) {
+        actions.appendChild(createGuardedAction("Mark Hard Flag", "danger", "Confirm Hard Flag", async () => {
+            await markHardFlag(purchase.id, getOperatorNote(noteInput));
+        }, false,
+        "An operator has reviewed this purge-eligible delinquency case and handled any destructive cleanup outside the app.",
+        "This records the terminal customer-risk marker only. It does not delete Pelican resources or release local capacity."));
+    }
+
+    if (
         purchase.diagnostics?.recommendedServerStatus &&
         purchase.serverStatus !== purchase.diagnostics.recommendedServerStatus
     ) {
@@ -2687,6 +2831,14 @@ function renderPurchaseCard(purchase) {
     main.appendChild(createDetailSection("Audit Trail", section => {
         section.appendChild(renderAuditLog(purchase));
     }, "Open this when you need the operator history for the order."));
+
+    main.appendChild(createDetailSection("Email Delivery", section => {
+        section.appendChild(renderEmailOutbox(purchase));
+    }, "Use this to confirm ready-access, setup reminder, and suspension warning delivery state without opening SQLite."));
+
+    main.appendChild(createDetailSection("Routing Artifact", section => {
+        section.appendChild(renderRoutingArtifact(purchase));
+    }, "Use this as the source for phase-1 host-side routing apply and verification."));
 
     layout.appendChild(main);
     layout.appendChild(side);

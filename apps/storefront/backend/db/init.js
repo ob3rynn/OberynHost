@@ -422,6 +422,10 @@ const ready = (async () => {
                 createdAt INTEGER NOT NULL,
                 updatedAt INTEGER NOT NULL,
                 sentAt INTEGER,
+                provider TEXT,
+                providerMessageId TEXT,
+                providerStatusCode INTEGER,
+                providerErrorCode INTEGER,
                 lastError TEXT,
                 FOREIGN KEY(purchaseId) REFERENCES purchases(id)
             )
@@ -559,6 +563,10 @@ const ready = (async () => {
         await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "attempts", "INTEGER DEFAULT 0");
         await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "leaseKey", "TEXT");
         await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "leaseExpiresAt", "INTEGER");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "provider", "TEXT");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "providerMessageId", "TEXT");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "providerStatusCode", "INTEGER");
+        await addColumnIfMissing("emailOutbox", emailOutboxColumnNames, "providerErrorCode", "INTEGER");
 
         await seedLaunchCatalog();
         await seedLaunchInventory();

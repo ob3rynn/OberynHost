@@ -1,5 +1,5 @@
 const config = require("../config");
-const { getQuery, runQuery } = require("../db/queries");
+const { allQuery, getQuery, runQuery } = require("../db/queries");
 const { rollbackTransaction } = require("../db/transactions");
 const { generateOpaqueToken } = require("../utils/tokens");
 
@@ -36,6 +36,7 @@ const SUSPENSION_DELETE_WARNING_CONFIG = {
 const DEFAULT_EMAIL_OUTBOX_LEASE_MS = 1000 * 60;
 const DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS = 1000 * 60 * 5;
 const DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS = 2;
+const DEFAULT_EMAIL_OUTBOX_RECOVERY_LIMIT = 25;
 
 function buildReadyEmailIdempotencyKey(purchaseId) {
     return `purchase:${purchaseId}:email:${EMAIL_KIND.READY_ACCESS}`;
@@ -354,36 +355,86 @@ function getExpiredLeaseFailureMessage() {
 async function recoverExpiredEmailOutboxLeases(options = {}) {
     const now = Number(options.now || Date.now());
     const maxAttempts = Number(options.maxAttempts || DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS);
+    const limit = Number(options.limit || DEFAULT_EMAIL_OUTBOX_RECOVERY_LIMIT);
+    const reconcileDelivery = typeof options.reconcileDelivery === "function"
+        ? options.reconcileDelivery
+        : null;
 
-    const result = await runQuery(
-        `UPDATE emailOutbox
-         SET state = ?,
-             attempts = CASE
-                 WHEN COALESCE(attempts, 0) < ? THEN ?
-                 ELSE COALESCE(attempts, 0)
-             END,
-             availableAt = ?,
-             updatedAt = ?,
-             lastError = ?,
-             lockedAt = NULL,
-             leaseKey = NULL,
-             leaseExpiresAt = NULL
+    const expiredMessages = await allQuery(
+        `SELECT *
+         FROM emailOutbox
          WHERE state = ?
            AND leaseExpiresAt IS NOT NULL
-           AND leaseExpiresAt < ?`,
+           AND leaseExpiresAt < ?
+         ORDER BY leaseExpiresAt ASC, id ASC
+         LIMIT ?`,
         [
-            EMAIL_OUTBOX_STATE.FAILED,
-            maxAttempts,
-            maxAttempts,
-            now,
-            now,
-            getExpiredLeaseFailureMessage(),
             EMAIL_OUTBOX_STATE.SENDING,
-            now
+            now,
+            limit
         ]
     );
 
-    return Number(result.changes || 0);
+    let recovered = 0;
+
+    for (const row of expiredMessages) {
+        const message = normalizeEmailOutboxRow(row);
+
+        if (reconcileDelivery) {
+            let deliveryResult = null;
+
+            try {
+                deliveryResult = await reconcileDelivery(message);
+            } catch {
+                deliveryResult = null;
+            }
+
+            if (deliveryResult?.providerMessageId) {
+                const markedSent = await markEmailOutboxSent(message, {
+                    now,
+                    deliveryResult
+                });
+
+                if (markedSent) {
+                    recovered += 1;
+                    continue;
+                }
+            }
+        }
+
+        const result = await runQuery(
+            `UPDATE emailOutbox
+             SET state = ?,
+                 attempts = CASE
+                     WHEN COALESCE(attempts, 0) < ? THEN ?
+                     ELSE COALESCE(attempts, 0)
+                 END,
+                 availableAt = ?,
+                 updatedAt = ?,
+                 lastError = ?,
+                 lockedAt = NULL,
+                 leaseKey = NULL,
+                 leaseExpiresAt = NULL
+             WHERE id = ?
+               AND state = ?
+               AND leaseKey = ?`,
+            [
+                EMAIL_OUTBOX_STATE.FAILED,
+                maxAttempts,
+                maxAttempts,
+                now,
+                now,
+                getExpiredLeaseFailureMessage(),
+                message.id,
+                EMAIL_OUTBOX_STATE.SENDING,
+                message.leaseKey
+            ]
+        );
+
+        recovered += Number(result.changes || 0);
+    }
+
+    return recovered;
 }
 
 async function leaseNextEmailOutboxMessage(options = {}) {
@@ -395,7 +446,8 @@ async function leaseNextEmailOutboxMessage(options = {}) {
 
     await recoverExpiredEmailOutboxLeases({
         now,
-        maxAttempts
+        maxAttempts,
+        reconcileDelivery: options.reconcileDelivery
     });
 
     try {
@@ -474,12 +526,20 @@ async function leaseNextEmailOutboxMessage(options = {}) {
 
 async function markEmailOutboxSent(message, details = {}) {
     const now = Number(details.now || Date.now());
+    const deliveryResult = details.deliveryResult || {};
+    const provider = String(deliveryResult.provider || "").trim();
+    const providerMessageId = String(deliveryResult.providerMessageId || "").trim();
+    const providerStatusCode = Number(deliveryResult.statusCode || 0) || null;
 
     const result = await runQuery(
         `UPDATE emailOutbox
          SET state = ?,
              updatedAt = ?,
              sentAt = ?,
+             provider = ?,
+             providerMessageId = ?,
+             providerStatusCode = ?,
+             providerErrorCode = NULL,
              lastError = NULL,
              lockedAt = NULL,
              leaseKey = NULL,
@@ -491,6 +551,9 @@ async function markEmailOutboxSent(message, details = {}) {
             EMAIL_OUTBOX_STATE.SENT,
             now,
             now,
+            provider || null,
+            providerMessageId || null,
+            providerStatusCode,
             message.id,
             EMAIL_OUTBOX_STATE.SENDING,
             message.leaseKey
@@ -509,12 +572,20 @@ async function markEmailOutboxFailed(message, error, details = {}) {
     const lastError = String(error?.message || error || "Email delivery failed.")
         .trim()
         .slice(0, 2000);
+    const provider = String(error?.provider || "").trim();
+    const providerMessageId = String(error?.providerMessageId || "").trim();
+    const providerStatusCode = Number(error?.statusCode || 0) || null;
+    const providerErrorCode = Number(error?.errorCode || 0) || null;
 
     const result = await runQuery(
         `UPDATE emailOutbox
          SET state = ?,
              availableAt = ?,
              updatedAt = ?,
+             provider = COALESCE(?, provider),
+             providerMessageId = COALESCE(?, providerMessageId),
+             providerStatusCode = COALESCE(?, providerStatusCode),
+             providerErrorCode = COALESCE(?, providerErrorCode),
              lastError = ?,
              lockedAt = NULL,
              leaseKey = NULL,
@@ -526,6 +597,10 @@ async function markEmailOutboxFailed(message, error, details = {}) {
             EMAIL_OUTBOX_STATE.FAILED,
             shouldRetry ? (now + retryDelayMs) : now,
             now,
+            provider || null,
+            providerMessageId || null,
+            providerStatusCode,
+            providerErrorCode,
             lastError || "Email delivery failed.",
             message.id,
             EMAIL_OUTBOX_STATE.SENDING,
@@ -543,6 +618,7 @@ async function markEmailOutboxFailed(message, error, details = {}) {
 module.exports = {
     DEFAULT_EMAIL_OUTBOX_LEASE_MS,
     DEFAULT_EMAIL_OUTBOX_MAX_ATTEMPTS,
+    DEFAULT_EMAIL_OUTBOX_RECOVERY_LIMIT,
     DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS,
     EMAIL_KIND,
     EMAIL_OUTBOX_STATE,

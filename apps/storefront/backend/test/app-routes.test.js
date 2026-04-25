@@ -2329,6 +2329,134 @@ test("lifecycle worker opens one admin purge review task after suspended retenti
     assert.equal(auditCount.count, 1);
 });
 
+test("admin can hard-flag only purge-eligible delinquency cases without releasing capacity", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+    const { SUSPENSION_RETENTION_MS } = require("../services/policyRules");
+    const now = Date.now();
+    const notYetEligibleSuspendedAt = now - SUSPENSION_RETENTION_MS + 60_000;
+    const eligibleSuspendedAt = now - SUSPENSION_RETENTION_MS - 60_000;
+
+    await runQuery(
+        `INSERT INTO purchases
+            (
+                serverId,
+                email,
+                serverName,
+                status,
+                stripeSessionId,
+                createdAt,
+                setupToken,
+                setupTokenExpiresAt,
+                paidAt,
+                completedAt,
+                serviceSuspendedAt,
+                setupStatus,
+                fulfillmentStatus,
+                serviceStatus,
+                customerRiskStatus,
+                pelicanServerId,
+                pelicanServerIdentifier,
+                pelicanAllocationId
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            9,
+            "hard-flag@example.com",
+            "Hard Flag Due",
+            "completed",
+            "cs_test_hard_flag_due",
+            now - (1000 * 60 * 60 * 24 * 45),
+            "setup_token_hard_flag_due_abcdefghijklmnopqrstuvwxyz",
+            now + (1000 * 60 * 60),
+            now - (1000 * 60 * 60 * 24 * 40),
+            now - (1000 * 60 * 60 * 24 * 40),
+            notYetEligibleSuspendedAt,
+            "setup_submitted",
+            "ready",
+            "suspended_final_recovery",
+            "purchase_blocked_delinquent",
+            "pelican-server-hard-flag",
+            "srv_hard_flag",
+            "allocation-hard-flag"
+        ]
+    );
+    await runQuery("UPDATE servers SET status = ? WHERE id = ?", ["held", 9]);
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    assert.equal(loginRes.status, 200);
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const earlyRes = await app.request("/api/admin/purchases/1/mark-hard-flag", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ adminNote: "Too early" })
+    });
+    assert.equal(earlyRes.status, 400);
+
+    await runQuery(
+        "UPDATE purchases SET serviceSuspendedAt = ? WHERE id = ?",
+        [eligibleSuspendedAt, 1]
+    );
+
+    const flagRes = await app.request("/api/admin/purchases/1/mark-hard-flag", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ adminNote: "External cleanup reviewed" })
+    });
+    assert.equal(flagRes.status, 200);
+    const flagData = await flagRes.json();
+    assert.equal(flagData.purchase.customerRiskStatus, "hard_flagged");
+    assert.ok(
+        flagData.purchase.diagnostics.issues.includes(
+            "Customer is hard-flagged after terminal delinquency handling."
+        )
+    );
+
+    const purchase = await getQuery(
+        `SELECT customerRiskStatus, serviceStatus, lastStateOwner
+         FROM purchases
+         WHERE id = ?`,
+        [1]
+    );
+    assert.equal(purchase.customerRiskStatus, "hard_flagged");
+    assert.equal(purchase.serviceStatus, "suspended_final_recovery");
+    assert.equal(purchase.lastStateOwner, "admin");
+
+    const server = await getQuery("SELECT status FROM servers WHERE id = ?", [9]);
+    assert.equal(server.status, "held");
+
+    const auditRow = await getQuery(
+        `SELECT actionType, note, detailsJson
+         FROM adminAuditLog
+         WHERE purchaseId = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [1]
+    );
+    assert.equal(auditRow.actionType, "admin_mark_hard_flag");
+    assert.equal(auditRow.note, "External cleanup reviewed");
+    const details = JSON.parse(auditRow.detailsJson);
+    assert.equal(details.purgeEligibleAt, eligibleSuspendedAt + SUSPENSION_RETENTION_MS);
+    assert.equal(details.destructiveCleanupPerformedExternally, true);
+    assert.equal(details.pelicanServerIdentifier, "srv_hard_flag");
+});
+
 test("lifecycle worker queues one setup reminder email for paid purchases stalled over 24 hours", async t => {
     const app = await createTestApp(t);
     const { runQuery, getQuery } = app.queries;
@@ -2700,6 +2828,8 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     const verifyRoutingData = await verifyRoutingRes.json();
     assert.equal(verifyRoutingData.action, "verified");
     assert.ok(Number(verifyRoutingData.purchase.routingVerifiedAt) > 0);
+    assert.equal(verifyRoutingData.purchase.desiredRoutingArtifact.hostname, "completion-test.oberyn.net");
+    assert.equal(verifyRoutingData.purchase.desiredRoutingArtifact.pelicanServerIdentifier, "srv_complete");
 
     const completeRes = await app.request("/api/complete", {
         method: "POST",
@@ -3452,7 +3582,8 @@ test("email outbox worker marks queued ready-access email sent through an inject
             capturedMessage = message;
             return {
                 provider: "test_provider",
-                providerMessageId: "msg_test_123"
+                providerMessageId: "msg_test_123",
+                statusCode: 202
             };
         }
     });
@@ -3462,18 +3593,45 @@ test("email outbox worker marks queued ready-access email sent through an inject
     assert.equal(iteration.provider, "test_provider");
     assert.equal(iteration.providerMessageId, "msg_test_123");
     assert.equal(capturedMessage.kind, "ready_access");
+    assert.equal(capturedMessage.idempotencyKey, "purchase:1:email:ready_access");
     assert.equal(capturedMessage.recipientEmail, "delivery@example.com");
     assert.equal(capturedMessage.payload.pelicanUsername, "delivery_customer");
 
     const row = await getQuery(
-        `SELECT state, sentAt, lastError
+        `SELECT state, sentAt, provider, providerMessageId, providerStatusCode, providerErrorCode, lastError
          FROM emailOutbox
          WHERE purchaseId = ?`,
         [1]
     );
     assert.equal(row.state, "sent");
     assert.ok(Number(row.sentAt) > 0);
+    assert.equal(row.provider, "test_provider");
+    assert.equal(row.providerMessageId, "msg_test_123");
+    assert.equal(row.providerStatusCode, 202);
+    assert.equal(row.providerErrorCode, null);
     assert.equal(row.lastError, null);
+
+    const loginRes = await app.request("/api/admin/login", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({ key: "test-admin-key" })
+    });
+    assert.equal(loginRes.status, 200);
+    const adminCookie = app.parseSetCookie(loginRes);
+
+    const purchasesRes = await app.request("/api/purchases", {
+        headers: { cookie: adminCookie }
+    });
+    assert.equal(purchasesRes.status, 200);
+    const purchases = await purchasesRes.json();
+    assert.equal(purchases[0].emailOutbox.length, 1);
+    assert.equal(purchases[0].emailOutbox[0].provider, "test_provider");
+    assert.equal(purchases[0].emailOutbox[0].providerMessageId, "msg_test_123");
+    assert.equal(purchases[0].emailOutbox[0].providerStatusCode, 202);
+    assert.equal(purchases[0].emailOutbox[0].idempotencyKey, "purchase:1:email:ready_access");
 });
 
 test("email outbox worker records provider failures on the queued message", async t => {
@@ -3523,23 +3681,32 @@ test("email outbox worker records provider failures on the queued message", asyn
     const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
     const iteration = await runEmailOutboxWorkerIteration({
         sendEmailMessage: async () => {
-            throw new Error("Provider outage");
+            const error = new Error("Postmark rejected recipient");
+            error.provider = "postmark";
+            error.statusCode = 422;
+            error.errorCode = 300;
+            error.providerMessageId = "msg_fail_123";
+            throw error;
         }
     });
 
     assert.equal(iteration.outcome, "failed");
     assert.equal(iteration.purchaseId, 1);
-    assert.match(iteration.error, /Provider outage/);
+    assert.match(iteration.error, /Postmark rejected recipient/);
 
     const row = await getQuery(
-        `SELECT state, sentAt, lastError
+        `SELECT state, sentAt, provider, providerMessageId, providerStatusCode, providerErrorCode, lastError
          FROM emailOutbox
          WHERE purchaseId = ?`,
         [1]
     );
     assert.equal(row.state, "failed");
     assert.equal(row.sentAt, null);
-    assert.match(row.lastError, /Provider outage/);
+    assert.equal(row.provider, "postmark");
+    assert.equal(row.providerMessageId, "msg_fail_123");
+    assert.equal(row.providerStatusCode, 422);
+    assert.equal(row.providerErrorCode, 300);
+    assert.match(row.lastError, /Postmark rejected recipient/);
 });
 
 test("email outbox worker schedules one retry for retryable delivery failures and then sends", async t => {
@@ -3718,6 +3885,96 @@ test("email outbox worker recovers expired sending leases into explicit final fa
     assert.equal(row.leaseKey, null);
     assert.equal(row.leaseExpiresAt, null);
     assert.match(row.lastError, /automatic resend skipped to avoid duplicate customer mail/i);
+});
+
+test("email outbox worker marks expired sending lease sent when provider reconciliation proves acceptance", async t => {
+    const app = await createTestApp(t);
+    const { runQuery, getQuery } = app.queries;
+
+    await runQuery(
+        `INSERT INTO emailOutbox
+            (
+                purchaseId,
+                kind,
+                state,
+                idempotencyKey,
+                recipientEmail,
+                senderEmail,
+                subject,
+                bodyText,
+                payloadJson,
+                availableAt,
+                lockedAt,
+                attempts,
+                leaseKey,
+                leaseExpiresAt,
+                createdAt,
+                updatedAt,
+                lastError
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            null,
+            "ready_access",
+            "sending",
+            "purchase:reconciled:email:ready_access",
+            "reconciled@example.com",
+            "support@oberynn.com",
+            "Reconciled lease",
+            "Body",
+            "{}",
+            1_900_000_000_000,
+            1_900_000_000_000,
+            1,
+            "lease_reconciled_123",
+            1_900_000_010_000,
+            1_900_000_000_000,
+            1_900_000_000_000,
+            "Unknown"
+        ]
+    );
+
+    let sendCalls = 0;
+    let reconcileCalls = 0;
+    const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runEmailOutboxWorkerIteration({
+        now: 1_900_000_020_000,
+        reconcileEmailDelivery: async message => {
+            reconcileCalls += 1;
+            assert.equal(message.idempotencyKey, "purchase:reconciled:email:ready_access");
+            return {
+                provider: "postmark",
+                providerMessageId: "postmark-recovered-123",
+                statusCode: 200
+            };
+        },
+        sendEmailMessage: async () => {
+            sendCalls += 1;
+            return {
+                provider: "test_provider",
+                providerMessageId: "should-not-send"
+            };
+        }
+    });
+
+    assert.equal(iteration, null);
+    assert.equal(reconcileCalls, 1);
+    assert.equal(sendCalls, 0);
+
+    const row = await getQuery(
+        `SELECT state, sentAt, provider, providerMessageId, providerStatusCode, lastError, leaseKey, leaseExpiresAt
+         FROM emailOutbox
+         WHERE idempotencyKey = ?`,
+        ["purchase:reconciled:email:ready_access"]
+    );
+    assert.equal(row.state, "sent");
+    assert.equal(row.sentAt, 1_900_000_020_000);
+    assert.equal(row.provider, "postmark");
+    assert.equal(row.providerMessageId, "postmark-recovered-123");
+    assert.equal(row.providerStatusCode, 200);
+    assert.equal(row.lastError, null);
+    assert.equal(row.leaseKey, null);
+    assert.equal(row.leaseExpiresAt, null);
 });
 
 test("admin guardrails block cancelling or releasing a live subscription, but allow suspension", async t => {
