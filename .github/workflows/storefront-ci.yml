@@ -1,0 +1,62 @@
+name: Deployment CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  storefront:
+    name: Storefront and deployment image validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Write CI storefront environment
+        run: |
+          cat > apps/storefront/backend/.env <<'EOF'
+          PORT=3000
+          HOST=0.0.0.0
+          BASE_URL=https://ci.oberynhost.test
+          ALLOWED_ORIGINS=
+          CUSTOMER_HOSTNAME_ROOT_DOMAIN=oberyn.net
+          OUTBOUND_EMAIL_FROM=support@oberynn.com
+          EMAIL_PROVIDER=log
+          POSTMARK_SERVER_TOKEN=
+          POSTMARK_MESSAGE_STREAM=outbound
+          ADMIN_KEY=ci-admin-key-not-a-placeholder
+          SETUP_SECRET_KEY=ci-setup-secret-not-a-placeholder
+          STRIPE_SECRET_KEY=sk_test_ci_not_a_real_secret
+          STRIPE_API_VERSION=2026-02-25.clover
+          STRIPE_WEBHOOK_SECRET=whsec_ci_not_a_real_secret
+          STRIPE_PRICE_PAPER_2GB=price_ci_paper_2gb
+          PELICAN_PANEL_URL=
+          PELICAN_APPLICATION_API_KEY=
+          PELICAN_PROVISIONING_TARGETS_JSON=
+          EOF
+
+      - name: Build storefront Docker targets
+        run: bash scripts/storefront-docker.sh build
+
+      - name: Build Pelican panel wrapper image
+        run: |
+          docker build \
+            --file deploy/pelican/production/panel/Dockerfile \
+            --build-arg PELICAN_BASE_IMAGE=ghcr.io/pelican-dev/panel:v1.0.0-beta33 \
+            --tag oberynhost-pelican-panel:ci \
+            .
+
+      - name: Run storefront tests
+        run: bash scripts/storefront-docker.sh test
+
+      - name: Run config audit
+        run: bash scripts/storefront-docker.sh audit:config --json
+
+      - name: Run runtime audit
+        run: bash scripts/storefront-docker.sh audit:runtime --json
+
+      - name: Run read-only audit
+        run: bash scripts/storefront-docker.sh audit:read-only --json
