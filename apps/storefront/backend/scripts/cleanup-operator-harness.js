@@ -3,9 +3,9 @@ const {
     closeDatabase,
     createDatabase,
     dbRun,
-    listMarkedLiveishPurchases,
+    listMarkedOperatorHarnessPurchases,
     loadHarnessEnv
-} = require("./lib/liveishHarness");
+} = require("./lib/operatorHarness");
 
 function parseOptions(argv = process.argv) {
     return {
@@ -107,7 +107,7 @@ async function applyLocalCleanup(database, purchases, options = {}) {
                          ELSE 'not_started'
                      END,
                      updatedAt = ?,
-                     lastStateOwner = 'harness_cleanup'
+                     lastStateOwner = 'operator_harness_cleanup'
                  WHERE id = ?`,
                 [now, purchase.id]
             );
@@ -166,11 +166,11 @@ async function applyLocalCleanup(database, purchases, options = {}) {
     };
 }
 
-async function cleanupLiveishHarness(options = {}) {
+async function cleanupOperatorHarness(options = {}) {
     const database = createDatabase();
 
     try {
-        const purchases = await listMarkedLiveishPurchases(database);
+        const purchases = await listMarkedOperatorHarnessPurchases(database);
         const stripeCancelled = await cancelStripeSubscriptions(purchases, options);
         const localCleanup = await applyLocalCleanup(database, purchases, options);
 
@@ -192,10 +192,10 @@ async function cleanupLiveishHarness(options = {}) {
 
 function formatCleanupResult(result) {
     const lines = [
-        "Live-ish harness cleanup",
+        "Operator harness cleanup",
         result.dryRun
             ? "Mode: dry-run. No local rows or Stripe subscriptions were changed."
-            : "Mode: apply. Only marked live-ish artifacts were targeted.",
+            : "Mode: apply. Only marked operator harness artifacts were targeted.",
         "Pelican destructive cleanup: not implemented.",
         result.forceReleaseLocalCapacityWithoutPelicanCleanup
             ? "WARNING: forced local capacity release ran without Pelican cleanup confirmation."
@@ -236,7 +236,7 @@ function formatCleanupResult(result) {
 async function main() {
     loadHarnessEnv();
     const options = parseOptions();
-    const result = await cleanupLiveishHarness(options);
+    const result = await cleanupOperatorHarness(options);
 
     if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -247,7 +247,7 @@ async function main() {
 
 if (require.main === module) {
     main().catch(err => {
-        console.error("LIVEISH_HARNESS_CLEANUP_FAILED");
+        console.error("OPERATOR_HARNESS_CLEANUP_FAILED");
         console.error(err && err.stack ? err.stack : String(err));
         process.exit(1);
     });
@@ -255,7 +255,7 @@ if (require.main === module) {
 
 module.exports = {
     applyLocalCleanup,
-    cleanupLiveishHarness,
+    cleanupOperatorHarness,
     formatCleanupResult,
     hasPelicanResourceLinkage,
     parseOptions,

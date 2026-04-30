@@ -7,13 +7,13 @@ const { PLAN_DEFINITIONS } = require("../../config/plans");
 
 const BACKEND_ROOT = path.resolve(__dirname, "../..");
 const ENV_PATH = path.join(BACKEND_ROOT, ".env");
-const LIVEISH_ENV_PATH = path.join(BACKEND_ROOT, ".env.liveish");
-const LIVEISH_PLAN_TYPE = "paper-2gb";
-const LIVEISH_PRODUCT_CODE = "minecraft-paper-2gb";
-const LIVEISH_DISPLAY_NAME = "Paper 2 GB";
-const LIVEISH_CONTAINER_MEMORY_MB = 2424;
-const LIVEISH_JVM_MEMORY_MB = 2024;
-const LIVEISH_MARKER_PREFIX = "liveish-";
+const OPERATOR_HARNESS_ENV_PATH = path.join(BACKEND_ROOT, ".env.operator-harness");
+const OPERATOR_HARNESS_PLAN_TYPE = "paper-2gb";
+const OPERATOR_HARNESS_PRODUCT_CODE = "minecraft-paper-2gb";
+const OPERATOR_HARNESS_DISPLAY_NAME = "Paper 2 GB";
+const OPERATOR_HARNESS_CONTAINER_MEMORY_MB = 2424;
+const OPERATOR_HARNESS_JVM_MEMORY_MB = 2024;
+const OPERATOR_HARNESS_MARKER_PREFIX = "operator-harness-";
 const LEGACY_PRODUCT_ENV_NAMES = [
     "STRIPE_PRICE_2GB",
     "STRIPE_PRICE_3GB",
@@ -25,8 +25,8 @@ function loadHarnessEnv() {
         dotenv.config({ path: ENV_PATH, override: false, quiet: true });
     }
 
-    if (fs.existsSync(LIVEISH_ENV_PATH)) {
-        dotenv.config({ path: LIVEISH_ENV_PATH, override: true, quiet: true });
+    if (fs.existsSync(OPERATOR_HARNESS_ENV_PATH)) {
+        dotenv.config({ path: OPERATOR_HARNESS_ENV_PATH, override: true, quiet: true });
     }
 }
 
@@ -105,7 +105,7 @@ function randomSuffix(length = 6) {
     return Math.random().toString(36).slice(2, 2 + length);
 }
 
-function createLiveishMarker(label = "") {
+function createOperatorHarnessMarker(label = "") {
     const timestamp = new Date()
         .toISOString()
         .replace(/[-:TZ.]/g, "")
@@ -119,62 +119,62 @@ function createLiveishMarker(label = "") {
         .slice(0, 12);
 
     return [
-        LIVEISH_MARKER_PREFIX.replace(/-$/, ""),
+        OPERATOR_HARNESS_MARKER_PREFIX.replace(/-$/, ""),
         timestamp,
         normalizedLabel,
         suffix
     ].filter(Boolean).join("-");
 }
 
-function isLiveishValue(value) {
-    return String(value || "").trim().toLowerCase().startsWith(LIVEISH_MARKER_PREFIX);
+function isOperatorHarnessValue(value) {
+    return String(value || "").trim().toLowerCase().startsWith(OPERATOR_HARNESS_MARKER_PREFIX);
 }
 
-function isMarkedLiveishPurchase(purchase = {}) {
+function isMarkedOperatorHarnessPurchase(purchase = {}) {
     return [
         purchase.email,
         purchase.serverName,
         purchase.hostname,
         purchase.hostnameReservationKey
-    ].some(isLiveishValue);
+    ].some(isOperatorHarnessValue);
 }
 
-function getLiveishPlan() {
-    return PLAN_DEFINITIONS[LIVEISH_PLAN_TYPE] || null;
+function getOperatorHarnessPlan() {
+    return PLAN_DEFINITIONS[OPERATOR_HARNESS_PLAN_TYPE] || null;
 }
 
 function getProductTruthErrors() {
     const errors = [];
     const planEntries = Object.entries(PLAN_DEFINITIONS);
-    const plan = getLiveishPlan();
+    const plan = getOperatorHarnessPlan();
 
     if (planEntries.length !== 1) {
         errors.push(`expected exactly one launch product, found ${planEntries.length}`);
     }
 
     if (!plan) {
-        errors.push(`missing ${LIVEISH_PLAN_TYPE} launch product`);
+        errors.push(`missing ${OPERATOR_HARNESS_PLAN_TYPE} launch product`);
         return errors;
     }
 
-    if (plan.code !== LIVEISH_PRODUCT_CODE) {
-        errors.push(`active product code must be ${LIVEISH_PRODUCT_CODE}`);
+    if (plan.code !== OPERATOR_HARNESS_PRODUCT_CODE) {
+        errors.push(`active product code must be ${OPERATOR_HARNESS_PRODUCT_CODE}`);
     }
 
-    if (plan.displayName !== LIVEISH_DISPLAY_NAME) {
-        errors.push(`active display name must be ${LIVEISH_DISPLAY_NAME}`);
+    if (plan.displayName !== OPERATOR_HARNESS_DISPLAY_NAME) {
+        errors.push(`active display name must be ${OPERATOR_HARNESS_DISPLAY_NAME}`);
     }
 
     if (plan.runtimeFamily !== "paper") {
         errors.push("active runtime family must be paper");
     }
 
-    if (Number(plan.containerMemoryMb) !== LIVEISH_CONTAINER_MEMORY_MB) {
-        errors.push(`container memory must be ${LIVEISH_CONTAINER_MEMORY_MB} MB`);
+    if (Number(plan.containerMemoryMb) !== OPERATOR_HARNESS_CONTAINER_MEMORY_MB) {
+        errors.push(`container memory must be ${OPERATOR_HARNESS_CONTAINER_MEMORY_MB} MB`);
     }
 
-    if (Number(plan.jvmMemoryMb) !== LIVEISH_JVM_MEMORY_MB) {
-        errors.push(`JVM target must be ${LIVEISH_JVM_MEMORY_MB} MB`);
+    if (Number(plan.jvmMemoryMb) !== OPERATOR_HARNESS_JVM_MEMORY_MB) {
+        errors.push(`JVM target must be ${OPERATOR_HARNESS_JVM_MEMORY_MB} MB`);
     }
 
     return errors;
@@ -217,19 +217,19 @@ function targetValueContains(value, expected) {
     return String(value).includes(String(expected));
 }
 
-function targetContainsJvmTarget(target, jvmMemoryMb = LIVEISH_JVM_MEMORY_MB) {
+function targetContainsJvmTarget(target, jvmMemoryMb = OPERATOR_HARNESS_JVM_MEMORY_MB) {
     return targetValueContains(target.startup, jvmMemoryMb) ||
         targetValueContains(target.environment, jvmMemoryMb) ||
         targetValueContains(target.environmentByRuntimeProfile, jvmMemoryMb);
 }
 
-function validateLiveishTargetConfig(rawValue, options = {}) {
+function validateOperatorHarnessTargetConfig(rawValue, options = {}) {
     const name = options.name || "PELICAN_PROVISIONING_TARGETS_JSON";
     const parsedResult = parseJsonObject(rawValue, name);
     const errors = [...parsedResult.errors];
     const warnings = [];
     const parsed = parsedResult.parsed;
-    const plan = getLiveishPlan();
+    const plan = getOperatorHarnessPlan();
     const requiredTargetCodes = options.requiredTargetCodes ||
         [plan?.provisioningTargetCode].filter(Boolean);
 
@@ -254,12 +254,12 @@ function validateLiveishTargetConfig(rawValue, options = {}) {
             errors.push(`${targetCode}.allocationIds must contain at least one allocation`);
         }
 
-        if (Number(target.limits?.memory) !== LIVEISH_CONTAINER_MEMORY_MB) {
-            errors.push(`${targetCode}.limits.memory must be ${LIVEISH_CONTAINER_MEMORY_MB}`);
+        if (Number(target.limits?.memory) !== OPERATOR_HARNESS_CONTAINER_MEMORY_MB) {
+            errors.push(`${targetCode}.limits.memory must be ${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}`);
         }
 
         if (!targetContainsJvmTarget(target)) {
-            errors.push(`${targetCode} must include JVM target ${LIVEISH_JVM_MEMORY_MB} in startup or environment`);
+            errors.push(`${targetCode} must include JVM target ${OPERATOR_HARNESS_JVM_MEMORY_MB} in startup or environment`);
         }
 
         if (!target.egg) {
@@ -386,10 +386,10 @@ async function waitFor(predicate, options = {}) {
         await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
 
-    throw new Error(options.message || "Timed out waiting for live-ish harness condition.");
+    throw new Error(options.message || "Timed out waiting for operator harness condition.");
 }
 
-async function listMarkedLiveishPurchases(database) {
+async function listMarkedOperatorHarnessPurchases(database) {
     const columns = await dbAll(database, "PRAGMA table_info(purchases)");
     const columnNames = new Set(columns.map(column => column.name));
     const markerColumns = [
@@ -404,7 +404,7 @@ async function listMarkedLiveishPurchases(database) {
     }
 
     const markerPredicate = markerColumns
-        .map(columnName => `LOWER(COALESCE(p.${columnName}, '')) LIKE 'liveish-%'`)
+        .map(columnName => `LOWER(COALESCE(p.${columnName}, '')) LIKE 'operator-harness-%'`)
         .join(" OR ");
     const rows = await dbAll(
         database,
@@ -415,38 +415,38 @@ async function listMarkedLiveishPurchases(database) {
          ORDER BY p.id ASC`
     );
 
-    return rows.filter(isMarkedLiveishPurchase);
+    return rows.filter(isMarkedOperatorHarnessPurchase);
 }
 
 module.exports = {
     BACKEND_ROOT,
     LEGACY_PRODUCT_ENV_NAMES,
-    LIVEISH_CONTAINER_MEMORY_MB,
-    LIVEISH_DISPLAY_NAME,
-    LIVEISH_ENV_PATH,
-    LIVEISH_JVM_MEMORY_MB,
-    LIVEISH_MARKER_PREFIX,
-    LIVEISH_PLAN_TYPE,
-    LIVEISH_PRODUCT_CODE,
+    OPERATOR_HARNESS_CONTAINER_MEMORY_MB,
+    OPERATOR_HARNESS_DISPLAY_NAME,
+    OPERATOR_HARNESS_ENV_PATH,
+    OPERATOR_HARNESS_JVM_MEMORY_MB,
+    OPERATOR_HARNESS_MARKER_PREFIX,
+    OPERATOR_HARNESS_PLAN_TYPE,
+    OPERATOR_HARNESS_PRODUCT_CODE,
     closeDatabase,
     createDatabase,
-    createLiveishMarker,
+    createOperatorHarnessMarker,
     dbAll,
     dbGet,
     dbRun,
     fetchClientServerResources,
     fetchPelicanServerByExternalId,
     fetchPelicanUserByExternalId,
-    getLiveishPlan,
+    getOperatorHarnessPlan,
     getProductTruthErrors,
-    isLiveishValue,
-    isMarkedLiveishPurchase,
-    listMarkedLiveishPurchases,
+    isOperatorHarnessValue,
+    isMarkedOperatorHarnessPurchase,
+    listMarkedOperatorHarnessPurchases,
     loadHarnessEnv,
     pelicanRequest,
     resolveDatabasePath,
     targetContainsJvmTarget,
     unwrapAttributes,
-    validateLiveishTargetConfig,
+    validateOperatorHarnessTargetConfig,
     waitFor
 };

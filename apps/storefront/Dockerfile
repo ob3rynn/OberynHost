@@ -24,7 +24,20 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 COPY --from=prod-deps /opt/storefront/backend/node_modules ./backend/node_modules
-COPY backend ./backend
+COPY backend/package.json backend/package-lock.json ./backend/
+COPY backend/server.js ./backend/server.js
+COPY backend/config ./backend/config
+COPY backend/constants ./backend/constants
+COPY backend/db ./backend/db
+COPY backend/lib ./backend/lib
+COPY backend/middleware ./backend/middleware
+COPY backend/routes ./backend/routes
+COPY backend/services ./backend/services
+COPY backend/utils ./backend/utils
+COPY backend/workers ./backend/workers
+RUN mkdir -p ./backend/scripts/lib
+COPY backend/scripts/audit-config.js backend/scripts/audit-runtime.js backend/scripts/audit-read-only.js ./backend/scripts/
+COPY backend/scripts/lib/readOnlyAudit.js ./backend/scripts/lib/readOnlyAudit.js
 COPY frontend ./frontend
 
 RUN mkdir -p /var/lib/oberynhost/storefront

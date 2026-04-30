@@ -176,26 +176,22 @@ bash scripts/storefront-docker.sh stripe:login
 
 That auth state is stored in the `storefront_stripe_config` volume so the host does not need a Stripe CLI install.
 
-## Manual validation path
-Before CI is added, validate the storefront through Docker only:
+## CI-safe validation
+Default CI and routine local validation should stay inside Docker and avoid
+operator-only Stripe/Pelican/Wings flows:
 
-- `bash scripts/storefront-docker.sh up`
-- smoke-check `GET /`, `GET /pricing`, `GET /api/plans`
-- verify bad webhook signatures return `400`
-- restart the runtime container and verify SQLite persistence remains intact
+- `bash scripts/storefront-docker.sh build`
 - `bash scripts/storefront-docker.sh test`
 - `bash scripts/storefront-docker.sh audit:config --json`
 - `bash scripts/storefront-docker.sh audit:runtime --json`
 - `bash scripts/storefront-docker.sh audit:read-only --json`
 - `bash scripts/storefront-docker.sh audit:updates --json`
-- `bash scripts/storefront-docker.sh stripe:live`
-- `bash scripts/storefront-docker.sh stripe:abuse`
-- `bash scripts/storefront-docker.sh stripe:ops`
-- `bash scripts/storefront-docker.sh audit:liveish`
-- `bash scripts/storefront-docker.sh smoke:liveish`
-- `bash scripts/storefront-docker.sh cleanup:liveish`
 
 Useful runtime smoke checks once `up` or `dev` is running:
+
+- smoke-check `GET /`, `GET /pricing`, `GET /api/plans`
+- verify bad webhook signatures return `400`
+- restart the runtime container and verify SQLite persistence remains intact
 
 ```bash
 curl -i http://127.0.0.1:3000/
@@ -206,11 +202,39 @@ curl -i http://127.0.0.1:3000/api/stripe/webhook \
   -d '{}'
 ```
 
-## Ready for CI
-The storefront is ready for GitHub Actions image build/publish work when:
+## Production deployment
+The first production deployment contract lives in [`../../deploy/storefront/production`](../../deploy/storefront/production).
+
+Production uses the same `runtime` image target as the local production-like `storefront` service, but with host-owned paths:
+
+- env: `/etc/oberyn/storefront/storefront.env`
+- data: `/srv/oberyn/storefront`
+- public HTTPS routing: host Caddy
+
+The first production storefront must run as one instance only. The backend process currently serves the API and starts the fulfillment worker in the same process. Split the worker into its own service before scaling the storefront horizontally.
+
+## Operator-only validation
+These commands intentionally touch live test infrastructure or local operator
+state. They are not default CI commands:
+
+- `bash scripts/storefront-docker.sh stripe:live`
+- `bash scripts/storefront-docker.sh stripe:abuse`
+- `bash scripts/storefront-docker.sh stripe:ops`
+- `bash scripts/storefront-docker.sh audit:operator-harness`
+- `bash scripts/storefront-docker.sh build:operator-pelican-target`
+- `bash scripts/storefront-docker.sh smoke:operator-fulfillment`
+- `bash scripts/storefront-docker.sh cleanup:operator-harness`
+
+## CI and publishing
+Default GitHub Actions should build and validate images without publishing them or running operator-only flows.
+
+Current safe baseline:
 
 - the `runtime` and `devtools` Docker targets both build successfully
+- the Pelican panel wrapper image builds successfully
 - all supported storefront commands work through `bash scripts/storefront-docker.sh ...`
 - no supported storefront workflow requires host `node`, host `npm`, or Windows tooling
 - the repo guidance consistently assumes a native Linux checkout path
 - runtime docs and Docker behavior agree on env rules, persistence, and Stripe handling
+
+Future publishing should be added as a separate release workflow after baseline CI stays clean.

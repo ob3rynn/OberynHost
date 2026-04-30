@@ -1,4 +1,4 @@
-# Live-ish Fulfillment Test Harness
+# Operator Fulfillment Harness
 
 This harness is an operator-run integration test around the storefront automation system. It exercises the real local/dev chain as far as practical before production:
 
@@ -16,7 +16,7 @@ It is dev-only. It does not prove production Cloudflare behavior, public DNS, fi
 - JVM memory target: `2024 MB`
 - Billing: Stripe test-mode recurring price in `STRIPE_PRICE_PAPER_2GB`
 
-Do not use legacy `2GB`, `4GB`, `3GB`, `STRIPE_PRICE_2GB`, `STRIPE_PRICE_4GB`, or `STRIPE_PRICE_3GB` values for the launch harness.
+Do not use legacy `2GB`, `4GB`, `3GB`, `STRIPE_PRICE_2GB`, `STRIPE_PRICE_4GB`, or `STRIPE_PRICE_3GB` values for the operator harness.
 
 ## One-Time Operator Setup
 
@@ -34,53 +34,51 @@ http://127.0.0.1:3000/api/stripe/webhook
 7. Generate a Client API key for that Pelican harness user and set:
 
 ```bash
-LIVEISH_HARNESS_PELICAN_USER_ID=
-LIVEISH_HARNESS_PELICAN_USERNAME=
-LIVEISH_HARNESS_PELICAN_CLIENT_API_KEY=
+OPERATOR_HARNESS_PELICAN_USER_ID=
+OPERATOR_HARNESS_PELICAN_USERNAME=
+OPERATOR_HARNESS_PELICAN_CLIENT_API_KEY=
 ```
 
 8. Build and review the Pelican target JSON from operator-owned values. The helper validates, but it does not invent Pelican IDs, Docker images, startup commands, environment variables, allocation IDs, node IDs, nest IDs, or target codes.
 
 ```bash
-cd apps/storefront/backend
-npm run build:liveish-target -- --target-json-file ./operator-target.json
+bash scripts/storefront-docker.sh build:operator-pelican-target -- --target-json-file ./operator-target.json
 ```
 
-9. Put the resulting `PELICAN_PROVISIONING_TARGETS_JSON` into the live-ish environment.
+9. Put the resulting `PELICAN_PROVISIONING_TARGETS_JSON` into the operator harness environment.
 
-Use `apps/storefront/backend/.env.liveish.example` as the checklist for the harness-specific env. When `backend/.env.liveish` exists, the harness scripts and the local Stripe dev helper prefer it over `backend/.env`, so restart the backend after changing it.
+Use `apps/storefront/backend/.env.operator-harness.example` as the checklist for the harness-specific env. When `backend/.env.operator-harness` exists, the harness scripts and the local Stripe dev helper prefer it over `backend/.env`, so restart the backend after changing it.
 
 ## Commands
 
 Run the audit first:
 
 ```bash
-cd apps/storefront/backend
-npm run audit:liveish
+bash scripts/storefront-docker.sh audit:operator-harness
 ```
 
 Run the real smoke only when local Stripe forwarding, the backend, Pelican, and Wings are ready:
 
 ```bash
-OBERYNHOST_RUN_LIVEISH=1 npm run smoke:liveish
+OBERYNHOST_RUN_OPERATOR_HARNESS=1 bash scripts/storefront-docker.sh smoke:operator-fulfillment
 ```
 
-Without `OBERYNHOST_RUN_LIVEISH=1`, the smoke exits safely and does not create anything.
+Without `OBERYNHOST_RUN_OPERATOR_HARNESS=1`, the smoke exits safely and does not create anything.
 
 Cleanup is dry-run by default:
 
 ```bash
-npm run cleanup:liveish
+bash scripts/storefront-docker.sh cleanup:operator-harness
 ```
 
 Local cleanup and Stripe test subscription cancellation require explicit flags:
 
 ```bash
-npm run cleanup:liveish -- --apply-local
-npm run cleanup:liveish -- --cancel-stripe
+bash scripts/storefront-docker.sh cleanup:operator-harness -- --apply-local
+bash scripts/storefront-docker.sh cleanup:operator-harness -- --cancel-stripe
 ```
 
-The cleanup script only targets artifacts marked with `liveish-<timestamp>-<short-random>`. It never deletes Pelican resources.
+The cleanup script only targets artifacts marked with `operator-harness-<timestamp>-<short-random>`. It never deletes Pelican resources.
 
 ## Smoke Scenarios
 
@@ -93,7 +91,7 @@ The split is important. A first-time customer path proves password lifecycle. A 
 
 ## Acceptance Criteria
 
-A passing live-ish smoke proves:
+A passing operator harness smoke proves:
 
 - active launch product is `Paper 2 GB`
 - container memory is `2424 MB`

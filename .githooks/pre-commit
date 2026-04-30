@@ -9,7 +9,7 @@ if [[ -z "${staged_files}" ]]; then
 fi
 
 forbidden_pattern='(^|/)\.env($|\.)|(^|/).*\.db($|$)|(^|/).*\.db-journal$|(^|/).*\.sqlite($|$)|(^|/).*\.sqlite3$|(^|/).*\.sqlite-shm$|(^|/).*\.sqlite-wal$|(^|/).*\.pem$|(^|/).*\.key$|(^|/).*\.crt$|(^|/).*\.p12$|(^|/).*\.pfx$|(^|/)node_modules/|(^|/)backend/node_modules.windows-backup/'
-allowed_env_pattern='(^|/)\.env\.(example|sample)$'
+allowed_env_pattern='(^|/)\.env\.(example|sample)$|(^|/)\.env\.[^/]+\.example$'
 
 while IFS= read -r file; do
     [[ -z "${file}" ]] && continue

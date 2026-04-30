@@ -2,22 +2,22 @@ const fs = require("fs");
 
 const {
     LEGACY_PRODUCT_ENV_NAMES,
-    LIVEISH_CONTAINER_MEMORY_MB,
-    LIVEISH_JVM_MEMORY_MB,
-    LIVEISH_PLAN_TYPE,
+    OPERATOR_HARNESS_CONTAINER_MEMORY_MB,
+    OPERATOR_HARNESS_JVM_MEMORY_MB,
+    OPERATOR_HARNESS_PLAN_TYPE,
     closeDatabase,
     createDatabase,
-    getLiveishPlan,
+    getOperatorHarnessPlan,
     getProductTruthErrors,
-    listMarkedLiveishPurchases,
+    listMarkedOperatorHarnessPurchases,
     loadHarnessEnv,
     resolveDatabasePath,
-    validateLiveishTargetConfig
-} = require("./lib/liveishHarness");
+    validateOperatorHarnessTargetConfig
+} = require("./lib/operatorHarness");
 
 function createReport() {
     return {
-        title: "Live-ish Fulfillment Harness Audit",
+        title: "Operator Fulfillment Harness Audit",
         generatedAt: new Date().toISOString(),
         results: []
     };
@@ -45,7 +45,7 @@ function summarize(report) {
 }
 
 function isStrictMode(env = process.env, argv = process.argv) {
-    return env.OBERYNHOST_RUN_LIVEISH === "1" || argv.includes("--strict");
+    return env.OBERYNHOST_RUN_OPERATOR_HARNESS === "1" || argv.includes("--strict");
 }
 
 function getMissingEnv(env, names) {
@@ -54,7 +54,7 @@ function getMissingEnv(env, names) {
 
 function addProductChecks(report) {
     const errors = getProductTruthErrors();
-    const plan = getLiveishPlan();
+    const plan = getOperatorHarnessPlan();
 
     if (errors.length === 0) {
         addResult(
@@ -62,7 +62,7 @@ function addProductChecks(report) {
             "product",
             "pass",
             "Active launch product is Paper 2 GB",
-            `${LIVEISH_PLAN_TYPE}, memory=${LIVEISH_CONTAINER_MEMORY_MB}, jvm=${LIVEISH_JVM_MEMORY_MB}`
+            `${OPERATOR_HARNESS_PLAN_TYPE}, memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}`
         );
     } else {
         addResult(report, "product", "fail", "Active launch product drift was found", errors.join("; "));
@@ -87,13 +87,13 @@ function addStripeChecks(report, env, strict) {
     ]);
 
     if (missing.length === 0) {
-        addResult(report, "stripe", "pass", "Stripe live-ish env is present");
+        addResult(report, "stripe", "pass", "Stripe operator harness env is present");
     } else {
         addResult(
             report,
             "stripe",
             strict ? "fail" : "warn",
-            "Stripe live-ish env is incomplete",
+            "Stripe operator harness env is incomplete",
             missing.join(", ")
         );
     }
@@ -129,7 +129,7 @@ function addEmailChecks(report, env) {
         provider === "log" ? "pass" : "warn",
         provider === "log"
             ? "Email provider defaults to local log delivery"
-            : "Core live-ish harness does not require Postmark",
+            : "Core operator harness does not require Postmark",
         `EMAIL_PROVIDER=${provider}`
     );
 }
@@ -155,7 +155,7 @@ function addPelicanChecks(report, env, strict) {
 
     const targetJson = String(env.PELICAN_PROVISIONING_TARGETS_JSON || "").trim();
     if (targetJson) {
-        const targetValidation = validateLiveishTargetConfig(targetJson);
+        const targetValidation = validateOperatorHarnessTargetConfig(targetJson);
 
         if (targetValidation.ok) {
             addResult(
@@ -163,10 +163,10 @@ function addPelicanChecks(report, env, strict) {
                 "pelican",
                 "pass",
                 "Pelican provisioning target matches Paper 2 GB launch resources",
-                `limits.memory=${LIVEISH_CONTAINER_MEMORY_MB}, jvm=${LIVEISH_JVM_MEMORY_MB}`
+                `limits.memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}`
             );
         } else {
-            addResult(report, "pelican", "fail", "Pelican provisioning target is not live-ish safe", targetValidation.errors.join("; "));
+            addResult(report, "pelican", "fail", "Pelican provisioning target is not operator harness safe", targetValidation.errors.join("; "));
         }
 
         for (const warning of targetValidation.warnings) {
@@ -175,9 +175,9 @@ function addPelicanChecks(report, env, strict) {
     }
 
     const missingClient = getMissingEnv(env, [
-        "LIVEISH_HARNESS_PELICAN_USER_ID",
-        "LIVEISH_HARNESS_PELICAN_USERNAME",
-        "LIVEISH_HARNESS_PELICAN_CLIENT_API_KEY"
+        "OPERATOR_HARNESS_PELICAN_USER_ID",
+        "OPERATOR_HARNESS_PELICAN_USERNAME",
+        "OPERATOR_HARNESS_PELICAN_CLIENT_API_KEY"
     ]);
 
     if (missingClient.length === 0) {
@@ -210,13 +210,13 @@ async function addCleanupChecks(report, env = process.env) {
 
         const database = createDatabase(databasePath);
         try {
-            const marked = await listMarkedLiveishPurchases(database);
+            const marked = await listMarkedOperatorHarnessPurchases(database);
             addResult(
                 report,
                 "cleanup",
                 "pass",
                 "Cleanup discovery is marker-limited",
-                `${marked.length} marked live-ish purchase(s) currently match`
+                `${marked.length} marked operator harness purchase(s) currently match`
             );
         } finally {
             await closeDatabase(database);
@@ -239,7 +239,7 @@ async function addCleanupChecks(report, env = process.env) {
     );
 }
 
-async function buildLiveishAuditReport(options = {}) {
+async function buildOperatorHarnessAuditReport(options = {}) {
     if (options.loadEnv !== false) {
         loadHarnessEnv();
     }
@@ -278,7 +278,7 @@ function formatReport(report) {
 
 async function main() {
     const asJson = process.argv.includes("--json");
-    const report = await buildLiveishAuditReport();
+    const report = await buildOperatorHarnessAuditReport();
 
     if (asJson) {
         process.stdout.write(`${JSON.stringify({
@@ -294,14 +294,14 @@ async function main() {
 
 if (require.main === module) {
     main().catch(err => {
-        console.error("LIVEISH_HARNESS_AUDIT_FAILED");
+        console.error("OPERATOR_HARNESS_AUDIT_FAILED");
         console.error(err && err.stack ? err.stack : String(err));
         process.exit(1);
     });
 }
 
 module.exports = {
-    buildLiveishAuditReport,
+    buildOperatorHarnessAuditReport,
     formatReport,
     isStrictMode,
     summarize

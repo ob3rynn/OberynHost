@@ -2,13 +2,13 @@ const fs = require("fs");
 const path = require("path");
 
 const {
-    LIVEISH_CONTAINER_MEMORY_MB,
-    LIVEISH_JVM_MEMORY_MB,
-    getLiveishPlan,
+    OPERATOR_HARNESS_CONTAINER_MEMORY_MB,
+    OPERATOR_HARNESS_JVM_MEMORY_MB,
+    getOperatorHarnessPlan,
     loadHarnessEnv,
     pelicanRequest,
-    validateLiveishTargetConfig
-} = require("./lib/liveishHarness");
+    validateOperatorHarnessTargetConfig
+} = require("./lib/operatorHarness");
 
 function getArgValue(name, argv = process.argv) {
     const index = argv.indexOf(name);
@@ -63,10 +63,10 @@ function findTargetEggIds(target) {
 }
 
 async function validateAllocationsWithPelican({ target, env }) {
-    const nodeId = String(env.LIVEISH_PELICAN_NODE_ID || "").trim();
+    const nodeId = String(env.OPERATOR_HARNESS_PELICAN_NODE_ID || "").trim();
 
     if (!nodeId) {
-        return ["LIVEISH_PELICAN_NODE_ID is unset; allocation existence was not checked against Pelican."];
+        return ["OPERATOR_HARNESS_PELICAN_NODE_ID is unset; allocation existence was not checked against Pelican."];
     }
 
     const payload = await pelicanRequest({
@@ -94,10 +94,10 @@ async function validateAllocationsWithPelican({ target, env }) {
 }
 
 async function validateEggsWithPelican({ target, env }) {
-    const nestId = String(env.LIVEISH_PELICAN_NEST_ID || "").trim();
+    const nestId = String(env.OPERATOR_HARNESS_PELICAN_NEST_ID || "").trim();
 
     if (!nestId) {
-        return ["LIVEISH_PELICAN_NEST_ID is unset; egg existence was not checked against Pelican."];
+        return ["OPERATOR_HARNESS_PELICAN_NEST_ID is unset; egg existence was not checked against Pelican."];
     }
 
     const messages = [];
@@ -116,7 +116,7 @@ async function validateEggsWithPelican({ target, env }) {
 async function buildCandidate(options = {}) {
     const env = options.env || process.env;
     const rawTargetJson = options.rawTargetJson || readTargetJson(options.argv || process.argv, env);
-    const validation = validateLiveishTargetConfig(rawTargetJson);
+    const validation = validateOperatorHarnessTargetConfig(rawTargetJson);
 
     if (!rawTargetJson) {
         throw new Error(
@@ -128,10 +128,10 @@ async function buildCandidate(options = {}) {
         throw new Error(validation.errors.join("; "));
     }
 
-    const plan = getLiveishPlan();
+    const plan = getOperatorHarnessPlan();
     const target = validation.parsed[plan.provisioningTargetCode];
     const messages = [
-        `Validated Paper 2 GB target resources: memory=${LIVEISH_CONTAINER_MEMORY_MB}, jvm=${LIVEISH_JVM_MEMORY_MB}.`
+        `Validated Paper 2 GB target resources: memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}.`
     ];
 
     if (env.PELICAN_PANEL_URL && env.PELICAN_APPLICATION_API_KEY) {
@@ -153,7 +153,7 @@ async function main() {
     const candidate = await buildCandidate();
 
     for (const message of candidate.messages) {
-        console.error(`live-ish harness: ${message}`);
+        console.error(`operator harness: ${message}`);
     }
 
     process.stdout.write(`PELICAN_PROVISIONING_TARGETS_JSON=${candidate.json}\n`);
@@ -161,7 +161,7 @@ async function main() {
 
 if (require.main === module) {
     main().catch(err => {
-        console.error("LIVEISH_PELICAN_TARGET_BUILD_FAILED");
+        console.error("OPERATOR_HARNESS_PELICAN_TARGET_BUILD_FAILED");
         console.error(err && err.stack ? err.stack : String(err));
         process.exit(1);
     });

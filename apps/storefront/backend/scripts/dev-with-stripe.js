@@ -5,20 +5,20 @@ const dotenv = require("dotenv");
 
 const projectRoot = path.join(__dirname, "..");
 const envPath = path.join(projectRoot, ".env");
-const liveishEnvPath = path.join(projectRoot, ".env.liveish");
+const operatorHarnessEnvPath = path.join(projectRoot, ".env.operator-harness");
 
 // This helper is intentionally dev-only. It can read backend/.env for BASE_URL so
 // the backend runtime itself does not need to load dotenv at startup.
 const parsedEnv = fs.existsSync(envPath)
     ? dotenv.parse(fs.readFileSync(envPath))
     : {};
-const parsedLiveishEnv = fs.existsSync(liveishEnvPath)
-    ? dotenv.parse(fs.readFileSync(liveishEnvPath))
+const parsedOperatorHarnessEnv = fs.existsSync(operatorHarnessEnvPath)
+    ? dotenv.parse(fs.readFileSync(operatorHarnessEnvPath))
     : {};
 const helperEnv = {
     ...process.env,
     ...parsedEnv,
-    ...parsedLiveishEnv
+    ...parsedOperatorHarnessEnv
 };
 
 const baseUrl = (helperEnv.BASE_URL || "").trim();

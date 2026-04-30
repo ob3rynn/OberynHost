@@ -121,6 +121,7 @@ Storefront Docker workflow
 Usage:
   bash scripts/storefront-docker.sh up
   bash scripts/storefront-docker.sh down
+  bash scripts/storefront-docker.sh build
   bash scripts/storefront-docker.sh logs [service]
   bash scripts/storefront-docker.sh restart [service]
   bash scripts/storefront-docker.sh dev
@@ -130,9 +131,10 @@ Usage:
   bash scripts/storefront-docker.sh audit:runtime
   bash scripts/storefront-docker.sh audit:read-only
   bash scripts/storefront-docker.sh audit:updates
-  bash scripts/storefront-docker.sh audit:liveish
-  bash scripts/storefront-docker.sh smoke:liveish
-  bash scripts/storefront-docker.sh cleanup:liveish
+  bash scripts/storefront-docker.sh audit:operator-harness
+  bash scripts/storefront-docker.sh build:operator-pelican-target
+  bash scripts/storefront-docker.sh smoke:operator-fulfillment
+  bash scripts/storefront-docker.sh cleanup:operator-harness
   bash scripts/storefront-docker.sh stripe:login
   bash scripts/storefront-docker.sh stripe:live
   bash scripts/storefront-docker.sh stripe:abuse
@@ -146,6 +148,10 @@ EOF
         ;;
     down)
         compose down --remove-orphans
+        ;;
+    build)
+        ensure_env_file
+        compose build storefront storefront-dev
         ;;
     logs)
         service_name="${1:-storefront}"
@@ -193,21 +199,29 @@ EOF
         ensure_env_file
         run_npm_one_shot storefront-dev audit:updates "$@"
         ;;
-    audit:liveish)
+    audit:operator-harness)
         ensure_env_file
-        run_npm_one_shot storefront-dev audit:liveish "$@"
+        run_npm_one_shot storefront-dev audit:operator-harness "$@"
         ;;
-    smoke:liveish)
+    build:operator-pelican-target)
         ensure_env_file
+        run_npm_one_shot storefront-dev build:operator-pelican-target "$@"
+        ;;
+    smoke:operator-fulfillment)
+        ensure_env_file
+        if [[ "${OBERYNHOST_RUN_OPERATOR_HARNESS:-}" != "1" ]]; then
+            echo "OPERATOR_HARNESS_SKIPPED: set OBERYNHOST_RUN_OPERATOR_HARNESS=1 to run the operator fulfillment smoke."
+            exit 0
+        fi
         ensure_service_running storefront-stripe-dev
         wait_for_service_http_ready storefront-stripe-dev /pricing
         compose exec -T \
-            -e OBERYNHOST_RUN_LIVEISH="${OBERYNHOST_RUN_LIVEISH:-}" \
-            storefront-stripe-dev npm run smoke:liveish -- "$@"
+            -e OBERYNHOST_RUN_OPERATOR_HARNESS=1 \
+            storefront-stripe-dev npm run smoke:operator-fulfillment -- "$@"
         ;;
-    cleanup:liveish)
+    cleanup:operator-harness)
         ensure_env_file
-        run_npm_one_shot storefront-dev cleanup:liveish "$@"
+        run_npm_one_shot storefront-dev cleanup:operator-harness "$@"
         ;;
     stripe:login)
         ensure_env_file

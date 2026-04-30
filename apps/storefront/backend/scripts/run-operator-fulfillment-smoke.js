@@ -13,17 +13,17 @@ const {
 const {
     closeDatabase,
     createDatabase,
-    createLiveishMarker,
+    createOperatorHarnessMarker,
     dbGet,
     dbRun,
     fetchClientServerResources,
     fetchPelicanServerByExternalId,
     fetchPelicanUserByExternalId,
-    isMarkedLiveishPurchase,
+    isMarkedOperatorHarnessPurchase,
     loadHarnessEnv,
     pelicanRequest,
     waitFor
-} = require("./lib/liveishHarness");
+} = require("./lib/operatorHarness");
 
 const PLAN_TYPE = "paper-2gb";
 const DEFAULT_MINECRAFT_VERSION = "1.20.6";
@@ -31,14 +31,14 @@ const FORM_VALUES = {
     cardNumber: "4242 4242 4242 4242",
     cardExpiry: "09 / 29",
     cardCvc: "000",
-    billingName: "liveish harness",
+    billingName: "operator harness",
     billingCountry: "US",
     billingPostalCode: "99999",
     saveInformation: false
 };
 
-function shouldRunLiveish(env = process.env) {
-    return env.OBERYNHOST_RUN_LIVEISH === "1";
+function shouldRunOperatorHarness(env = process.env) {
+    return env.OBERYNHOST_RUN_OPERATOR_HARNESS === "1";
 }
 
 function makePelicanUsername(marker) {
@@ -49,7 +49,7 @@ function requireEnv(names, env = process.env) {
     const missing = names.filter(name => !String(env[name] || "").trim());
 
     if (missing.length > 0) {
-        throw new Error(`Missing live-ish harness env: ${missing.join(", ")}`);
+        throw new Error(`Missing operator harness env: ${missing.join(", ")}`);
     }
 }
 
@@ -104,7 +104,7 @@ async function runCheckout(browser, baseUrl, marker, screenshotDir = "") {
         }, {
             timeoutMs: 45000,
             intervalMs: 1000,
-            message: "Stripe test checkout did not create a paid live-ish purchase."
+            message: "Stripe test checkout did not create a paid operator harness purchase."
         });
 
         return {
@@ -165,7 +165,7 @@ async function waitForPendingActivation(database, purchaseId) {
 function assertPendingActivationPurchase(purchase) {
     const errors = [];
 
-    if (!isMarkedLiveishPurchase(purchase)) errors.push("purchase is not marked as a live-ish artifact");
+    if (!isMarkedOperatorHarnessPurchase(purchase)) errors.push("purchase is not marked as an operator harness artifact");
     if (purchase.status !== "paid") errors.push(`purchase status is ${purchase.status}, expected paid`);
     if (purchase.fulfillmentStatus !== "pending_activation") errors.push(`fulfillmentStatus is ${purchase.fulfillmentStatus}`);
     if (!purchase.pelicanUserId) errors.push("pelicanUserId is missing");
@@ -246,8 +246,8 @@ async function assertLocalCustomerLink(database, purchase) {
 }
 
 async function ensureReusableHarnessLink(database, purchase) {
-    const harnessUserId = String(process.env.LIVEISH_HARNESS_PELICAN_USER_ID || "").trim();
-    const harnessUsername = String(process.env.LIVEISH_HARNESS_PELICAN_USERNAME || "").trim();
+    const harnessUserId = String(process.env.OPERATOR_HARNESS_PELICAN_USER_ID || "").trim();
+    const harnessUsername = String(process.env.OPERATOR_HARNESS_PELICAN_USERNAME || "").trim();
     const existing = await dbGet(
         database,
         `SELECT *
@@ -259,7 +259,7 @@ async function ensureReusableHarnessLink(database, purchase) {
 
     if (existing) {
         throw new Error(
-            `Reusable Pelican harness username ${harnessUsername} is already linked to ${existing.stripeCustomerId}. Run cleanup:liveish or choose a clean harness user.`
+            `Reusable Pelican harness username ${harnessUsername} is already linked to ${existing.stripeCustomerId}. Run cleanup:operator-harness or choose a clean harness user.`
         );
     }
 
@@ -284,7 +284,7 @@ async function ensureReusableHarnessLink(database, purchase) {
 }
 
 async function runFirstTimeScenario(browser, database, baseUrl, screenshotDir) {
-    const marker = createLiveishMarker("first");
+    const marker = createOperatorHarnessMarker("first");
     const checkout = await runCheckout(browser, baseUrl, marker, screenshotDir);
 
     try {
@@ -322,7 +322,7 @@ async function runFirstTimeScenario(browser, database, baseUrl, screenshotDir) {
 }
 
 async function runReusableUserScenario(browser, database, baseUrl, screenshotDir) {
-    const marker = createLiveishMarker("reuse");
+    const marker = createOperatorHarnessMarker("reuse");
     const checkout = await runCheckout(browser, baseUrl, marker, screenshotDir);
 
     try {
@@ -330,7 +330,7 @@ async function runReusableUserScenario(browser, database, baseUrl, screenshotDir
         await submitSetup(checkout.page, {
             serverName: marker,
             minecraftVersion: DEFAULT_MINECRAFT_VERSION,
-            pelicanUsername: process.env.LIVEISH_HARNESS_PELICAN_USERNAME
+            pelicanUsername: process.env.OPERATOR_HARNESS_PELICAN_USERNAME
         });
 
         const purchase = await waitForPendingActivation(database, checkout.purchase.id);
@@ -340,7 +340,7 @@ async function runReusableUserScenario(browser, database, baseUrl, screenshotDir
         });
         const resources = await waitForClientServerResources(
             process.env.PELICAN_PANEL_URL,
-            process.env.LIVEISH_HARNESS_PELICAN_CLIENT_API_KEY,
+            process.env.OPERATOR_HARNESS_PELICAN_CLIENT_API_KEY,
             purchase.pelicanServerIdentifier
         );
         const resourceAttributes = resources?.attributes || resources || {};
@@ -417,14 +417,14 @@ async function runSmoke() {
     requireEnv([
         "PELICAN_PANEL_URL",
         "PELICAN_APPLICATION_API_KEY",
-        "LIVEISH_HARNESS_PELICAN_USER_ID",
-        "LIVEISH_HARNESS_PELICAN_USERNAME",
-        "LIVEISH_HARNESS_PELICAN_CLIENT_API_KEY"
+        "OPERATOR_HARNESS_PELICAN_USER_ID",
+        "OPERATOR_HARNESS_PELICAN_USERNAME",
+        "OPERATOR_HARNESS_PELICAN_CLIENT_API_KEY"
     ]);
 
     const baseUrl = getBaseUrl();
     const screenshotDir = process.argv.includes("--screenshots")
-        ? "/tmp/oberynn-liveish-fulfillment"
+        ? "/tmp/oberynn-operator-harness-fulfillment"
         : "";
     const browser = await launchBrowser({
         headless: !process.argv.includes("--headed")
@@ -450,8 +450,8 @@ async function runSmoke() {
 async function main() {
     loadHarnessEnv();
 
-    if (!shouldRunLiveish()) {
-        console.log("LIVEISH_HARNESS_SKIPPED: set OBERYNHOST_RUN_LIVEISH=1 to run the live-ish fulfillment harness smoke.");
+    if (!shouldRunOperatorHarness()) {
+        console.log("OPERATOR_HARNESS_SKIPPED: set OBERYNHOST_RUN_OPERATOR_HARNESS=1 to run the operator fulfillment smoke.");
         return;
     }
 
@@ -461,7 +461,7 @@ async function main() {
 
 if (require.main === module) {
     main().catch(err => {
-        console.error("LIVEISH_FULFILLMENT_SMOKE_FAILED");
+        console.error("OPERATOR_HARNESS_FULFILLMENT_SMOKE_FAILED");
         console.error(err && err.stack ? err.stack : String(err));
         process.exit(1);
     });
@@ -472,5 +472,5 @@ module.exports = {
     isClientResourcesNotReadyError,
     makePelicanUsername,
     runSmoke,
-    shouldRunLiveish
+    shouldRunOperatorHarness
 };
