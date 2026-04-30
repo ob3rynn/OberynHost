@@ -8,13 +8,14 @@ This is the operator sequence for getting from a fresh VM to:
 - the first admin created
 - the OberynHost plugin enabled
 - the first Wings node installed and daemonized
+- the storefront live behind host Caddy as a separate Compose project
 
-This runbook is intentionally linear. Do not skip ahead. Do not enable Wings until the panel gates are green.
+This runbook is intentionally linear. Do not skip ahead. Do not enable Wings until the panel gates are green, and do not accept storefront purchases until Wings and the storefront fulfillment config are verified.
 
 ## Assumptions
 
 - you are on the VM that will host both the panel and the first Wings node
-- DNS already points `panel.<domain>` and `node1.<domain>` at this VM
+- DNS already points `panel.<domain>`, `node1.<domain>`, and the storefront hostname at this VM
 - public firewall access for `80/tcp` and `443/tcp` is available now
 - you have this repo checked out on the VM
 - commands below start from the repo root unless stated otherwise
@@ -339,8 +340,90 @@ Gate:
 - `sudo systemctl status wings` is healthy
 - only the intended public ports are exposed
 
+## 19. Prepare the Storefront Env
+
+The storefront is a separate Compose project from Pelican. It uses its own image, host env file, and SQLite data directory.
+
+```bash
+sudo mkdir -p /etc/oberyn/storefront
+sudo mkdir -p /srv/oberyn/storefront
+sudo cp "$REPO_DIR/deploy/storefront/production/storefront.env.example" /etc/oberyn/storefront/storefront.env
+sudo chmod 0600 /etc/oberyn/storefront/storefront.env
+sudoedit /etc/oberyn/storefront/storefront.env
+```
+
+At minimum, set real values for:
+
+- `STOREFRONT_IMAGE`
+- `BASE_URL`
+- `ADMIN_KEY`
+- `SETUP_SECRET_KEY`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_PAPER_2GB`
+- `PELICAN_PANEL_URL`
+- `PELICAN_APPLICATION_API_KEY`
+- `PELICAN_PROVISIONING_TARGETS_JSON`
+- mail delivery fields
+
+Gate:
+
+- no legacy product env vars such as `STRIPE_PRICE_2GB`, `STRIPE_PRICE_3GB`, or `STRIPE_PRICE_4GB` are present
+- `PELICAN_PROVISIONING_TARGETS_JSON` was built from real Pelican/Wings values
+
+## 20. Apply Storefront Host Caddy
+
+```bash
+cd "$REPO_DIR/deploy/storefront/production"
+sudo mkdir -p /etc/caddy/sites
+./bin/render-caddy-site.sh /etc/oberyn/storefront/storefront.env | sudo tee /etc/caddy/sites/storefront.caddy >/dev/null
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+If your main `/etc/caddy/Caddyfile` does not already import snippets, add:
+
+```caddy
+import /etc/caddy/sites/*.caddy
+```
+
+Gate:
+
+- `sudo caddy validate --config /etc/caddy/Caddyfile` succeeds
+- `sudo systemctl reload caddy` succeeds
+
+## 21. Build and Start the Storefront
+
+The first production storefront runs exactly one instance. The backend currently serves the API and starts the fulfillment worker in the same process.
+
+```bash
+cd "$REPO_DIR/deploy/storefront/production"
+docker compose --env-file /etc/oberyn/storefront/storefront.env config
+docker compose --env-file /etc/oberyn/storefront/storefront.env build storefront
+docker compose --env-file /etc/oberyn/storefront/storefront.env up -d
+docker compose --env-file /etc/oberyn/storefront/storefront.env ps
+```
+
+Gate:
+
+- `storefront` shows healthy
+- `curl -fsS "http://127.0.0.1:$(sudo awk -F= '/^STOREFRONT_HOST_PORT=/{print $2}' /etc/oberyn/storefront/storefront.env)/api/plans"` succeeds
+- the public storefront URL loads through Caddy
+- Stripe webhook delivery reaches `/api/stripe/webhook` without signature errors
+
+## 22. Storefront Fulfillment Exit Checks
+
+- the launch product is Paper 2 GB
+- the Stripe live-mode recurring price is set in `STRIPE_PRICE_PAPER_2GB`
+- the Pelican Application API key can create/reuse users and create servers
+- the Paper 2 GB target config uses container memory `2424 MB` and JVM memory `2024 MB`
+- Wings is healthy before accepting real purchases
+- the operator fulfillment harness has passed in the intended manual test environment
+- no operator harness command is part of default CI
+
 ## Follow-Up References
 
 - Panel deployment details: [`./panel/README.md`](./panel/README.md)
 - Wings host details: [`./wings/README.md`](./wings/README.md)
 - Wings host checklist: [`./wings/HOST_CHECKLIST.md`](./wings/HOST_CHECKLIST.md)
+- Storefront deployment details: [`../../storefront/production/README.md`](../../storefront/production/README.md)

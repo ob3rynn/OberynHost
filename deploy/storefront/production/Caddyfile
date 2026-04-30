@@ -1,0 +1,16 @@
+# Sample output for storefront.example.com and STOREFRONT_HOST_PORT=3000.
+# Prefer generating the real host config with:
+#   ./bin/render-caddy-site.sh /etc/oberyn/storefront/storefront.env
+# That keeps the site host and reverse_proxy target aligned with storefront.env.
+
+storefront.example.com {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    reverse_proxy 127.0.0.1:3000
+}

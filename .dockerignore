@@ -4,6 +4,8 @@
 **/Thumbs.db
 apps/storefront/backend/node_modules
 apps/storefront/backend/data.db
+apps/storefront/backend/.env*
 apps/pelicanpanel/.data
 apps/pelicanpanel/.env
 deploy/pelican/production/panel/*.env
+deploy/storefront/production/*.env

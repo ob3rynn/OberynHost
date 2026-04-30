@@ -1,6 +1,6 @@
 # Production Panel Deployment
 
-This directory prepares the public Pelican panel deployment for a real Ubuntu 24.04 VM while stopping short of any GitHub Actions or GHCR automation.
+This directory prepares the public Pelican panel deployment for a real Ubuntu 24.04 VM while stopping short of GHCR publishing automation.
 
 For the first real VM deployment, start with [`../FIRST_HOST_RUNBOOK.md`](../FIRST_HOST_RUNBOOK.md). Use this file as the panel-specific reference behind that linear runbook.
 
@@ -25,8 +25,8 @@ For the first real VM deployment, start with [`../FIRST_HOST_RUNBOOK.md`](../FIR
 
 - `PANEL_BASE_IMAGE` is the pinned upstream Pelican image that this repo extends.
 - `PANEL_IMAGE` is the wrapper image reference the host is expected to run.
-- Today, before CI exists, `docker compose build panel` builds that wrapper locally and tags it as `PANEL_IMAGE`.
-- Later, CI should publish the same `PANEL_IMAGE` reference to GHCR so the host can switch from `build` to `pull` without changing the runtime contract.
+- Today, before GHCR publishing exists, `docker compose build panel` builds that wrapper locally and tags it as `PANEL_IMAGE`.
+- Default CI should build this wrapper image. Later, CI should publish the same `PANEL_IMAGE` reference to GHCR so the host can switch from `build` to `pull` without changing the runtime contract.
 
 ## Prerequisites
 
@@ -196,9 +196,9 @@ Before you touch Wings, confirm all of the following:
 - `docker compose exec panel php artisan p:plugin:list` shows `oberynhosttheme` as enabled
 - the panel login and shell render correctly through Caddy
 
-## Local Validation Without CI
+## Local Validation
 
-To validate this stack on a non-production machine before CI exists:
+To validate this stack on a non-production machine:
 
 1. Copy [`./panel.env.example`](./panel.env.example) to a temporary env file.
 2. Override host paths to writable test directories under `/tmp`.
@@ -208,9 +208,10 @@ To validate this stack on a non-production machine before CI exists:
 
 ## Future CI Handoff
 
-Later, when CI exists, the contract should stay the same:
+The contract should stay the same as CI coverage grows:
 
-- CI builds and publishes `PANEL_IMAGE`
+- default CI builds the wrapper image without publishing
+- later release CI publishes `PANEL_IMAGE`
 - the host pulls that immutable image reference
 - the host still uses `/etc/oberyn/pelican/panel.env`
 - the host still uses this compose file and Caddy config

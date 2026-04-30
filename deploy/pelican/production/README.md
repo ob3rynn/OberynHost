@@ -2,6 +2,8 @@
 
 This path is the repo-owned production source of truth for the first real Pelican rollout. It is intentionally separate from [`../../apps/pelicanpanel`](../../apps/pelicanpanel), which remains a locally bound, production-adjacent stack rather than the real host deployment path.
 
+Storefront production deployment is a separate Compose project under [`../../storefront/production`](../../storefront/production). The first VM can run both stacks, but they stay separate deployment boundaries.
+
 ## Architecture
 
 - Ubuntu 24.04 single-VM first rollout
@@ -10,13 +12,14 @@ This path is the repo-owned production source of truth for the first real Pelica
 - Wings is installed on the VM as a host binary with systemd, not in Docker
 - A thin repo-owned wrapper image extends the pinned upstream Pelican image
 - A small OberynHost branding plugin ships with that wrapper image
+- The storefront runs as its own image and Compose project on the same first VM
 
 ## Boundaries
 
 - `panel/` owns the public panel deployment contract
 - `wings/` owns the host install runbook and host-side service contract
+- `../storefront/production/` owns the storefront deployment contract
 - `apps/pelicanpanel/` is still local development only and is not reused for production
-- Storefront integration is intentionally out of scope in this phase
 
 ## Layout
 
@@ -40,12 +43,13 @@ It combines the panel and Wings steps into one operator sequence with explicit v
 6. Install and enable the OberynHost plugin.
 7. Create the first node in the live panel.
 8. Install Wings on the host, copy the generated node config into `/etc/pelican/config.yml`, validate it with `wings --debug`, then daemonize it with systemd.
+9. Deploy the storefront as a separate Compose project after the Pelican Application API key and Paper 2 GB target config are ready.
 
 ## Future CI Handoff
 
-This path is ready for a later GHCR/CI phase, but does not implement it yet.
+Default CI should build this wrapper image but should not publish it to GHCR yet.
 
-- The future publish target is `PANEL_IMAGE`.
+- The future publish target remains `PANEL_IMAGE`.
 - The wrapper `Dockerfile` is already repo-owned.
 - The production env contract is already explicit.
-- The manual deploy commands here are the same commands a future CI/CD flow would automate.
+- The manual deploy commands here are the same commands a future CI/CD flow would automate after image publishing is added.
