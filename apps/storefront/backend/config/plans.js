@@ -1,8 +1,8 @@
 const PLAN_DEFINITIONS = {
     "paper-2gb": {
         code: "minecraft-paper-2gb",
-        displayName: "Paper 2 GB",
-        price: 11.98,
+        displayName: "2GB Paper Minecraft Server",
+        price: 11.97,
         launchSlotCount: 25,
         productFamily: "minecraft",
         runtimeFamily: "paper",
@@ -13,7 +13,7 @@ const PLAN_DEFINITIONS = {
         provisioningTargetCode: "paper-launch-default",
         runtimeTemplate: "paper-launch-default",
         features: [
-            "2 GB Paper server",
+            "2GB Paper Minecraft server",
             "2424 MB container memory",
             "2024 MB JVM target",
             "Paper server software",

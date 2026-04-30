@@ -413,10 +413,10 @@ Gate:
 
 ## 22. Storefront Fulfillment Exit Checks
 
-- the launch product is Paper 2 GB
+- the launch product is `2GB Paper Minecraft Server`
 - the Stripe live-mode recurring price is set in `STRIPE_PRICE_PAPER_2GB`
 - the Pelican Application API key can create/reuse users and create servers
-- the Paper 2 GB target config uses container memory `2424 MB` and JVM memory `2024 MB`
+- the `2GB Paper Minecraft Server` target config uses container memory `2424 MB` and JVM memory `2024 MB`
 - Wings is healthy before accepting real purchases
 - the operator fulfillment harness has passed in the intended manual test environment
 - no operator harness command is part of default CI

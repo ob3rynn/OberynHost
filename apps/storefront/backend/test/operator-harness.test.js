@@ -143,7 +143,7 @@ test("operator harness smoke exits safely without the explicit run gate", () => 
     assert.match(result.stdout, /OPERATOR_HARNESS_SKIPPED/);
 });
 
-test("operator harness target validation enforces Paper 2 GB resource truth", () => {
+test("operator harness target validation enforces 2GB Paper Minecraft Server resource truth", () => {
     const valid = validateOperatorHarnessTargetConfig(createTargetJson());
     assert.equal(valid.ok, true);
 

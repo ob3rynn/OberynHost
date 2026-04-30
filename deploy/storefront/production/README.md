@@ -29,7 +29,7 @@ The current backend process serves the customer/admin API and starts the fulfill
 - Runtime SQLite data lives outside the repo checkout under `/srv/oberyn/storefront`.
 - Secrets live in a root-owned host env file such as `/etc/oberyn/storefront/storefront.env`.
 - Logs stay on container stdout/stderr.
-- The launch product remains Paper 2 GB: `paper-2gb`, `minecraft-paper-2gb`, `STRIPE_PRICE_PAPER_2GB`, container memory `2424 MB`, JVM target `2024 MB`.
+- The launch product remains `2GB Paper Minecraft Server`: `paper-2gb`, `minecraft-paper-2gb`, `STRIPE_PRICE_PAPER_2GB`, `$11.97/month`, container memory `2424 MB`, JVM target `2024 MB`.
 
 ## Host Preparation
 
@@ -114,7 +114,7 @@ Before accepting real purchases, confirm all of the following:
 
 - Pelican panel is live, installed, and backed up
 - Wings is healthy from the live panel node view
-- Paper 2 GB Stripe live-mode price is configured in `STRIPE_PRICE_PAPER_2GB`
+- `2GB Paper Minecraft Server` Stripe live-mode price is configured in `STRIPE_PRICE_PAPER_2GB`
 - `PELICAN_PROVISIONING_TARGETS_JSON` was built from real Pelican/Wings values, not guessed
 - the operator fulfillment harness has passed against the intended local/test infrastructure
 

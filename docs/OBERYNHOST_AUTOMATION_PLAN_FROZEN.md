@@ -1,4 +1,6 @@
-# OberynHost Automation Plan, Frozen Brief
+# Historical OberynHost Automation Plan, Frozen Brief
+
+> Historical planning artifact. Do not use the values below as current launch truth. This document preserves the phase-1 automation design discussion and is not the current source of truth for launch naming, Stripe pricing, deployment commands, or operator harness setup. Current truth lives in [`PHASE1_OPERATOR_RUNBOOK.md`](./PHASE1_OPERATOR_RUNBOOK.md), [`OPERATOR_FULFILLMENT_HARNESS.md`](./OPERATOR_FULFILLMENT_HARNESS.md), [`../deploy/storefront/production/README.md`](../deploy/storefront/production/README.md), and the storefront runtime config. As of the current launch setup, the customer-facing product is `2GB Paper Minecraft Server` at `$11.97/month`; stable internal identifiers remain `paper-2gb`, `minecraft-paper-2gb`, and `STRIPE_PRICE_PAPER_2GB`.
 
 ## Summary
 

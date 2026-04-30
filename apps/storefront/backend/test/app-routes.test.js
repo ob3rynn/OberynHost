@@ -101,7 +101,7 @@ test("plans api returns seeded inventory counts", async t => {
     const soldOutByType = Object.fromEntries(soldOutPlans.map(plan => [plan.type, plan]));
 
     assert.equal(soldOutByType["paper-2gb"].available, 0);
-    assert.equal(soldOutByType["paper-2gb"].price, 11.98);
+    assert.equal(soldOutByType["paper-2gb"].price, 11.97);
 });
 
 test("checkout creates a pending purchase, reserves inventory, and sets setup cookie", async t => {

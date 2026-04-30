@@ -59,7 +59,7 @@ require_text "$runbook_path" "Runbook documents routing verification" "Mark Rout
 require_text "$runbook_path" "Runbook documents final release gate" "Release Ready"
 require_text "$runbook_path" "Runbook documents Pelican target config" "PELICAN_PROVISIONING_TARGETS_JSON"
 require_text "$runbook_path" "Runbook documents Postmark production email" "EMAIL_PROVIDER=postmark"
-require_text "$runbook_path" "Runbook documents live Stripe price input" "STRIPE_PRICE_3GB"
+require_text "$runbook_path" "Runbook documents live Stripe price input" "STRIPE_PRICE_PAPER_2GB"
 require_text "$runbook_path" "Runbook blocks automated Pelican deletion" "Do not delete Pelican resources"
 require_text "$runbook_path" "Runbook blocks Windows-side Node/npm and mounted paths" "Do not use Windows-side Node/npm"
 require_text "$plan_path" "Frozen plan links the phase-1 runbook" "PHASE1_OPERATOR_RUNBOOK.md"

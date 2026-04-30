@@ -131,7 +131,7 @@ async function buildCandidate(options = {}) {
     const plan = getOperatorHarnessPlan();
     const target = validation.parsed[plan.provisioningTargetCode];
     const messages = [
-        `Validated Paper 2 GB target resources: memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}.`
+        `Validated 2GB Paper Minecraft Server target resources: memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}.`
     ];
 
     if (env.PELICAN_PANEL_URL && env.PELICAN_APPLICATION_API_KEY) {

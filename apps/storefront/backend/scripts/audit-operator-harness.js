@@ -61,7 +61,7 @@ function addProductChecks(report) {
             report,
             "product",
             "pass",
-            "Active launch product is Paper 2 GB",
+            "Active launch product is 2GB Paper Minecraft Server",
             `${OPERATOR_HARNESS_PLAN_TYPE}, memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}`
         );
     } else {
@@ -162,7 +162,7 @@ function addPelicanChecks(report, env, strict) {
                 report,
                 "pelican",
                 "pass",
-                "Pelican provisioning target matches Paper 2 GB launch resources",
+                "Pelican provisioning target matches 2GB Paper Minecraft Server launch resources",
                 `limits.memory=${OPERATOR_HARNESS_CONTAINER_MEMORY_MB}, jvm=${OPERATOR_HARNESS_JVM_MEMORY_MB}`
             );
         } else {

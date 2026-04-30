@@ -8,7 +8,7 @@ It is dev-only. It does not prove production Cloudflare behavior, public DNS, fi
 
 ## Product Truth
 
-- Product: `Paper 2 GB`
+- Product: `2GB Paper Minecraft Server`
 - Plan type: `paper-2gb`
 - Product code: `minecraft-paper-2gb`
 - Runtime: Paper
@@ -16,12 +16,12 @@ It is dev-only. It does not prove production Cloudflare behavior, public DNS, fi
 - JVM memory target: `2024 MB`
 - Billing: Stripe test-mode recurring price in `STRIPE_PRICE_PAPER_2GB`
 
-Do not use legacy `2GB`, `4GB`, `3GB`, `STRIPE_PRICE_2GB`, `STRIPE_PRICE_4GB`, or `STRIPE_PRICE_3GB` values for the operator harness.
+Do not use legacy generic `2GB Server`, `4GB`, `3GB`, `STRIPE_PRICE_2GB`, `STRIPE_PRICE_4GB`, or `STRIPE_PRICE_3GB` values for the operator harness.
 
 ## One-Time Operator Setup
 
-1. In Stripe Dashboard test mode, create product `Paper 2 GB`.
-2. Create its recurring test price and copy the price id into `STRIPE_PRICE_PAPER_2GB`.
+1. In Stripe Dashboard test mode, create or select product `2GB Paper Minecraft Server`.
+2. Create or select its recurring test price and copy the price id into `STRIPE_PRICE_PAPER_2GB`.
 3. Run the Stripe CLI listener or create a test webhook endpoint pointing at:
 
 ```bash
@@ -93,7 +93,7 @@ The split is important. A first-time customer path proves password lifecycle. A 
 
 A passing operator harness smoke proves:
 
-- active launch product is `Paper 2 GB`
+- active launch product is `2GB Paper Minecraft Server`
 - container memory is `2424 MB`
 - JVM target is `2024 MB`
 - Stripe test mode can drive payment state

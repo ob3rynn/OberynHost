@@ -43,7 +43,7 @@ It combines the panel and Wings steps into one operator sequence with explicit v
 6. Install and enable the OberynHost plugin.
 7. Create the first node in the live panel.
 8. Install Wings on the host, copy the generated node config into `/etc/pelican/config.yml`, validate it with `wings --debug`, then daemonize it with systemd.
-9. Deploy the storefront as a separate Compose project after the Pelican Application API key and Paper 2 GB target config are ready.
+9. Deploy the storefront as a separate Compose project after the Pelican Application API key and `2GB Paper Minecraft Server` target config are ready.
 
 ## Future CI Handoff
 
