@@ -267,7 +267,260 @@ function parseStateJson(value) {
     }
 }
 
-function serializePurchase(purchase, stripeState = null, auditLog = [], emailOutbox = []) {
+function formatCapabilityReason(errors, fallback = "Action is not available for this order.") {
+    return errors.length ? errors.join("; ") : fallback;
+}
+
+function createAdminCapability(enabled, options = {}) {
+    return {
+        enabled: Boolean(enabled),
+        reason: enabled ? "" : (options.reason || "Action is not available for this order."),
+        dangerLevel: options.dangerLevel || "low",
+        requiresConfirmation: Boolean(options.requiresConfirmation),
+        inlineRecommended: Boolean(options.inlineRecommended)
+    };
+}
+
+function createCapabilityFromErrors(errors, options = {}) {
+    return createAdminCapability(errors.length === 0, {
+        ...options,
+        reason: formatCapabilityReason(errors, options.reason)
+    });
+}
+
+function getPelicanReconcileErrors(purchase) {
+    const errors = [];
+
+    if (
+        !purchase.stripeCustomerId &&
+        !purchase.pelicanUserId &&
+        !purchase.pelicanServerId &&
+        !purchase.pelicanServerIdentifier
+    ) {
+        errors.push("No Stripe customer or Pelican linkage is available to check.");
+    }
+
+    return errors;
+}
+
+function getSuspendServiceErrors(purchase) {
+    const errors = [];
+
+    if (purchase.status !== PURCHASE_STATUS.COMPLETED) {
+        errors.push("Only fulfilled subscriptions can be marked suspended.");
+    }
+
+    return errors;
+}
+
+function getReinstateServiceErrors(purchase) {
+    const errors = [];
+    const policy = getPurchasePolicyState(purchase);
+
+    if (!purchase.serviceSuspendedAt) {
+        errors.push("Service is not currently suspended.");
+    }
+
+    if (policy.isTerminalSubscription) {
+        errors.push("Terminal subscriptions cannot be reinstated.");
+    }
+
+    return errors;
+}
+
+function getHardFlagErrors(purchase) {
+    const errors = [];
+    const policy = getPurchasePolicyState(purchase);
+
+    if (!policy.purgeRequired) {
+        errors.push("Purchase cannot be hard-flagged until suspended retention has reached purge review.");
+    }
+
+    if (purchase.customerRiskStatus === CUSTOMER_RISK_STATUS.HARD_FLAGGED) {
+        errors.push("Purchase is already hard-flagged.");
+    }
+
+    return errors;
+}
+
+function getStatusOverrideErrors(purchase, status) {
+    const errors = [];
+    const policy = getPurchasePolicyState(purchase);
+
+    if (
+        (status === PURCHASE_STATUS.CANCELLED || status === PURCHASE_STATUS.EXPIRED) &&
+        policy.requiresStripeCancellation
+    ) {
+        errors.push("Live subscriptions must be ended in Stripe first or set to cancel at period end.");
+    }
+
+    return errors;
+}
+
+function getServerStatusOverrideErrors(purchase, serverStatus, status = purchase.status) {
+    const errors = [];
+    const policy = getPurchasePolicyState(purchase);
+
+    if (!purchase.serverId) {
+        errors.push("Purchase has no inventory slot to update.");
+    }
+
+    if (
+        serverStatus === SERVER_STATUS.AVAILABLE &&
+        status === PURCHASE_STATUS.COMPLETED &&
+        !policy.canReleaseInventory
+    ) {
+        errors.push("Active or recoverable subscriptions cannot release inventory from the admin panel.");
+    }
+
+    return errors;
+}
+
+function buildAdminCapabilities(purchase, existingProvisioningJob = null) {
+    const policy = getPurchasePolicyState(purchase);
+    const releaseErrors = getReadyReleaseErrors(purchase);
+    const releaseReadyErrors = [...releaseErrors];
+
+    if (!purchase.routingVerifiedAt) {
+        releaseReadyErrors.push("Operator routing verification is required before release.");
+    }
+
+    const repairServerStateErrors = [];
+    const recommendedServerStatus = inferServerStatus(purchase);
+
+    if (!purchase.serverId) {
+        repairServerStateErrors.push("Purchase has no inventory slot to repair.");
+    }
+
+    if (purchase.serverStatus === recommendedServerStatus) {
+        repairServerStateErrors.push("Server state already matches the recommended state.");
+    }
+
+    return {
+        reconcileStripe: createAdminCapability(Boolean(purchase.stripeSessionId), {
+            reason: "Purchase has no Stripe session ID to check.",
+            dangerLevel: "low",
+            requiresConfirmation: false,
+            inlineRecommended: Boolean(purchase.stripeSessionId)
+        }),
+        reconcilePelican: createCapabilityFromErrors(getPelicanReconcileErrors(purchase), {
+            dangerLevel: "low",
+            requiresConfirmation: false,
+            inlineRecommended: Boolean(
+                purchase.pelicanReconcileStatus ||
+                purchase.pelicanUserId ||
+                purchase.pelicanServerId ||
+                purchase.pelicanServerIdentifier
+            )
+        }),
+        verifyRouting: createCapabilityFromErrors(getRoutingVerificationErrors(purchase), {
+            dangerLevel: "medium",
+            requiresConfirmation: true,
+            inlineRecommended: purchase.status === PURCHASE_STATUS.PAID &&
+                purchase.fulfillmentStatus === FULFILLMENT_STATUS.PENDING_ACTIVATION &&
+                !purchase.routingVerifiedAt
+        }),
+        releaseReady: createCapabilityFromErrors(releaseReadyErrors, {
+            dangerLevel: "medium",
+            requiresConfirmation: true,
+            inlineRecommended: purchase.status === PURCHASE_STATUS.PAID &&
+                purchase.fulfillmentStatus === FULFILLMENT_STATUS.PENDING_ACTIVATION
+        }),
+        requeueFulfillment: createCapabilityFromErrors(getFulfillmentRequeueErrors(purchase), {
+            dangerLevel: "medium",
+            requiresConfirmation: true,
+            inlineRecommended: [
+                FULFILLMENT_STATUS.NEEDS_ADMIN_REVIEW,
+                FULFILLMENT_STATUS.DEAD_LETTER,
+                FULFILLMENT_STATUS.RETRYABLE_FAILURE
+            ].includes(purchase.fulfillmentStatus)
+        }),
+        reopenSetup: createCapabilityFromErrors(getSetupReopenErrors(purchase, existingProvisioningJob), {
+            dangerLevel: "medium",
+            requiresConfirmation: true,
+            inlineRecommended: purchase.status === PURCHASE_STATUS.PAID &&
+                !purchase.pelicanUserId &&
+                !purchase.pelicanServerId &&
+                !purchase.pelicanServerIdentifier
+        }),
+        suspendService: createCapabilityFromErrors(getSuspendServiceErrors(purchase), {
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: Boolean(policy.suspensionRequired && !purchase.serviceSuspendedAt)
+        }),
+        reinstateService: createCapabilityFromErrors(getReinstateServiceErrors(purchase), {
+            dangerLevel: "medium",
+            requiresConfirmation: true,
+            inlineRecommended: Boolean(purchase.serviceSuspendedAt && !policy.purgeRequired)
+        }),
+        markHardFlag: createCapabilityFromErrors(getHardFlagErrors(purchase), {
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: Boolean(
+                policy.purgeRequired &&
+                purchase.customerRiskStatus !== CUSTOMER_RISK_STATUS.HARD_FLAGGED
+            )
+        }),
+        repairServerState: createCapabilityFromErrors(repairServerStateErrors, {
+            dangerLevel: "medium",
+            requiresConfirmation: false,
+            inlineRecommended: repairServerStateErrors.length === 0
+        }),
+        saveOverrides: createAdminCapability(true, {
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: false
+        }),
+        manualMarkPaid: createAdminCapability(purchase.status !== PURCHASE_STATUS.PAID, {
+            reason: "Purchase is already marked paid.",
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: false
+        }),
+        resetPending: createAdminCapability(purchase.status !== PURCHASE_STATUS.CHECKOUT_PENDING, {
+            reason: "Purchase is already pending checkout.",
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: false
+        }),
+        markExpired: createCapabilityFromErrors(getStatusOverrideErrors(purchase, PURCHASE_STATUS.EXPIRED), {
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: false
+        }),
+        cancelOrder: createCapabilityFromErrors(getStatusOverrideErrors(purchase, PURCHASE_STATUS.CANCELLED), {
+            dangerLevel: "high",
+            requiresConfirmation: true,
+            inlineRecommended: false
+        }),
+        releaseServer: createCapabilityFromErrors(
+            getServerStatusOverrideErrors(purchase, SERVER_STATUS.AVAILABLE),
+            {
+                dangerLevel: "high",
+                requiresConfirmation: true,
+                inlineRecommended: false
+            }
+        ),
+        holdServer: createCapabilityFromErrors(
+            getServerStatusOverrideErrors(purchase, SERVER_STATUS.HELD),
+            {
+                dangerLevel: "medium",
+                requiresConfirmation: false,
+                inlineRecommended: false
+            }
+        ),
+        allocateServer: createCapabilityFromErrors(
+            getServerStatusOverrideErrors(purchase, SERVER_STATUS.ALLOCATED),
+            {
+                dangerLevel: "high",
+                requiresConfirmation: true,
+                inlineRecommended: false
+            }
+        )
+    };
+}
+
+function serializePurchase(purchase, stripeState = null, auditLog = [], emailOutbox = [], options = {}) {
     const purchaseWithLifecycle = mergeLifecycleState(purchase);
 
     return {
@@ -275,6 +528,10 @@ function serializePurchase(purchase, stripeState = null, auditLog = [], emailOut
         pelicanUserState: parseStateJson(purchaseWithLifecycle.pelicanUserStateJson),
         pelicanServerState: parseStateJson(purchaseWithLifecycle.pelicanServerStateJson),
         desiredRoutingArtifact: parseStateJson(purchaseWithLifecycle.desiredRoutingArtifactJson),
+        adminCapabilities: buildAdminCapabilities(
+            purchaseWithLifecycle,
+            options.existingProvisioningJob || null
+        ),
         auditLog: auditLog.map(entry => ({
             ...entry,
             details: parseAuditDetails(entry.detailsJson)
@@ -401,6 +658,28 @@ async function getEmailOutboxMap(purchaseIds) {
     return map;
 }
 
+async function getProvisioningJobMap(purchaseIds) {
+    if (!purchaseIds.length) {
+        return new Map();
+    }
+
+    const idempotencyKeys = purchaseIds.map(id => buildProvisioningIdempotencyKey(id));
+    const placeholders = idempotencyKeys.map(() => "?").join(", ");
+    const rows = await allQuery(
+        `SELECT *
+         FROM fulfillmentQueue
+         WHERE idempotencyKey IN (${placeholders})`,
+        idempotencyKeys
+    );
+    const map = new Map();
+
+    rows.forEach(row => {
+        map.set(row.purchaseId, row);
+    });
+
+    return map;
+}
+
 async function loadSerializedPurchase(purchaseId, stripeState = null) {
     const purchase = await getPurchaseRecord(purchaseId);
 
@@ -410,11 +689,15 @@ async function loadSerializedPurchase(purchaseId, stripeState = null) {
 
     const auditMap = await getAuditLogMap([purchaseId]);
     const emailOutboxMap = await getEmailOutboxMap([purchaseId]);
+    const provisioningJobMap = await getProvisioningJobMap([purchaseId]);
     return serializePurchase(
         purchase,
         stripeState,
         auditMap.get(purchaseId) || [],
-        emailOutboxMap.get(purchaseId) || []
+        emailOutboxMap.get(purchaseId) || [],
+        {
+            existingProvisioningJob: provisioningJobMap.get(purchaseId) || null
+        }
     );
 }
 
@@ -771,13 +1054,17 @@ router.get("/purchases", async (req, res) => {
         );
         const auditMap = await getAuditLogMap(purchases.map(purchase => purchase.id));
         const emailOutboxMap = await getEmailOutboxMap(purchases.map(purchase => purchase.id));
+        const provisioningJobMap = await getProvisioningJobMap(purchases.map(purchase => purchase.id));
 
         res.json(
             purchases.map(purchase => serializePurchase(
                 purchase,
                 null,
                 auditMap.get(purchase.id) || [],
-                emailOutboxMap.get(purchase.id) || []
+                emailOutboxMap.get(purchase.id) || [],
+                {
+                    existingProvisioningJob: provisioningJobMap.get(purchase.id) || null
+                }
             ))
         );
     } catch (err) {

@@ -314,7 +314,7 @@
         .panel-header,
         .tabbar,
         .panel-surface {
-            border-radius: 26px;
+            border-radius: 8px;
         }
 
         .panel-header {
@@ -345,7 +345,7 @@
             flex: 0 0 auto;
             min-width: 0;
             padding: 8px 11px;
-            border-radius: 14px;
+            border-radius: 8px;
             border: 1px solid var(--line);
             background: rgba(255, 255, 255, 0.02);
             color: var(--muted-strong);
@@ -403,7 +403,7 @@
 
         .view-stat {
             padding: 12px 14px;
-            border-radius: 18px;
+            border-radius: 8px;
             background: rgba(255, 255, 255, 0.035);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
@@ -424,7 +424,7 @@
 
         .view-callout {
             padding: 15px 16px;
-            border-radius: 18px;
+            border-radius: 8px;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
@@ -542,7 +542,7 @@
 
         .summary-card,
         .overview-card {
-            border-radius: 20px;
+            border-radius: 8px;
             padding: 16px;
         }
 
@@ -577,7 +577,7 @@
 
         .empty {
             padding: 16px;
-            border-radius: 18px;
+            border-radius: 8px;
             background: rgba(255, 255, 255, 0.03);
             color: var(--muted);
         }
@@ -587,7 +587,7 @@
         }
 
         .order-card {
-            border-radius: 26px;
+            border-radius: 8px;
             padding: 0;
             overflow: hidden;
         }
@@ -1169,52 +1169,34 @@
 <script>
 const TAB_CONFIG = [
     {
-        key: "overview",
-        label: "Overview",
-        title: "Admin Overview",
-        subtitle: "See the whole operation at a glance, then jump into the queue that needs attention."
-    },
-    {
-        key: "subscriptions",
-        label: "Subscriptions",
-        title: "Active Subscriptions",
-        subtitle: "Current customer servers and active subscription relationships."
-    },
-    {
-        key: "canceling",
-        label: "Canceling",
-        title: "Ending At Period End",
-        subtitle: "Active subscriptions that are already set to end and need follow-through when their billing period closes."
-    },
-    {
-        key: "ready",
-        label: "Ready",
-        title: "Ready To Fulfill",
-        subtitle: "Orders with verified payment that are ready for operator action."
-    },
-    {
-        key: "pending",
-        label: "Pending",
-        title: "Awaiting Payment",
-        subtitle: "Orders that started checkout but have not been confirmed by Stripe yet."
-    },
-    {
-        key: "stale",
-        label: "Stale",
-        title: "Stale Checkouts",
-        subtitle: "Open checkouts that have been held long enough to deserve manual review."
-    },
-    {
-        key: "archived",
-        label: "Archived",
-        title: "Expired Or Cancelled",
-        subtitle: "Orders that are no longer active."
-    },
-    {
-        key: "issues",
-        label: "Issues",
+        key: "needsAttention",
+        label: "Needs Attention",
         title: "Needs Attention",
-        subtitle: "Orders with mismatched state, missing data, or anything that needs operator review."
+        subtitle: "The queue for stale holds, failed automation, lifecycle risk, and state mismatches."
+    },
+    {
+        key: "readyRelease",
+        label: "Ready To Release",
+        title: "Ready To Release",
+        subtitle: "Provisioned servers waiting for routing verification and final customer release."
+    },
+    {
+        key: "activeServices",
+        label: "Active Services",
+        title: "Active Services",
+        subtitle: "Customer servers with live subscription, cancellation, grace, or suspension context."
+    },
+    {
+        key: "awaiting",
+        label: "Awaiting",
+        title: "Awaiting Customer Or Payment",
+        subtitle: "Fresh checkouts and paid orders still waiting for customer setup."
+    },
+    {
+        key: "archive",
+        label: "Archive",
+        title: "Archive",
+        subtitle: "Expired, cancelled, and historical fulfilled orders."
     }
 ];
 
@@ -1234,6 +1216,7 @@ const META_HELP = {
     "Policy State": "The admin policy summary for grace, suspension, or purge timing.",
     "Customer Risk": "Whether this customer/order has a delinquency block or hard flag.",
     "Service Access": "Whether the delivered service is currently live or manually suspended.",
+    "Next Action": "The highest-priority action this order appears to need right now.",
     "Created": "When the order was first created in your system."
 };
 const DETAIL_HELP = {
@@ -1259,7 +1242,7 @@ const DETAIL_HELP = {
 };
 const state = {
     purchases: [],
-    activeTab: localStorage.getItem("admin.activeTab") || "overview",
+    activeTab: localStorage.getItem("admin.activeTab") || "needsAttention",
     selectedPurchaseIds: new Set(),
     bulkToolbarOpen: false
 };
@@ -1322,6 +1305,79 @@ function hasNonStaleIssues(purchase) {
     return (issueCount - staleOffset) > 0;
 }
 
+function hasFulfillmentFailure(purchase) {
+    return [
+        "needs_admin_review",
+        "dead_letter",
+        "retryable_failure"
+    ].includes(purchase.fulfillmentStatus);
+}
+
+function hasLifecycleAttention(purchase) {
+    const policy = getPolicyState(purchase);
+    return Boolean(
+        policy.suspensionRequired ||
+        policy.purgeRequired ||
+        purchase.customerRiskStatus === "hard_flagged"
+    );
+}
+
+function hasSetupStall(purchase) {
+    return Boolean(
+        purchase.status === "paid" &&
+        (!purchase.serverName || !String(purchase.serverName).trim())
+    );
+}
+
+function hasPriorityIssue(purchase) {
+    const serverMismatch = Boolean(
+        purchase.diagnostics?.recommendedServerStatus &&
+        purchase.serverStatus !== purchase.diagnostics.recommendedServerStatus
+    );
+
+    return Boolean(
+        isStaleCheckout(purchase) ||
+        hasFulfillmentFailure(purchase) ||
+        hasLifecycleAttention(purchase) ||
+        serverMismatch ||
+        (purchase.pelicanReconcileStatus && purchase.pelicanReconcileStatus !== "ok") ||
+        purchase.diagnostics?.issues?.some(issue => /72 hours|missing|expired/i.test(issue))
+    );
+}
+
+function getPrimaryQueue(purchase) {
+    if (purchase.status === "expired" || purchase.status === "cancelled") {
+        return "archive";
+    }
+
+    if (hasPriorityIssue(purchase)) {
+        return "needsAttention";
+    }
+
+    if (purchase.status === "paid" && purchase.fulfillmentStatus === "pending_activation") {
+        return "readyRelease";
+    }
+
+    if (
+        hasLiveSubscription(purchase) ||
+        purchase.serviceSuspendedAt ||
+        getPolicyState(purchase).inGracePeriod ||
+        isCancelingSubscription(purchase)
+    ) {
+        return "activeServices";
+    }
+
+    if (purchase.status === "checkout_pending" || hasSetupStall(purchase)) {
+        return "awaiting";
+    }
+
+    if (purchase.status === "completed") {
+        return "archive";
+    }
+
+    return hasNonStaleIssues(purchase) ? "needsAttention" : "awaiting";
+}
+
 function formatSubscriptionStatus(status) {
     if (!status) return "Not synced";
     return status.replace(/_/g, " ");
@@ -1374,16 +1430,13 @@ function getStatusView(status) {
 }
 
 function groupPurchases(data) {
-    return {
-        overview: data,
-        subscriptions: data.filter(p => hasLiveSubscription(p)),
-        canceling: data.filter(p => isCancelingSubscription(p)),
-        ready: data.filter(p => p.status === "paid" && p.fulfillmentStatus === "pending_activation"),
-        pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)),
-        stale: data.filter(p => isStaleCheckout(p)),
-        archived: data.filter(p => p.status === "expired" || p.status === "cancelled"),
-        issues: data.filter(p => hasNonStaleIssues(p))
-    };
+    const grouped = Object.fromEntries(TAB_CONFIG.map(tab => [tab.key, []]));
+
+    data.forEach(purchase => {
+        grouped[getPrimaryQueue(purchase)].push(purchase);
+    });
+
+    return grouped;
 }
 
 function getTabConfig(key) {
@@ -1502,13 +1555,63 @@ function scrollCardIntoView(card) {
     });
 }
 
-function createActionButton(label, tone, onClick, disabled = false) {
+function createActionButton(label, tone, onClick, disabled = false, title = "") {
     const button = document.createElement("button");
     button.className = tone;
     button.textContent = label;
     button.disabled = disabled;
+    if (title) {
+        button.title = title;
+    }
     button.onclick = onClick;
     return button;
+}
+
+function getCapability(purchase, key) {
+    return purchase.adminCapabilities?.[key] || {
+        enabled: false,
+        reason: "Action is not available for this order.",
+        dangerLevel: "low",
+        requiresConfirmation: false,
+        inlineRecommended: false
+    };
+}
+
+function getCapabilityTone(capability, fallback = "secondary") {
+    if (capability.dangerLevel === "high") return "danger";
+    if (capability.dangerLevel === "medium") return "warning";
+    return fallback;
+}
+
+function getRecommendedAction(purchase) {
+    const actions = [
+        ["markHardFlag", "Mark Hard Flag"],
+        ["suspendService", "Suspend Service"],
+        ["requeueFulfillment", "Requeue Fulfillment"],
+        ["reopenSetup", "Reopen Setup"],
+        ["verifyRouting", "Mark Routing Verified"],
+        ["releaseReady", "Release Ready"],
+        ["repairServerState", "Repair Server State"],
+        ["reconcilePelican", "Re-check Pelican"],
+        ["reconcileStripe", "Re-check Stripe"],
+        ["reinstateService", "Reinstate Service"]
+    ];
+    const match = actions.find(([key]) => {
+        const capability = getCapability(purchase, key);
+        return capability.enabled && capability.inlineRecommended;
+    });
+
+    if (match) return match[1];
+
+    if (hasSetupStall(purchase)) return "Wait for customer setup";
+    if (purchase.status === "checkout_pending") return "Wait for payment";
+    return "Review details";
+}
+
+function appendDisabledReason(container, capability) {
+    if (!capability.enabled && capability.reason) {
+        container.appendChild(createElement("div", "helper-text", capability.reason));
+    }
 }
 
 function getOperatorNote(input) {
@@ -1538,15 +1641,19 @@ function createGuardedAction(
     onConfirm,
     disabled = false,
     checkText = "Are you sure?",
-    helperText = ""
+    helperText = "",
+    disabledReason = ""
 ) {
     const wrapper = createElement("div", "guarded-action");
     const trigger = createActionButton(label, tone, () => {
         panel.classList.add("visible");
         checkbox.checked = false;
         confirmButton.disabled = true;
-    }, disabled);
+    }, disabled, disabledReason);
     wrapper.appendChild(trigger);
+    if (disabled && disabledReason) {
+        wrapper.appendChild(createElement("div", "helper-text", disabledReason));
+    }
 
     const panel = createElement("div", "guard-panel");
     panel.appendChild(createElement(
@@ -1631,26 +1738,15 @@ function renderTabs(data) {
 }
 
 function renderSummaryGrid(data) {
-    const counts = {
-        total: data.length,
-        subscriptions: data.filter(p => hasLiveSubscription(p)).length,
-        canceling: data.filter(p => isCancelingSubscription(p)).length,
-        paid: data.filter(p => p.status === "paid").length,
-        pending: data.filter(p => p.status === "checkout_pending" && !isStaleCheckout(p)).length,
-        stale: data.filter(p => isStaleCheckout(p)).length,
-        archived: data.filter(p => p.status === "expired" || p.status === "cancelled").length,
-        issues: data.filter(p => hasNonStaleIssues(p)).length
-    };
+    const grouped = groupPurchases(data);
 
     const grid = createElement("div", "summary-grid");
     [
-        ["Total Orders", counts.total],
-        ["Active Subscriptions", counts.subscriptions],
-        ["Canceling", counts.canceling],
-        ["Ready", counts.paid],
-        ["Pending", counts.pending],
-        ["Stale", counts.stale],
-        ["Issues", counts.issues]
+        ["Needs Attention", grouped.needsAttention.length],
+        ["Ready To Release", grouped.readyRelease.length],
+        ["Active Services", grouped.activeServices.length],
+        ["Awaiting", grouped.awaiting.length],
+        ["Archive", grouped.archive.length]
     ].forEach(([label, value]) => {
         const card = createElement("article", "summary-card");
         card.appendChild(createElement("div", "summary-label", label));
@@ -1734,81 +1830,69 @@ function createViewStat(label, value) {
 }
 
 function getViewIntroContent(tabKey, items, grouped) {
-    if (tabKey === "subscriptions") {
+    if (tabKey === "needsAttention") {
         return {
-            body: "These customer servers have live Stripe subscription runtime attached to them and should be treated as active service.",
-            note: "Use this view for renewals, period-end cancellations, failed-payment follow-up, grace-period review, and suspension timing.",
+            body: "Start here. These orders have stale holds, failed automation, lifecycle deadlines, drift, or missing data.",
+            note: "Use the suggested action on each card first. If none fits, leave the order here and add an audit note instead of improvising a destructive action.",
             stats: [
-                ["Active", items.length],
-                ["Canceling", items.filter(item => Boolean(item.stripeCancelAtPeriodEnd)).length],
-                ["In Grace", items.filter(item => item.diagnostics?.policy?.inGracePeriod).length]
+                ["Total", items.length],
+                ["Provisioning", items.filter(item => hasFulfillmentFailure(item)).length],
+                ["Lifecycle", items.filter(item => hasLifecycleAttention(item)).length]
             ]
         };
     }
 
-    if (tabKey === "canceling") {
+    if (tabKey === "readyRelease") {
         return {
-            body: "These subscriptions are still live right now, but Stripe is already set to end them at period close.",
-            note: "Keep service live until the current period ends, then release the matching Pelican allocation and inventory slot shown on the order.",
+            body: "These servers are provisioned and waiting for operator routing verification before customer release.",
+            note: "Apply and verify the desired routing artifact first, then release ready to queue the customer access email.",
             stats: [
-                ["Canceling", items.length],
-                ["Ends This Period", items.filter(item => Boolean(item.stripeCurrentPeriodEnd)).length]
-            ]
-        };
-    }
-
-    if (tabKey === "ready") {
-        return {
-            body: "These servers have been provisioned and are waiting for operator routing verification before customer release.",
-            note: "Only release after the desired routing artifact has been applied and verified.",
-            stats: [
-                ["Pending Activation", items.length],
+                ["Ready", items.length],
                 ["Routing Verified", items.filter(item => Boolean(item.routingVerifiedAt)).length]
             ]
         };
     }
 
-    if (tabKey === "pending") {
+    if (tabKey === "activeServices") {
         return {
-            body: "These checkouts exist locally, but payment has not been confirmed yet.",
-            note: "This view stays focused on fresh checkouts that are still inside the normal wait window.",
+            body: "These are current customer services with live subscription, grace, suspension, or period-end cancellation context.",
+            note: "Keep normal active services quiet; act only when the card calls out a billing or lifecycle decision.",
             stats: [
-                ["Pending", items.length],
-                ["Stripe Sessions", items.filter(item => Boolean(item.stripeSessionId)).length]
+                ["Active", items.length],
+                ["Canceling", items.filter(item => Boolean(item.stripeCancelAtPeriodEnd)).length],
+                ["Suspended", items.filter(item => Boolean(item.serviceSuspendedAt)).length]
             ]
         };
     }
 
-    if (tabKey === "stale") {
+    if (tabKey === "awaiting") {
         return {
-            body: "These checkout sessions have held inventory long enough that they should no longer hide among fresh pending orders.",
-            note: "Use this queue to decide whether to re-check Stripe, wait a bit longer, or clean up abandoned holds.",
+            body: "These orders are waiting on either payment confirmation or customer setup details.",
+            note: "Fresh checkouts can sit here briefly. Stale holds and long paid setup stalls move to Needs Attention.",
             stats: [
-                ["Stale", items.length],
-                ["Stripe Sessions", items.filter(item => Boolean(item.stripeSessionId)).length]
+                ["Awaiting", items.length],
+                ["Payment", items.filter(item => item.status === "checkout_pending").length],
+                ["Setup", items.filter(item => hasSetupStall(item)).length]
             ]
         };
     }
 
-    if (tabKey === "archived") {
+    if (tabKey === "archive") {
         return {
-            body: "Expired and cancelled orders live here so they stay out of the live workflow.",
-            note: "Archived orders can still be inspected or repaired if you need to correct history.",
+            body: "These orders are out of the live workflow but remain inspectable for history and recovery.",
+            note: "Emergency overrides are still available here for deliberate corrections.",
             stats: [
                 ["Archived", items.length],
-                ["Cancelled", items.filter(item => item.status === "cancelled").length]
+                ["Completed", items.filter(item => item.status === "completed").length]
             ]
         };
     }
 
     return {
-        body: "This queue highlights stale holds, mismatched state, missing details, or anything else that deserves operator review.",
-        note: grouped.ready.length
-            ? "Check for orders that are marked paid but still missing the data you need to finish delivery."
-            : "Normal pending checkouts stay out of this view unless they become stale or inconsistent.",
+        body: "This queue is empty or unavailable.",
+        note: "Refresh the admin page if counts look stale.",
         stats: [
-            ["Issues", items.length],
-            ["Ready Queue", grouped.ready.length]
+            ["Orders", items.length]
         ]
     };
 }
@@ -1893,7 +1977,7 @@ function renderBulkToolbar(items) {
     }, !selectedItems.some(item => item.stripeSessionId)));
 
     actions.appendChild(createGuardedAction("Bulk Requeue Fulfillment", "secondary", "Confirm Requeue", async () => {
-        const requeueable = selectedItems.filter(item => isFulfillmentRequeueable(item));
+        const requeueable = selectedItems.filter(item => getCapability(item, "requeueFulfillment").enabled);
         await runBulkAction(
             requeueable,
             item => requestJson(`/api/admin/purchases/${item.id}/requeue-fulfillment`, {
@@ -1903,16 +1987,12 @@ function renderBulkToolbar(items) {
             }),
             `Requeued fulfillment for ${requeueable.length} selected order(s).`
         );
-    }, !selectedItems.some(item => isFulfillmentRequeueable(item)),
+    }, !selectedItems.some(item => getCapability(item, "requeueFulfillment").enabled),
     "These selected orders are safe to put back into the provisioning queue.",
     "This clears the current admin-review fulfillment failure and requeues the same purchase instead of creating a replacement order."));
 
     actions.appendChild(createGuardedAction("Bulk Release Ready", "primary", "Confirm Bulk Release", async () => {
-        const releasable = selectedItems.filter(item =>
-            item.status === "paid" &&
-            item.fulfillmentStatus === "pending_activation" &&
-            item.routingVerifiedAt
-        );
+        const releasable = selectedItems.filter(item => getCapability(item, "releaseReady").enabled);
         await runBulkAction(
             releasable,
             item => requestJson("/api/complete", {
@@ -1925,19 +2005,12 @@ function renderBulkToolbar(items) {
             }),
             `Released ${releasable.length} selected order(s) and queued ready emails.`
         );
-    }, !selectedItems.some(item =>
-        item.status === "paid" &&
-        item.fulfillmentStatus === "pending_activation" &&
-        item.routingVerifiedAt
-    ),
+    }, !selectedItems.some(item => getCapability(item, "releaseReady").enabled),
     "Every selected pending-activation server already has routing marked verified.",
     "This releases selected servers that already passed the separate routing verification gate."));
 
     actions.appendChild(createActionButton("Bulk Repair State", "warning", async () => {
-        const repairable = selectedItems.filter(item =>
-            item.diagnostics?.recommendedServerStatus &&
-            item.serverStatus !== item.diagnostics.recommendedServerStatus
-        );
+        const repairable = selectedItems.filter(item => getCapability(item, "repairServerState").enabled);
         await runBulkAction(
             repairable,
             item => requestJson(`/api/admin/purchases/${item.id}`, {
@@ -1950,17 +2023,14 @@ function renderBulkToolbar(items) {
             }),
             `Repaired server state for ${repairable.length} selected order(s).`
         );
-    }, !selectedItems.some(item =>
-        item.diagnostics?.recommendedServerStatus &&
-        item.serverStatus !== item.diagnostics.recommendedServerStatus
-    )));
+    }, !selectedItems.some(item => getCapability(item, "repairServerState").enabled)));
 
     actions.appendChild(createGuardedAction(
         "Bulk Suspend Service",
         "warning",
         "Confirm Suspension",
         async () => {
-            const suspendable = selectedItems.filter(item => item.diagnostics?.policy?.suspensionRequired);
+            const suspendable = selectedItems.filter(item => getCapability(item, "suspendService").enabled && getCapability(item, "suspendService").inlineRecommended);
             await runBulkAction(
                 suspendable,
                 item => requestJson(`/api/admin/purchases/${item.id}`, {
@@ -1974,7 +2044,7 @@ function renderBulkToolbar(items) {
                 `Suspended service for ${suspendable.length} selected order(s).`
             );
         },
-        !selectedItems.some(item => item.diagnostics?.policy?.suspensionRequired)
+        !selectedItems.some(item => getCapability(item, "suspendService").enabled && getCapability(item, "suspendService").inlineRecommended)
     ));
 
     actions.appendChild(createGuardedAction(
@@ -2272,6 +2342,41 @@ async function applyOverride(id, payload, successMessage) {
     }), successMessage);
 }
 
+function appendInlineCapabilityAction(actions, purchase, key, label, run, noteInput, options = {}) {
+    const capability = getCapability(purchase, key);
+    const show = capability.enabled || capability.inlineRecommended || options.alwaysShow;
+
+    if (!show) {
+        return;
+    }
+
+    const tone = options.tone || getCapabilityTone(capability);
+    const disabled = !capability.enabled;
+    const disabledReason = disabled ? capability.reason : "";
+
+    if (capability.requiresConfirmation || options.guarded) {
+        actions.appendChild(createGuardedAction(
+            label,
+            tone,
+            options.confirmLabel || `Confirm ${label}`,
+            async () => run(getOperatorNote(noteInput)),
+            disabled,
+            options.checkText || "This admin action is intentional.",
+            options.helperText || capability.reason || "",
+            disabledReason
+        ));
+        return;
+    }
+
+    actions.appendChild(createActionButton(
+        label,
+        tone,
+        async () => run(getOperatorNote(noteInput)),
+        disabled,
+        disabledReason
+    ));
+}
+
 function renderDiagnostics(purchase) {
     const diagnostics = purchase.diagnostics || {};
     const policy = getPolicyState(purchase);
@@ -2383,7 +2488,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
     const advanced = document.createElement("details");
     advanced.className = "advanced";
     const summary = document.createElement("summary");
-    summary.textContent = "Advanced Controls";
+    summary.textContent = "Emergency Overrides";
     advanced.appendChild(summary);
 
     const controlGrid = createElement("div", "control-grid");
@@ -2466,6 +2571,7 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
 
     const actions = createElement("div", "advanced-actions");
 
+    const saveOverridesCapability = getCapability(purchase, "saveOverrides");
     actions.appendChild(createGuardedAction("Save Overrides", "primary", "Confirm Save", async () => {
         await applyOverride(purchase.id, {
             email: emailInput.value,
@@ -2476,60 +2582,88 @@ function renderAdvancedControls(purchase, advancedNoteInput) {
             setupTokenAction: tokenActionSelect.value,
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Saved overrides for order #${purchase.id}.`);
-    }));
+    }, !saveOverridesCapability.enabled,
+    "These manual field changes are intentional and safe.",
+    "This can change customer, billing, setup token, purchase status, and inventory state at once.",
+    saveOverridesCapability.reason));
 
+    const markPaidCapability = getCapability(purchase, "manualMarkPaid");
     actions.appendChild(createGuardedAction("Mark Paid", "secondary", "Confirm Paid", async () => {
         await applyOverride(purchase.id, {
             status: "paid",
             serverStatus: "held",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Order #${purchase.id} manually marked paid.`);
-    }));
+    }, !markPaidCapability.enabled,
+    "Stripe or operator evidence confirms this order should be treated as paid.",
+    "Prefer Re-check Stripe when a Checkout Session exists.",
+    markPaidCapability.reason));
 
+    const resetPendingCapability = getCapability(purchase, "resetPending");
     actions.appendChild(createGuardedAction("Reset Pending", "warning", "Confirm Reset", async () => {
         await applyOverride(purchase.id, {
             status: "checkout_pending",
             serverStatus: "held",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Order #${purchase.id} reset to pending.`);
-    }));
+    }, !resetPendingCapability.enabled,
+    "This order should return to checkout-pending while keeping the slot held.",
+    "Use this only for deliberate payment-state correction.",
+    resetPendingCapability.reason));
 
+    const markExpiredCapability = getCapability(purchase, "markExpired");
     actions.appendChild(createGuardedAction("Mark Expired", "danger", "Confirm Expired", async () => {
         await applyOverride(purchase.id, {
             status: "expired",
             serverStatus: "available",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Order #${purchase.id} marked expired.`);
-    }));
+    }, !markExpiredCapability.enabled,
+    "This pending or abandoned order should expire and release inventory.",
+    "Live subscriptions must be ended in Stripe first.",
+    markExpiredCapability.reason));
 
+    const cancelOrderCapability = getCapability(purchase, "cancelOrder");
     actions.appendChild(createGuardedAction("Cancel Order", "danger", "Confirm Cancel", async () => {
         await applyOverride(purchase.id, {
             status: "cancelled",
             serverStatus: "available",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Order #${purchase.id} cancelled.`);
-    }));
+    }, !cancelOrderCapability.enabled,
+    "This order should be cancelled and inventory should be released.",
+    "Live subscriptions must be ended in Stripe first.",
+    cancelOrderCapability.reason));
 
+    const releaseServerCapability = getCapability(purchase, "releaseServer");
     actions.appendChild(createGuardedAction("Release Server", "neutral", "Confirm Release", async () => {
         await applyOverride(purchase.id, {
             serverStatus: "available",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Server released for order #${purchase.id}.`);
-    }));
+    }, !releaseServerCapability.enabled,
+    "This inventory slot can be safely returned to availability.",
+    "Do not release active or recoverable subscription capacity.",
+    releaseServerCapability.reason));
 
+    const holdServerCapability = getCapability(purchase, "holdServer");
     actions.appendChild(createActionButton("Hold Server", "neutral", async () => {
         await applyOverride(purchase.id, {
             serverStatus: "held",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Server held for order #${purchase.id}.`);
-    }));
+    }, !holdServerCapability.enabled, holdServerCapability.reason));
 
+    const allocateServerCapability = getCapability(purchase, "allocateServer");
     actions.appendChild(createGuardedAction("Allocate Server", "neutral", "Confirm Allocate", async () => {
         await applyOverride(purchase.id, {
             serverStatus: "allocated",
             adminNote: getOperatorNote(advancedNoteInput)
         }, `Server allocated for order #${purchase.id}.`);
-    }));
+    }, !allocateServerCapability.enabled,
+    "This inventory slot has been consumed by a provisioned service.",
+    "Only allocate after provisioning state supports it.",
+    allocateServerCapability.reason));
 
     advanced.appendChild(actions);
     return advanced;
@@ -2625,6 +2759,7 @@ function renderPurchaseCard(purchase) {
         "Service Access",
         purchase.serviceSuspendedAt ? "Suspended" : "Live"
     ));
+    metaGrid.appendChild(createMetaBlock("Next Action", getRecommendedAction(purchase)));
     metaGrid.appendChild(createMetaBlock("Created", formatTimestamp(purchase.createdAt)));
     main.appendChild(metaGrid);
     const diagnosticsBlock = renderDiagnostics(purchase);
@@ -2695,123 +2830,93 @@ function renderPurchaseCard(purchase) {
 
     const actions = createElement("div", "action-row");
 
-    const canReleaseReady = purchase.status === "paid" &&
-        purchase.fulfillmentStatus === "pending_activation";
+    appendInlineCapabilityAction(actions, purchase, "verifyRouting", "Mark Routing Verified", async adminNote => {
+        await verifyRouting(purchase.id, adminNote);
+    }, noteInput, {
+        confirmLabel: "Confirm Verification",
+        checkText: "The desired routing artifact has been applied and verified for this server.",
+        helperText: "This records the routing checkpoint without releasing the customer yet."
+    });
 
-    if (canReleaseReady) {
-        if (!purchase.routingVerifiedAt) {
-            actions.appendChild(createGuardedAction("Mark Routing Verified", "secondary", "Confirm Verification", async () => {
-                await verifyRouting(purchase.id, getOperatorNote(noteInput));
-            }, false,
-            "The desired routing artifact has been applied and verified for this server.",
-            "This records the operator routing checkpoint without releasing the customer yet."));
-        }
+    appendInlineCapabilityAction(actions, purchase, "releaseReady", "Release Ready", async adminNote => {
+        await completePurchase(purchase.id, adminNote);
+    }, noteInput, {
+        tone: "primary",
+        confirmLabel: "Confirm Release",
+        checkText: "Routing has already been marked verified for this server.",
+        helperText: "This queues the customer ready email."
+    });
 
-        actions.appendChild(createGuardedAction("Release Ready", "primary", "Confirm Release", async () => {
-            await completePurchase(purchase.id, getOperatorNote(noteInput));
-        }, !purchase.routingVerifiedAt,
-        "Routing has already been marked verified for this server.",
-        "This is the final admin release gate and will queue the customer ready email."));
-    } else if (purchase.status === "paid") {
-        actions.appendChild(createElement(
-            "div",
-            "helper-text",
-            "This paid order cannot be released until provisioning reaches pending activation."
-        ));
-    }
+    appendInlineCapabilityAction(actions, purchase, "requeueFulfillment", "Requeue Fulfillment", async adminNote => {
+        await requeueFulfillment(purchase.id, adminNote);
+    }, noteInput, {
+        confirmLabel: "Confirm Requeue",
+        checkText: "The underlying issue is fixed and this purchase should return to provisioning.",
+        helperText: "This requeues the same purchase instead of creating a replacement order."
+    });
 
-    if (purchase.stripeSessionId) {
-        actions.appendChild(createActionButton("Re-check Stripe", "secondary", async () => {
-            await reconcileStripe(purchase.id, getOperatorNote(noteInput));
-        }));
-    }
+    appendInlineCapabilityAction(actions, purchase, "reopenSetup", "Reopen Setup", async adminNote => {
+        await reopenSetup(purchase.id, adminNote);
+    }, noteInput, {
+        confirmLabel: "Confirm Reopen",
+        checkText: "This purchase should go back to customer setup on the same order.",
+        helperText: "This clears submitted setup details while preserving payment and reserved capacity."
+    });
 
-    if (
-        purchase.stripeCustomerId ||
-        purchase.pelicanUserId ||
-        purchase.pelicanServerId ||
-        purchase.pelicanServerIdentifier
-    ) {
-        actions.appendChild(createActionButton("Re-check Pelican", "secondary", async () => {
-            await reconcilePelican(purchase.id, getOperatorNote(noteInput));
-        }));
-    }
+    appendInlineCapabilityAction(actions, purchase, "suspendService", "Suspend Service", async adminNote => {
+        await applyOverride(purchase.id, {
+            serviceAccessAction: "suspend",
+            adminNote
+        }, `Suspended service for order #${purchase.id}.`);
+    }, noteInput, {
+        confirmLabel: "Confirm Suspension",
+        checkText: "This fulfilled service should be suspended for nonpayment."
+    });
 
-    if (isFulfillmentRequeueable(purchase)) {
-        actions.appendChild(createGuardedAction("Requeue Fulfillment", "secondary", "Confirm Requeue", async () => {
-            await requeueFulfillment(purchase.id, getOperatorNote(noteInput));
-        }, false,
-        "The underlying issue is fixed and this same purchase should return to the provisioning queue.",
-        "This clears the current admin-review fulfillment failure and requeues the existing purchase instead of creating a replacement order."));
-    }
+    appendInlineCapabilityAction(actions, purchase, "reinstateService", "Reinstate Service", async adminNote => {
+        await applyOverride(purchase.id, {
+            serviceAccessAction: "reinstate",
+            adminNote
+        }, `Reinstated service for order #${purchase.id}.`);
+    }, noteInput, {
+        confirmLabel: "Confirm Reinstatement",
+        checkText: "This suspended service is safe to reinstate."
+    });
 
-    if (isSetupReopenable(purchase)) {
-        actions.appendChild(createGuardedAction("Reopen Setup", "warning", "Confirm Reopen", async () => {
-            await reopenSetup(purchase.id, getOperatorNote(noteInput));
-        }, false,
-        "This purchase has no Pelican server linkage and should go back to customer setup on the same order.",
-        "This clears submitted setup details and provisioning failure fields, but keeps payment and reserved capacity attached to the same purchase."));
-    }
+    appendInlineCapabilityAction(actions, purchase, "markHardFlag", "Mark Hard Flag", async adminNote => {
+        await markHardFlag(purchase.id, adminNote);
+    }, noteInput, {
+        confirmLabel: "Confirm Hard Flag",
+        checkText: "External cleanup has been reviewed for this purge-eligible case.",
+        helperText: "This records terminal customer risk only. It does not delete Pelican resources or release local capacity."
+    });
 
-    if (purchase.diagnostics?.policy?.suspensionRequired) {
-        actions.appendChild(createGuardedAction("Suspend Service", "warning", "Confirm Suspension", async () => {
-            await applyOverride(purchase.id, {
-                serviceAccessAction: "suspend",
-                adminNote: getOperatorNote(noteInput)
-            }, `Suspended service for order #${purchase.id}.`);
-        }));
-    }
+    appendInlineCapabilityAction(actions, purchase, "repairServerState", "Repair Server State", async adminNote => {
+        await applyOverride(purchase.id, {
+            serverStatus: purchase.diagnostics.recommendedServerStatus,
+            adminNote
+        }, `Server state repaired for order #${purchase.id}.`);
+    }, noteInput);
 
-    if (purchase.serviceSuspendedAt && !purchase.diagnostics?.policy?.purgeRequired) {
-        actions.appendChild(createActionButton("Reinstate Service", "secondary", async () => {
-            await applyOverride(purchase.id, {
-                serviceAccessAction: "reinstate",
-                adminNote: getOperatorNote(noteInput)
-            }, `Reinstated service for order #${purchase.id}.`);
-        }));
-    }
+    appendInlineCapabilityAction(actions, purchase, "reconcileStripe", "Re-check Stripe", async adminNote => {
+        await reconcileStripe(purchase.id, adminNote);
+    }, noteInput, {
+        alwaysShow: Boolean(purchase.stripeSessionId)
+    });
 
-    if (
-        purchase.diagnostics?.policy?.purgeRequired &&
-        purchase.customerRiskStatus !== "hard_flagged"
-    ) {
-        actions.appendChild(createGuardedAction("Mark Hard Flag", "danger", "Confirm Hard Flag", async () => {
-            await markHardFlag(purchase.id, getOperatorNote(noteInput));
-        }, false,
-        "An operator has reviewed this purge-eligible delinquency case and handled any destructive cleanup outside the app.",
-        "This records the terminal customer-risk marker only. It does not delete Pelican resources or release local capacity."));
-    }
+    appendInlineCapabilityAction(actions, purchase, "reconcilePelican", "Re-check Pelican", async adminNote => {
+        await reconcilePelican(purchase.id, adminNote);
+    }, noteInput, {
+        alwaysShow: Boolean(
+            purchase.stripeCustomerId ||
+            purchase.pelicanUserId ||
+            purchase.pelicanServerId ||
+            purchase.pelicanServerIdentifier
+        )
+    });
 
-    if (
-        purchase.diagnostics?.recommendedServerStatus &&
-        purchase.serverStatus !== purchase.diagnostics.recommendedServerStatus
-    ) {
-        actions.appendChild(createActionButton("Repair Server State", "warning", async () => {
-            await applyOverride(purchase.id, {
-                serverStatus: purchase.diagnostics.recommendedServerStatus,
-                adminNote: getOperatorNote(noteInput)
-            }, `Server state repaired for order #${purchase.id}.`);
-        }));
-    }
-
-    if (purchase.status !== "paid") {
-        actions.appendChild(createGuardedAction("Manual Mark Paid", "secondary", "Confirm Paid", async () => {
-            await applyOverride(purchase.id, {
-                status: "paid",
-                serverStatus: "held",
-                adminNote: getOperatorNote(noteInput)
-            }, `Order #${purchase.id} manually marked paid.`);
-        }));
-    }
-
-    if (purchase.status !== "checkout_pending") {
-        actions.appendChild(createGuardedAction("Reset Pending", "warning", "Confirm Reset", async () => {
-            await applyOverride(purchase.id, {
-                status: "checkout_pending",
-                serverStatus: "held",
-                adminNote: getOperatorNote(noteInput)
-            }, `Order #${purchase.id} reset to pending.`);
-        }));
+    if (!actions.childElementCount) {
+        actions.appendChild(createElement("div", "helper-text", "No primary action is needed for this order right now."));
     }
 
     side.appendChild(actions);
@@ -2862,6 +2967,11 @@ function renderListView(items, emptyText) {
 }
 
 function renderAdmin() {
+    if (!TAB_CONFIG.some(tabConfig => tabConfig.key === state.activeTab)) {
+        state.activeTab = TAB_CONFIG[0].key;
+        localStorage.setItem("admin.activeTab", state.activeTab);
+    }
+
     const tab = getTabConfig(state.activeTab);
     const grouped = groupPurchases(state.purchases);
     const content = document.getElementById("content");
@@ -2869,29 +2979,22 @@ function renderAdmin() {
 
     document.getElementById("viewTitle").textContent = tab.title;
     document.getElementById("viewSubtitle").textContent = tab.subtitle;
-    document.getElementById("viewMeta").textContent = state.activeTab === "overview"
-        ? `${state.purchases.length} total orders across every queue.`
-        : `${items.length} order${items.length === 1 ? "" : "s"} in this view.`;
+    document.getElementById("viewMeta").textContent =
+        `${items.length} order${items.length === 1 ? "" : "s"} in this queue. ${state.purchases.length} total.`;
 
     renderTabs(state.purchases);
     content.innerHTML = "";
 
-    if (state.activeTab === "overview") {
-        content.appendChild(renderOverview(state.purchases));
-        return;
-    }
-
     const viewShell = createElement("div", "view-shell");
+    viewShell.appendChild(renderSummaryGrid(state.purchases));
     viewShell.appendChild(renderViewIntro(state.activeTab, items, grouped));
 
     const emptyText = {
-        subscriptions: "No active subscriptions are visible yet.",
-        canceling: "No subscriptions are currently scheduled to end at period close.",
-        ready: "No verified orders are waiting right now.",
-        pending: "No orders are currently waiting on payment.",
-        stale: "No stale checkout holds right now.",
-        archived: "No expired or cancelled orders right now.",
-        issues: "No orders currently need manual review."
+        needsAttention: "No orders currently need manual review.",
+        readyRelease: "No provisioned servers are waiting on routing and release.",
+        activeServices: "No active service records are visible yet.",
+        awaiting: "No orders are waiting on payment or customer setup.",
+        archive: "No archived orders right now."
     }[state.activeTab] || "Nothing to show right now.";
 
     viewShell.appendChild(renderListView(items, emptyText));

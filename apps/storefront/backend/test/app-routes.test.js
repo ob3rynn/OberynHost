@@ -2405,6 +2405,14 @@ test("admin can hard-flag only purge-eligible delinquency cases without releasin
     });
     assert.equal(earlyRes.status, 400);
 
+    const earlyPurchasesRes = await app.request("/api/purchases", {
+        headers: { cookie: adminCookie }
+    });
+    assert.equal(earlyPurchasesRes.status, 200);
+    const earlyPurchases = await earlyPurchasesRes.json();
+    assert.equal(earlyPurchases[0].adminCapabilities.markHardFlag.enabled, false);
+    assert.match(earlyPurchases[0].adminCapabilities.markHardFlag.reason, /purge review/);
+
     await runQuery(
         "UPDATE purchases SET serviceSuspendedAt = ? WHERE id = ?",
         [eligibleSuspendedAt, 1]
@@ -2728,6 +2736,10 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
         headers: { cookie: adminCookie }
     });
     assert.equal(purchasesRes.status, 200);
+    const initialPurchases = await purchasesRes.json();
+    assert.equal(initialPurchases[0].adminCapabilities.reconcileStripe.enabled, true);
+    assert.equal(initialPurchases[0].adminCapabilities.releaseReady.enabled, false);
+    assert.match(initialPurchases[0].adminCapabilities.releaseReady.reason, /pending activation/);
 
     const reconcileRes = await app.request("/api/admin/purchases/1/reconcile-stripe", {
         method: "POST",
@@ -2830,6 +2842,8 @@ test("admin happy path allows login, reconcile, complete, and logout", async t =
     assert.ok(Number(verifyRoutingData.purchase.routingVerifiedAt) > 0);
     assert.equal(verifyRoutingData.purchase.desiredRoutingArtifact.hostname, "completion-test.oberyn.net");
     assert.equal(verifyRoutingData.purchase.desiredRoutingArtifact.pelicanServerIdentifier, "srv_complete");
+    assert.equal(verifyRoutingData.purchase.adminCapabilities.releaseReady.enabled, true);
+    assert.equal(verifyRoutingData.purchase.adminCapabilities.releaseReady.requiresConfirmation, true);
 
     const completeRes = await app.request("/api/complete", {
         method: "POST",
@@ -3036,6 +3050,8 @@ test("admin Pelican reconcile stores read-only facts and surfaces drift", async 
     assert.equal(reconcileRes.status, 200);
     const reconcileData = await reconcileRes.json();
     assert.equal(reconcileData.reconcileStatus, "allocation_mismatch");
+    assert.equal(reconcileData.purchase.adminCapabilities.reconcilePelican.enabled, true);
+    assert.equal(reconcileData.purchase.adminCapabilities.markHardFlag.enabled, false);
     assert.ok(
         reconcileData.purchase.diagnostics.issues.includes(
             "Last Pelican reconcile reported allocation mismatch."
@@ -3209,6 +3225,14 @@ test("admin can requeue fulfillment on the same purchase after admin review", as
     });
     assert.equal(loginRes.status, 200);
     const adminCookie = app.parseSetCookie(loginRes);
+
+    const purchasesRes = await app.request("/api/purchases", {
+        headers: { cookie: adminCookie }
+    });
+    assert.equal(purchasesRes.status, 200);
+    const purchases = await purchasesRes.json();
+    assert.equal(purchases[0].adminCapabilities.requeueFulfillment.enabled, true);
+    assert.equal(purchases[0].adminCapabilities.requeueFulfillment.inlineRecommended, true);
 
     const requeueRes = await app.request("/api/admin/purchases/1/requeue-fulfillment", {
         method: "POST",
@@ -3429,6 +3453,14 @@ test("admin can reopen setup on the same purchase after pre-provisioning review"
     });
     assert.equal(loginRes.status, 200);
     const adminCookie = app.parseSetCookie(loginRes);
+
+    const purchasesRes = await app.request("/api/purchases", {
+        headers: { cookie: adminCookie }
+    });
+    assert.equal(purchasesRes.status, 200);
+    const purchases = await purchasesRes.json();
+    assert.equal(purchases[0].adminCapabilities.reopenSetup.enabled, true);
+    assert.equal(purchases[0].adminCapabilities.reopenSetup.requiresConfirmation, true);
 
     const reopenRes = await app.request("/api/admin/purchases/1/reopen-setup", {
         method: "POST",
