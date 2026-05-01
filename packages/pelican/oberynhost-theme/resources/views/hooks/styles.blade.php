@@ -129,9 +129,6 @@
 
     .oberyn-brand-mark,
     .oberyn-logo-mark {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
         width: 2.75rem;
         height: 2.75rem;
         border-radius: 14px;
@@ -141,6 +138,19 @@
         font-weight: 800;
         letter-spacing: 0.05em;
         box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.18);
+        object-fit: cover;
+    }
+
+    img.oberyn-brand-mark,
+    img.oberyn-logo-mark {
+        display: block;
+    }
+
+    span.oberyn-brand-mark,
+    span.oberyn-logo-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .oberyn-auth-brand-copy {

@@ -39,6 +39,10 @@ const OPTIONAL_EMAIL_ENV_NAMES = [
     "POSTMARK_MESSAGE_STREAM"
 ];
 
+const OPTIONAL_STRIPE_ENV_NAMES = [
+    "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
+];
+
 const EMAIL_PROVIDER = {
     LOG: "log",
     POSTMARK: "postmark"
@@ -380,6 +384,7 @@ function buildRuntimeConfig(env = process.env) {
     const stripeSecretKey = getTrimmedEnvValue(env, "STRIPE_SECRET_KEY");
     const stripeApiVersion = getTrimmedEnvValue(env, "STRIPE_API_VERSION");
     const stripeWebhookSecret = getTrimmedEnvValue(env, "STRIPE_WEBHOOK_SECRET");
+    const stripeBillingPortalConfigurationId = getTrimmedEnvValue(env, "STRIPE_BILLING_PORTAL_CONFIGURATION_ID");
     const setupSecretKey = getTrimmedEnvValue(env, "SETUP_SECRET_KEY") || adminKey;
     const stripePriceIds = {
         "paper-2gb": getTrimmedEnvValue(env, "STRIPE_PRICE_PAPER_2GB")
@@ -453,7 +458,12 @@ function buildRuntimeConfig(env = process.env) {
         stripeSecretKey,
         stripeApiVersion,
         stripeWebhookSecret,
+        stripeBillingPortalConfigurationId,
         stripePriceIds,
+        stripe: {
+            billingPortalConfigurationId: stripeBillingPortalConfigurationId,
+            presentEnvNames: OPTIONAL_STRIPE_ENV_NAMES.filter(name => getTrimmedEnvValue(env, name))
+        },
         pelican: {
             panelUrl: pelicanPanelUrl,
             applicationApiKey: pelicanApplicationApiKey,
@@ -474,6 +484,7 @@ module.exports = {
     EMAIL_PROVIDER,
     OPTIONAL_EMAIL_ENV_NAMES,
     OPTIONAL_PELICAN_ENV_NAMES,
+    OPTIONAL_STRIPE_ENV_NAMES,
     PLACEHOLDER_ENV_NAMES,
     REQUIRED_RUNTIME_ENV_NAMES,
     buildRuntimeConfig,

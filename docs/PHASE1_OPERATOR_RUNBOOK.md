@@ -21,6 +21,7 @@ Before treating the storefront as production-capable, fill and verify these valu
 - `STRIPE_SECRET_KEY`: live Stripe secret key.
 - `STRIPE_WEBHOOK_SECRET`: webhook secret for the deployed endpoint.
 - `STRIPE_PRICE_PAPER_2GB`: live recurring price for the `2GB Paper Minecraft Server` product.
+- `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`: Customer Portal configuration ID for the post-checkout Manage Billing button.
 - `EMAIL_PROVIDER=postmark`.
 - `POSTMARK_SERVER_TOKEN`: Postmark token with access to the chosen server/message stream.
 - `OUTBOUND_EMAIL_FROM=support@oberynn.com`: verified sender or domain.
@@ -49,7 +50,19 @@ Confirm:
 - the sellable launch inventory matches the frozen plan,
 - Postmark sender/domain is verified,
 - Stripe webhook endpoint points at the deployed `BASE_URL`,
+- Stripe Customer Portal is configured and reachable from the post-checkout setup page,
 - Pelican target allocation IDs are real, unused, and assigned to the intended node/group.
+
+## Stripe Branding
+
+Stripe-hosted interfaces use Dashboard account branding. Upload the prepared assets before launch:
+
+- Stripe **Icon**: `docs/assets/stripe-branding/stripe-icon-oberynhost.png`
+- Stripe **Logo**: leave unset for now.
+- Brand color: `#1B555B`
+- Accent color: `#2A8B8F`
+
+After saving, preview Checkout and Customer Portal in Stripe and confirm the OberynHost icon appears cleanly on both hosted surfaces.
 
 ## Provisioning Handoff
 

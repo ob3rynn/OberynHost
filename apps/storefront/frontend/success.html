@@ -8,13 +8,15 @@
         name="description"
         content="Finish your server details after checkout. Once fulfilled, your panel link and login will be emailed from support@oberynn.com."
     >
+    <link rel="icon" type="image/png" href="/assets/brand/oberynhost_icon_web.png">
+    <link rel="apple-touch-icon" href="/assets/brand/oberynhost_icon_web.png">
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
 <div class="site-frame">
     <header class="topbar">
         <a class="brand" href="/">
-            <span class="brand__mark">OH</span>
+            <img class="brand__mark" src="/assets/brand/oberynhost_icon_web.png" alt="" aria-hidden="true">
             <span class="brand__copy">
                 <strong>OberynHost</strong>
                 <small>Post-checkout setup</small>
@@ -110,6 +112,9 @@
 
             <div class="hero-actions" style="justify-content:flex-start;">
                 <button id="completeBtn" onclick="complete()" disabled>Submit Server Details</button>
+                <button id="billingPortalBtn" class="button button--secondary" type="button" onclick="openBillingPortal()" hidden>
+                    Manage Billing
+                </button>
             </div>
 
             <p class="page-note">
@@ -136,6 +141,7 @@ const pelicanUsernameInput = document.getElementById("pelicanUsername");
 const pelicanPasswordInput = document.getElementById("pelicanPassword");
 const linkedPelicanUsernameInput = document.getElementById("linkedPelicanUsername");
 const completeBtn = document.getElementById("completeBtn");
+const billingPortalBtn = document.getElementById("billingPortalBtn");
 const lead = document.getElementById("lead");
 const statusEl = document.getElementById("status");
 
@@ -170,6 +176,11 @@ function setReadyState(ready) {
     pelicanUsernameInput.disabled = !ready || pelicanAccountMode !== "create";
     pelicanPasswordInput.disabled = !ready || pelicanAccountMode !== "create";
     completeBtn.disabled = !ready;
+}
+
+function setBillingPortalAvailable(available) {
+    billingPortalBtn.hidden = !available;
+    billingPortalBtn.disabled = false;
 }
 
 function stopPolling() {
@@ -253,10 +264,12 @@ async function refreshSetupStatus() {
         if (!res.ok) {
             statusEl.innerText = data.message || "This setup link is not valid.";
             setReadyState(false);
+            setBillingPortalAvailable(false);
             stopPolling();
             return;
         }
 
+        setBillingPortalAvailable(Boolean(data.billingPortalAvailable));
         populateMinecraftVersions(data.minecraftVersions, data.minecraftVersion || "");
         customerHostnameRootDomain = data.customerHostnameRootDomain || customerHostnameRootDomain;
         setPelicanAccountMode(data.pelicanAccountMode, data.pelicanUsername || "");
@@ -294,8 +307,35 @@ async function refreshSetupStatus() {
     } catch {
         statusEl.innerText = "Could not check setup status. Retrying shortly.";
         setReadyState(false);
+        setBillingPortalAvailable(false);
         stopPolling();
         pollTimer = setTimeout(refreshSetupStatus, 5000);
+    }
+}
+
+async function openBillingPortal() {
+    billingPortalBtn.disabled = true;
+
+    try {
+        const res = await fetch("/api/create-billing-portal-session", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            statusEl.innerText = data.error || "Could not open billing management.";
+            billingPortalBtn.disabled = false;
+            return;
+        }
+
+        window.location.href = data.url;
+    } catch {
+        statusEl.innerText = "Network error while opening billing management.";
+        billingPortalBtn.disabled = false;
     }
 }
 

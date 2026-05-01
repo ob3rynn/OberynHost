@@ -480,6 +480,165 @@ test("setup status can recover a paid purchase from Stripe session id when the s
     assert.equal(purchase.stripeSubscriptionStatus, "active");
 });
 
+test("billing portal endpoint requires a valid setup session", async t => {
+    const app = await createTestApp(t, {
+        stripeBillingPortalConfigurationId: "bpc_test_portal"
+    });
+
+    const res = await app.request("/api/create-billing-portal-session", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+
+    assert.equal(res.status, 401);
+});
+
+test("billing portal endpoint rejects expired setup sessions", async t => {
+    const app = await createTestApp(t, {
+        stripeBillingPortalConfigurationId: "bpc_test_portal"
+    });
+    const { runQuery } = app.queries;
+    const setupToken = "expired_portal_setup_token_abcdefghijklmnopqrstuvwxyz";
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [1, "buyer@example.com", "", "paid", "cus_test_expired", Date.now(), setupToken, Date.now() - 1000]
+    );
+
+    const res = await app.request("/api/create-billing-portal-session", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: `setup_session=${setupToken}`,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+
+    assert.equal(res.status, 410);
+});
+
+test("billing portal endpoint reports missing configuration", async t => {
+    const app = await createTestApp(t);
+    const { runQuery } = app.queries;
+    const setupToken = "missing_config_portal_token_abcdefghijklmnopqrstuvwxyz";
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [1, "buyer@example.com", "", "paid", "cus_test_missing_config", Date.now(), setupToken, Date.now() + 60_000]
+    );
+
+    const statusRes = await app.request("/api/setup-status", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: `setup_session=${setupToken}`,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+    const statusData = await statusRes.json();
+    assert.equal(statusData.billingPortalAvailable, false);
+
+    const res = await app.request("/api/create-billing-portal-session", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: `setup_session=${setupToken}`,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+
+    assert.equal(res.status, 503);
+});
+
+test("billing portal endpoint requires a Stripe customer id", async t => {
+    const app = await createTestApp(t, {
+        stripeBillingPortalConfigurationId: "bpc_test_portal"
+    });
+    const { runQuery } = app.queries;
+    const setupToken = "missing_customer_portal_token_abcdefghijklmnopqrstuvwxyz";
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [1, "buyer@example.com", "", "paid", null, Date.now(), setupToken, Date.now() + 60_000]
+    );
+
+    const res = await app.request("/api/create-billing-portal-session", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: `setup_session=${setupToken}`,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+
+    assert.equal(res.status, 409);
+});
+
+test("billing portal endpoint creates a Stripe portal session for paid purchases", async t => {
+    const app = await createTestApp(t, {
+        stripeBillingPortalConfigurationId: "bpc_test_portal",
+        createdPortalSession: {
+            id: "bps_test_portal",
+            url: "https://billing.stripe.test/manage"
+        }
+    });
+    const { runQuery } = app.queries;
+    const setupToken = "valid_customer_portal_token_abcdefghijklmnopqrstuvwxyz";
+
+    await runQuery(
+        `INSERT INTO purchases
+            (serverId, email, serverName, status, stripeCustomerId, createdAt, setupToken, setupTokenExpiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [1, "buyer@example.com", "", "paid", "cus_test_portal", Date.now(), setupToken, Date.now() + 60_000]
+    );
+
+    const statusRes = await app.request("/api/setup-status", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: `setup_session=${setupToken}`,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+    const statusData = await statusRes.json();
+    assert.equal(statusData.billingPortalAvailable, true);
+
+    const res = await app.request("/api/create-billing-portal-session", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            cookie: `setup_session=${setupToken}`,
+            origin: app.baseUrl
+        },
+        body: JSON.stringify({})
+    });
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+        url: "https://billing.stripe.test/manage"
+    });
+    assert.deepEqual(app.stripeState.lastCreatedPortalSessionParams, {
+        customer: "cus_test_portal",
+        configuration: "bpc_test_portal",
+        return_url: `${app.baseUrl}/success`
+    });
+});
+
 test("webhook rejects invalid signatures", async t => {
     const app = await createTestApp(t);
 

@@ -59,6 +59,7 @@ At minimum, set real values for:
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_PRICE_PAPER_2GB`
+- `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`
 - `PELICAN_PANEL_URL`
 - `PELICAN_APPLICATION_API_KEY`
 - `PELICAN_PROVISIONING_TARGETS_JSON`
@@ -115,10 +116,27 @@ Before accepting real purchases, confirm all of the following:
 - Pelican panel is live, installed, and backed up
 - Wings is healthy from the live panel node view
 - `2GB Paper Minecraft Server` Stripe live-mode price is configured in `STRIPE_PRICE_PAPER_2GB`
+- Stripe Customer Portal is configured and its configuration ID is set in `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`
 - `PELICAN_PROVISIONING_TARGETS_JSON` was built from real Pelican/Wings values, not guessed
 - the operator fulfillment harness has passed against the intended local/test infrastructure
 
 The operator harness is manual-only. It validates the automation path, but it does not prove production Cloudflare behavior, public DNS, firewall rules, final HAProxy routing, or production network topology.
+
+## Stripe Branding Checklist
+
+Stripe account branding is managed in the Stripe Dashboard and applies to Checkout, Customer Portal, emails, invoices, and hosted invoice pages. The connector used by Codex cannot update account branding directly.
+
+Use the prepared assets:
+
+- Icon: `docs/assets/stripe-branding/stripe-icon-oberynhost.png`
+
+Set these Dashboard branding values:
+
+- Stripe **Icon**: upload the square icon asset.
+- Stripe **Logo**: leave unset for now.
+- Brand color: `#1B555B`.
+- Accent color: `#2A8B8F`.
+- Preview Checkout and Customer Portal to confirm the OberynHost icon and colors appear correctly.
 
 ## Backup Notes
 

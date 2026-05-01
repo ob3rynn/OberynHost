@@ -66,16 +66,15 @@ a {
 }
 
 .brand__mark {
-    display: grid;
-    place-items: center;
     width: 46px;
     height: 46px;
+    display: block;
     border-radius: 14px;
-    background: linear-gradient(145deg, var(--accent-glow), var(--accent-strong) 38%, var(--accent) 78%);
-    color: #071b1c;
-    font-weight: 800;
-    letter-spacing: 0.05em;
-    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.18);
+    object-fit: cover;
+    background: #061011;
+    box-shadow:
+        inset 0 1px 1px rgba(255, 255, 255, 0.18),
+        0 8px 18px rgba(20, 72, 77, 0.2);
 }
 
 .brand__copy strong,

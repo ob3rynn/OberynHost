@@ -33,6 +33,11 @@ const setupCompleteLimiter = createRateLimiter({
     max: 10,
     message: "Too many setup attempts. Please wait a moment."
 });
+const billingPortalLimiter = createRateLimiter({
+    windowMs: 1000 * 60,
+    max: 8,
+    message: "Too many billing portal attempts. Please wait a moment."
+});
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,48}[A-Za-z0-9]$/;
 const PELICAN_USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
 const MIN_PELICAN_PASSWORD_LENGTH = 8;
@@ -53,6 +58,17 @@ function isSetupEditablePurchase(purchase) {
     return (
         (purchase?.status === PURCHASE_STATUS.PAID || purchase?.status === PURCHASE_STATUS.COMPLETED) &&
         !hasSubmittedSetup(purchase)
+    );
+}
+
+function isBillingPortalEligiblePurchase(purchase) {
+    return Boolean(
+        config.stripeBillingPortalConfigurationId &&
+        purchase?.stripeCustomerId &&
+        (
+            purchase.status === PURCHASE_STATUS.PAID ||
+            purchase.status === PURCHASE_STATUS.COMPLETED
+        )
     );
 }
 
@@ -168,6 +184,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
             return res.status(400).json({
                 ready: false,
                 editable: false,
+                billingPortalAvailable: false,
                 status: "invalid",
                 message: "We couldn't find an active setup session for this browser."
             });
@@ -180,6 +197,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
             return res.status(410).json({
                 ready: false,
                 editable: false,
+                billingPortalAvailable: false,
                 status: "expired",
                 message: "This setup link has expired."
             });
@@ -204,6 +222,7 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
         res.json({
             ready: canEdit,
             editable: canEdit,
+            billingPortalAvailable: isBillingPortalEligiblePurchase(purchase),
             status: purchase.status,
             serverName: purchase.serverName || "",
             hostname: purchase.hostname || "",
@@ -218,6 +237,76 @@ router.post("/setup-status", setupStatusLimiter, async (req, res) => {
     } catch (err) {
         console.error("Setup status lookup failed:", err);
         res.status(500).json({ error: "Could not load setup status" });
+    }
+});
+
+router.post("/create-billing-portal-session", billingPortalLimiter, async (req, res) => {
+    if (!config.stripeBillingPortalConfigurationId) {
+        return res.status(503).json({
+            error: "Billing management is not configured yet."
+        });
+    }
+
+    try {
+        const setupToken = getSetupToken(req);
+
+        if (!isOpaqueToken(setupToken)) {
+            return res.status(401).json({
+                error: "We couldn't find an active billing session for this browser."
+            });
+        }
+
+        const purchase = await getQuery(
+            `SELECT id, status, setupTokenExpiresAt, stripeCustomerId
+             FROM purchases
+             WHERE setupToken = ?`,
+            [setupToken]
+        );
+
+        if (!purchase) {
+            return res.status(401).json({
+                error: "We couldn't find an active billing session for this browser."
+            });
+        }
+
+        if (
+            purchase.setupTokenExpiresAt &&
+            Number(purchase.setupTokenExpiresAt) < Date.now()
+        ) {
+            return res.status(410).json({
+                error: "This billing session has expired."
+            });
+        }
+
+        if (
+            purchase.status !== PURCHASE_STATUS.PAID &&
+            purchase.status !== PURCHASE_STATUS.COMPLETED
+        ) {
+            return res.status(409).json({
+                error: "Billing management is available after payment is confirmed."
+            });
+        }
+
+        if (!purchase.stripeCustomerId) {
+            return res.status(409).json({
+                error: "This order is not linked to a Stripe customer yet."
+            });
+        }
+
+        const portalSession = await stripe.billingPortal.sessions.create({
+            customer: purchase.stripeCustomerId,
+            configuration: config.stripeBillingPortalConfigurationId,
+            return_url: `${config.baseUrl}/success`
+        });
+
+        if (!portalSession?.url) {
+            throw new Error("Stripe did not return a billing portal URL");
+        }
+
+        return res.json({ url: portalSession.url });
+    } catch (err) {
+        console.error("Billing portal session creation failed:", err);
+        return res.status(500).json({ error: "Could not open billing management" });
     }
 });
 

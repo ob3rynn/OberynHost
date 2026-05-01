@@ -94,6 +94,7 @@ async function createTestApp(t, options = {}) {
         "STRIPE_API_VERSION",
         "STRIPE_WEBHOOK_SECRET",
         "STRIPE_PRICE_PAPER_2GB",
+        "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
         "OUTBOUND_EMAIL_FROM",
         "EMAIL_PROVIDER",
         "POSTMARK_SERVER_TOKEN",
@@ -112,6 +113,11 @@ async function createTestApp(t, options = {}) {
     process.env.STRIPE_API_VERSION = options.stripeApiVersion || "2026-02-25.clover";
     process.env.STRIPE_WEBHOOK_SECRET = options.stripeWebhookSecret || "whsec_test_mocked";
     process.env.STRIPE_PRICE_PAPER_2GB = options.stripePricePaper2GB || "price_test_paper_2gb";
+    if (options.stripeBillingPortalConfigurationId === undefined) {
+        delete process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID;
+    } else {
+        process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID = options.stripeBillingPortalConfigurationId;
+    }
     process.env.OUTBOUND_EMAIL_FROM = options.outboundEmailFrom || "support@oberynn.com";
     process.env.EMAIL_PROVIDER = "log";
     delete process.env.POSTMARK_SERVER_TOKEN;
@@ -134,10 +140,16 @@ async function createTestApp(t, options = {}) {
     const stripeState = {
         constructors: [],
         lastCreatedSessionParams: null,
+        lastCreatedPortalSessionParams: null,
         createSession: async params => ({
             id: `cs_test_${Date.now()}`,
             url: "https://checkout.stripe.test/session",
             ...options.createdSession
+        }),
+        createPortalSession: async params => ({
+            id: `bps_test_${Date.now()}`,
+            url: "https://billing.stripe.test/session",
+            ...options.createdPortalSession
         }),
         retrieveSession: async id => ({
             id,
@@ -178,6 +190,11 @@ async function createTestApp(t, options = {}) {
         stripeState.lastCreatedSessionParams = params;
         return originalCreateSession(params);
     };
+    const originalCreatePortalSession = stripeState.createPortalSession;
+    stripeState.createPortalSession = async params => {
+        stripeState.lastCreatedPortalSessionParams = params;
+        return originalCreatePortalSession(params);
+    };
 
     const originalLoad = Module._load;
     Module._load = function patchedLoad(request, parent, isMain) {
@@ -190,6 +207,11 @@ async function createTestApp(t, options = {}) {
                             sessions: {
                                 create: params => stripeState.createSession(params),
                                 retrieve: id => stripeState.retrieveSession(id)
+                            }
+                        },
+                        billingPortal: {
+                            sessions: {
+                                create: params => stripeState.createPortalSession(params)
                             }
                         },
                         subscriptions: {

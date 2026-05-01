@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Panel | OberynHost</title>
+    <link rel="icon" type="image/png" href="/assets/brand/oberynhost_icon_web.png">
+    <link rel="apple-touch-icon" href="/assets/brand/oberynhost_icon_web.png">
     <style>
         :root {
             color-scheme: dark;
@@ -84,16 +86,15 @@
         }
 
         .brand__mark {
-            display: grid;
-            place-items: center;
             width: 46px;
             height: 46px;
+            display: block;
             border-radius: 14px;
-            background: linear-gradient(145deg, var(--accent-glow), var(--accent-strong) 38%, var(--accent) 78%);
-            color: #071b1c;
-            font-weight: 800;
-            letter-spacing: 0.05em;
-            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.18);
+            object-fit: cover;
+            background: #061011;
+            box-shadow:
+                inset 0 1px 1px rgba(255, 255, 255, 0.18),
+                0 8px 18px rgba(20, 72, 77, 0.2);
         }
 
         .brand__copy strong,
@@ -1135,7 +1136,7 @@
 <div id="adminPanel" class="site-frame">
     <header class="topbar">
         <a class="brand" href="/">
-            <span class="brand__mark">OH</span>
+            <img class="brand__mark" src="/assets/brand/oberynhost_icon_web.png" alt="" aria-hidden="true">
             <span class="brand__copy">
                 <strong>OberynHost</strong>
                 <small>Admin control panel</small>

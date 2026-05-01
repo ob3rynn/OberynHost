@@ -23,28 +23,54 @@ class OberynHostThemePlugin implements Plugin
             )
             ->renderHook(
                 PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE,
-                fn (): string => view('oberynhosttheme::hooks.auth-brand')->render(),
+                fn (): string => view('oberynhosttheme::hooks.auth-brand', $this->brandAssets())->render(),
             )
             ->renderHook(
                 PanelsRenderHook::AUTH_PASSWORD_RESET_REQUEST_FORM_BEFORE,
-                fn (): string => view('oberynhosttheme::hooks.auth-brand')->render(),
+                fn (): string => view('oberynhosttheme::hooks.auth-brand', $this->brandAssets())->render(),
             )
             ->renderHook(
                 PanelsRenderHook::AUTH_PASSWORD_RESET_RESET_FORM_BEFORE,
-                fn (): string => view('oberynhosttheme::hooks.auth-brand')->render(),
+                fn (): string => view('oberynhosttheme::hooks.auth-brand', $this->brandAssets())->render(),
             )
             ->renderHook(
                 PanelsRenderHook::TOPBAR_LOGO_AFTER,
-                fn (): string => view('oberynhosttheme::hooks.logo-mark')->render(),
+                fn (): string => view('oberynhosttheme::hooks.logo-mark', $this->brandAssets())->render(),
             )
             ->renderHook(
                 PanelsRenderHook::SIDEBAR_LOGO_AFTER,
-                fn (): string => view('oberynhosttheme::hooks.logo-mark')->render(),
+                fn (): string => view('oberynhosttheme::hooks.logo-mark', $this->brandAssets())->render(),
             );
     }
 
     public function boot(Panel $panel): void
     {
         //
+    }
+
+    private function brandAssets(): array
+    {
+        return [
+            'oberynIconDataUri' => $this->brandAssetDataUri('oberynhost_icon_web.png'),
+        ];
+    }
+
+    private function brandAssetDataUri(string $filename): string
+    {
+        $path = dirname(__DIR__) . '/resources/assets/brand/' . $filename;
+
+        if (! is_file($path)) {
+            return '';
+        }
+
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = $extension === 'jpg' ? 'jpeg' : $extension;
+        $contents = file_get_contents($path);
+
+        if ($contents === false) {
+            return '';
+        }
+
+        return 'data:image/' . $mime . ';base64,' . base64_encode($contents);
     }
 }
