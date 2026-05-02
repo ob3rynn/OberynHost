@@ -140,6 +140,10 @@ async function findPurchaseForStripeEvent({ purchaseId = null, stripeSessionId =
 }
 
 async function findCheckoutPurchaseForPaidSession(session, stripeSubscriptionId) {
+    if (!session || typeof session !== "object" || Array.isArray(session)) {
+        return null;
+    }
+
     if (session.id) {
         const purchase = await getQuery(
             "SELECT * FROM purchases WHERE stripeSessionId = ?",
@@ -308,6 +312,10 @@ async function cancelPurchaseAndRelease(purchaseId, serverId) {
 }
 
 async function markPurchasePaid(session, subscription = null) {
+    if (!session || typeof session !== "object" || Array.isArray(session)) {
+        return null;
+    }
+
     const email = session.customer_details?.email || session.customer_email || "";
     const fallbackSetupToken = generateOpaqueToken();
     const setupTokenExpiresAt = Date.now() + config.setupTokenTtlMs;
@@ -456,6 +464,10 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
 }
 
 async function expirePurchase(session) {
+    if (!session || typeof session !== "object" || Array.isArray(session)) {
+        return;
+    }
+
     const purchaseId = Number(session.metadata?.purchaseId);
     const purchase = await findPurchaseForStripeEvent({
         purchaseId,

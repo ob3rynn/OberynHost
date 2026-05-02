@@ -1,6 +1,7 @@
 const config = require("../config");
 const { allQuery, getQuery, runQuery } = require("../db/queries");
 const { rollbackTransaction } = require("../db/transactions");
+const { assertEmailHeaderSafe } = require("../utils/emailSafety");
 const { generateOpaqueToken } = require("../utils/tokens");
 
 const EMAIL_OUTBOX_STATE = {
@@ -78,6 +79,10 @@ function getPanelUrl() {
     return String(config.pelican?.panelUrl || "").trim();
 }
 
+function getSafeSenderEmail() {
+    return assertEmailHeaderSafe(config.outboundEmailFrom, "Sender email");
+}
+
 function buildSetupReminderUrl(purchase) {
     const baseUrl = String(config.baseUrl || "").trim();
     const stripeSessionId = String(purchase?.stripeSessionId || "").trim();
@@ -95,7 +100,7 @@ function buildSetupReminderUrl(purchase) {
 
 function buildReadyEmailMessage(purchase) {
     const panelUrl = getPanelUrl();
-    const recipientEmail = String(purchase?.email || "").trim();
+    const recipientEmail = assertEmailHeaderSafe(purchase?.email, "Customer email");
     const pelicanUsername = String(purchase?.pelicanUsername || "").trim();
     const serverName = String(purchase?.serverName || "your server").trim();
 
@@ -122,7 +127,7 @@ function buildReadyEmailMessage(purchase) {
     return {
         kind: EMAIL_KIND.READY_ACCESS,
         recipientEmail,
-        senderEmail: config.outboundEmailFrom,
+        senderEmail: getSafeSenderEmail(),
         subject,
         bodyText,
         payload: {
@@ -137,7 +142,7 @@ function buildReadyEmailMessage(purchase) {
 }
 
 function buildSetupReminderEmailMessage(purchase) {
-    const recipientEmail = String(purchase?.email || "").trim();
+    const recipientEmail = assertEmailHeaderSafe(purchase?.email, "Customer email");
     const setupUrl = buildSetupReminderUrl(purchase);
     const serverLabel = String(purchase?.planType || purchase?.serverType || "server").trim() || "server";
 
@@ -156,7 +161,7 @@ function buildSetupReminderEmailMessage(purchase) {
     return {
         kind: EMAIL_KIND.SETUP_REMINDER,
         recipientEmail,
-        senderEmail: config.outboundEmailFrom,
+        senderEmail: getSafeSenderEmail(),
         subject,
         bodyText,
         payload: {
@@ -171,7 +176,7 @@ function buildSetupReminderEmailMessage(purchase) {
 
 function buildSuspensionDeleteWarningEmailMessage(purchase, kind) {
     const warning = SUSPENSION_DELETE_WARNING_CONFIG[kind];
-    const recipientEmail = String(purchase?.email || "").trim();
+    const recipientEmail = assertEmailHeaderSafe(purchase?.email, "Customer email");
     const serverName = String(purchase?.serverName || "your server").trim();
     const purgeEligibleAt = Number(purchase?.purgeEligibleAt || 0) || null;
 
@@ -199,7 +204,7 @@ function buildSuspensionDeleteWarningEmailMessage(purchase, kind) {
     return {
         kind,
         recipientEmail,
-        senderEmail: config.outboundEmailFrom,
+        senderEmail: getSafeSenderEmail(),
         subject,
         bodyText,
         payload: {

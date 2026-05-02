@@ -11,6 +11,10 @@ module.exports = function requireSameOrigin(req, res, next) {
     const referer = req.headers.referer;
     const allowedOrigins = new Set(config.allowedOrigins);
 
+    if (!origin && !referer) {
+        return res.status(403).json({ error: "Cross-origin requests are not allowed" });
+    }
+
     if (origin && !allowedOrigins.has(origin)) {
         return res.status(403).json({ error: "Cross-origin requests are not allowed" });
     }

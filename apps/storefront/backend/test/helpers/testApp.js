@@ -173,6 +173,10 @@ async function createTestApp(t, options = {}) {
             }
         }),
         constructEvent: (body, signature) => {
+            if (!signature) {
+                throw new Error("Missing signature");
+            }
+
             if (signature === "bad-signature") {
                 throw new Error("Bad signature");
             }

@@ -26,6 +26,7 @@ const {
     fetchPelicanPurchaseFacts
 } = require("../../services/pelicanProvisioner");
 const { clearCookie, parseCookies, serializeCookie } = require("../../utils/cookies");
+const { assertEmailHeaderSafe } = require("../../utils/emailSafety");
 const { allQuery, getQuery, runQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
 const {
@@ -1318,6 +1319,15 @@ router.patch("/admin/purchases/:purchaseId", async (req, res) => {
         let setupToken = purchase.setupToken || null;
         let setupTokenExpiresAt = purchase.setupTokenExpiresAt || null;
         let serviceSuspendedAt = purchase.serviceSuspendedAt || null;
+
+        if (emailInput.present) {
+            try {
+                assertEmailHeaderSafe(email, "Email");
+            } catch (err) {
+                await rollbackTransaction();
+                return res.status(400).json({ error: err.message });
+            }
+        }
 
         if (setupTokenAction === "clear") {
             setupToken = null;

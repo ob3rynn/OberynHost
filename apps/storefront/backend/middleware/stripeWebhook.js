@@ -4,6 +4,20 @@ const { markPurchasePaid, expirePurchase, syncPurchaseSubscription, getStripeObj
 
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 
+function getStripeEventObject(event) {
+    const object = event?.data?.object;
+
+    if (!object || typeof object !== "object" || Array.isArray(object)) {
+        console.warn("Stripe webhook event ignored because data.object was not usable.", {
+            eventId: event?.id || null,
+            eventType: event?.type || null
+        });
+        return null;
+    }
+
+    return object;
+}
+
 module.exports = async (req, res) => {
     const signature = req.headers["stripe-signature"];
 
@@ -20,7 +34,12 @@ module.exports = async (req, res) => {
         switch (event.type) {
             case "checkout.session.completed":
             case "checkout.session.async_payment_succeeded": {
-                const session = event.data.object;
+                const session = getStripeEventObject(event);
+
+                if (!session) {
+                    break;
+                }
+
                 const subscriptionId = getStripeObjectId(session.subscription);
                 const subscription = subscriptionId
                     ? await stripe.subscriptions.retrieve(subscriptionId)
@@ -29,13 +48,23 @@ module.exports = async (req, res) => {
                 break;
             }
 
-            case "checkout.session.expired":
-                await expirePurchase(event.data.object);
+            case "checkout.session.expired": {
+                const session = getStripeEventObject(event);
+
+                if (session) {
+                    await expirePurchase(session);
+                }
                 break;
+            }
 
             case "invoice.paid":
             case "invoice.payment_failed": {
-                const invoice = event.data.object;
+                const invoice = getStripeEventObject(event);
+
+                if (!invoice) {
+                    break;
+                }
+
                 const subscriptionId = getStripeObjectId(invoice.subscription);
 
                 if (subscriptionId) {
@@ -56,9 +85,14 @@ module.exports = async (req, res) => {
 
             case "customer.subscription.created":
             case "customer.subscription.updated":
-            case "customer.subscription.deleted":
-                await syncPurchaseSubscription(event.data.object);
+            case "customer.subscription.deleted": {
+                const subscription = getStripeEventObject(event);
+
+                if (subscription) {
+                    await syncPurchaseSubscription(subscription);
+                }
                 break;
+            }
         }
 
         res.json({ received: true });
