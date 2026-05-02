@@ -2,6 +2,7 @@ const config = require("../config");
 const db = require("./index");
 const { SERVER_STATUS, PURCHASE_STATUS } = require("../constants/status");
 const { PLAN_DEFINITIONS } = require("../config/plans");
+const { createLaunchPlanDefinition, savePlanDefinition } = require("../services/catalog");
 const { mergeLifecycleState } = require("../services/lifecycle");
 
 const [LAUNCH_PLAN_TYPE, LAUNCH_PLAN] = Object.entries(PLAN_DEFINITIONS)[0] || [];
@@ -74,103 +75,17 @@ async function seedLaunchCatalog() {
         throw new Error("Launch plan configuration is missing.");
     }
 
-    await upsertCatalogRow(
-        "products",
-        "code",
-        [
-            "code",
-            "planType",
-            "displayName",
-            "price",
-            "productFamily",
-            "runtimeFamily",
-            "runtimeTemplate",
-            "inventoryBucketCode",
-            "nodeGroupCode",
-            "provisioningTargetCode",
-            "launchSlotCount",
-            "active",
-            "releaseGateMode"
-        ],
-        [
-            LAUNCH_PLAN.code,
-            LAUNCH_PLAN_TYPE,
-            LAUNCH_PLAN.displayName,
-            LAUNCH_PLAN.price,
-            LAUNCH_PLAN.productFamily,
-            LAUNCH_PLAN.runtimeFamily,
-            LAUNCH_PLAN.runtimeTemplate,
-            LAUNCH_PLAN.inventoryBucketCode,
-            LAUNCH_PLAN.nodeGroupCode,
-            LAUNCH_PLAN.provisioningTargetCode,
-            LAUNCH_PLAN.launchSlotCount,
-            1,
-            "admin_release"
-        ]
+    const launchDefinition = createLaunchPlanDefinition(
+        LAUNCH_PLAN_TYPE,
+        LAUNCH_PLAN,
+        config.stripePriceIds[LAUNCH_PLAN_TYPE]
     );
 
-    await upsertCatalogRow(
-        "inventoryBuckets",
-        "code",
-        [
-            "code",
-            "productCode",
-            "displayName",
-            "capacityTarget",
-            "reservationPolicy",
-            "releasePolicy",
-            "active"
-        ],
-        [
-            LAUNCH_PLAN.inventoryBucketCode,
-            LAUNCH_PLAN.code,
-            "2GB Paper Minecraft Server Launch Bucket",
-            LAUNCH_PLAN.launchSlotCount,
-            "reserve_on_checkout",
-            "release_on_expire_or_cancel",
-            1
-        ]
-    );
+    const result = await savePlanDefinition(launchDefinition);
 
-    await upsertCatalogRow(
-        "nodeGroups",
-        "code",
-        [
-            "code",
-            "displayName",
-            "runtimeFamily",
-            "allocationMode",
-            "active"
-        ],
-        [
-            LAUNCH_PLAN.nodeGroupCode,
-            "Paper Launch Group",
-            LAUNCH_PLAN.runtimeFamily,
-            "manual_edge_apply",
-            1
-        ]
-    );
-
-    await upsertCatalogRow(
-        "provisioningTargets",
-        "code",
-        [
-            "code",
-            "nodeGroupCode",
-            "displayName",
-            "runtimeFamily",
-            "operatorMode",
-            "active"
-        ],
-        [
-            LAUNCH_PLAN.provisioningTargetCode,
-            LAUNCH_PLAN.nodeGroupCode,
-            "Paper Launch Default Target",
-            LAUNCH_PLAN.runtimeFamily,
-            "operator_release_gate",
-            1
-        ]
-    );
+    if (!result.saved) {
+        throw new Error(`Launch plan definition is invalid: ${result.validation.errors.join("; ")}`);
+    }
 }
 
 async function seedLaunchInventory() {
@@ -328,6 +243,23 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE TABLE IF NOT EXISTS planDefinitions (
+                planKey TEXT PRIMARY KEY,
+                productCode TEXT NOT NULL UNIQUE,
+                definitionJson TEXT NOT NULL,
+                stripePriceId TEXT,
+                stripePriceMetadataJson TEXT,
+                active INTEGER NOT NULL DEFAULT 0,
+                storefrontVisible INTEGER NOT NULL DEFAULT 0,
+                sortOrder INTEGER NOT NULL DEFAULT 100,
+                validationStatus TEXT NOT NULL DEFAULT 'valid',
+                validationErrorsJson TEXT,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )
+        `);
+
+        await runStatement(`
             CREATE TABLE IF NOT EXISTS inventoryBuckets (
                 code TEXT PRIMARY KEY,
                 productCode TEXT NOT NULL,
@@ -443,10 +375,36 @@ const ready = (async () => {
             )
         `);
 
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS waitlistEntries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL COLLATE NOCASE,
+                name TEXT,
+                note TEXT,
+                planKey TEXT NOT NULL,
+                productCode TEXT NOT NULL,
+                inventoryBucketCode TEXT,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )
+        `);
+
         const purchaseColumns = await getAllRows("PRAGMA table_info(purchases)");
         const purchaseColumnNames = new Set(purchaseColumns.map(column => column.name));
         const serverColumns = await getAllRows("PRAGMA table_info(servers)");
         const serverColumnNames = new Set(serverColumns.map(column => column.name));
+        const productColumns = await getAllRows("PRAGMA table_info(products)");
+        const productColumnNames = new Set(productColumns.map(column => column.name));
+        const inventoryBucketColumns = await getAllRows("PRAGMA table_info(inventoryBuckets)");
+        const inventoryBucketColumnNames = new Set(inventoryBucketColumns.map(column => column.name));
+        const nodeGroupColumns = await getAllRows("PRAGMA table_info(nodeGroups)");
+        const nodeGroupColumnNames = new Set(nodeGroupColumns.map(column => column.name));
+        const provisioningTargetColumns = await getAllRows("PRAGMA table_info(provisioningTargets)");
+        const provisioningTargetColumnNames = new Set(provisioningTargetColumns.map(column => column.name));
+        const adminAuditColumns = await getAllRows("PRAGMA table_info(adminAuditLog)");
+        const adminAuditColumnNames = new Set(adminAuditColumns.map(column => column.name));
         const fulfillmentQueueColumns = await getAllRows("PRAGMA table_info(fulfillmentQueue)");
         const fulfillmentQueueColumnNames = new Set(fulfillmentQueueColumns.map(column => column.name));
         const emailOutboxColumns = await getAllRows("PRAGMA table_info(emailOutbox)");
@@ -461,6 +419,23 @@ const ready = (async () => {
         await addColumnIfMissing("servers", serverColumnNames, "reservationKey", "TEXT");
         await addColumnIfMissing("servers", serverColumnNames, "reservedAt", "INTEGER");
         await addColumnIfMissing("servers", serverColumnNames, "allocatedAt", "INTEGER");
+
+        await addColumnIfMissing("products", productColumnNames, "description", "TEXT");
+        await addColumnIfMissing("products", productColumnNames, "priceLabel", "TEXT");
+        await addColumnIfMissing("products", productColumnNames, "storefrontVisible", "INTEGER DEFAULT 1");
+        await addColumnIfMissing("products", productColumnNames, "sortOrder", "INTEGER DEFAULT 100");
+        await addColumnIfMissing("products", productColumnNames, "stripePriceId", "TEXT");
+        await addColumnIfMissing("inventoryBuckets", inventoryBucketColumnNames, "purchaseEnabled", "INTEGER DEFAULT 1");
+        await addColumnIfMissing("inventoryBuckets", inventoryBucketColumnNames, "adminNotes", "TEXT");
+        await addColumnIfMissing("nodeGroups", nodeGroupColumnNames, "adminNotes", "TEXT");
+        await addColumnIfMissing("nodeGroups", nodeGroupColumnNames, "supportedVersionsJson", "TEXT");
+        await addColumnIfMissing("provisioningTargets", provisioningTargetColumnNames, "adminNotes", "TEXT");
+        await addColumnIfMissing("provisioningTargets", provisioningTargetColumnNames, "supportedVersionsJson", "TEXT");
+        await addColumnIfMissing("adminAuditLog", adminAuditColumnNames, "entityType", "TEXT");
+        await addColumnIfMissing("adminAuditLog", adminAuditColumnNames, "entityCode", "TEXT");
+        await addColumnIfMissing("adminAuditLog", adminAuditColumnNames, "oldValueJson", "TEXT");
+        await addColumnIfMissing("adminAuditLog", adminAuditColumnNames, "newValueJson", "TEXT");
+        await addColumnIfMissing("adminAuditLog", adminAuditColumnNames, "actorJson", "TEXT");
 
         if (!purchaseColumnNames.has("setupToken")) {
             await runStatement("ALTER TABLE purchases ADD COLUMN setupToken TEXT");
@@ -556,6 +531,10 @@ const ready = (async () => {
         await addColumnIfMissing("purchases", purchaseColumnNames, "updatedAt", "INTEGER");
         await addColumnIfMissing("purchases", purchaseColumnNames, "completedAt", "INTEGER");
         await addColumnIfMissing("purchases", purchaseColumnNames, "paidAt", "INTEGER");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "planSnapshotJson", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "stripePriceSnapshotJson", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "inventorySnapshotJson", "TEXT");
+        await addColumnIfMissing("purchases", purchaseColumnNames, "provisioningSnapshotJson", "TEXT");
         await addColumnIfMissing("fulfillmentQueue", fulfillmentQueueColumnNames, "leaseKey", "TEXT");
         await addColumnIfMissing("fulfillmentQueue", fulfillmentQueueColumnNames, "leaseExpiresAt", "INTEGER");
         await addColumnIfMissing("fulfillmentQueue", fulfillmentQueueColumnNames, "completedAt", "INTEGER");
@@ -626,6 +605,16 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_plan_definitions_public
+            ON planDefinitions(active, storefrontVisible, sortOrder, planKey)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_inventory_buckets_active
+            ON inventoryBuckets(active, purchaseEnabled, productCode)
+        `);
+
+        await runStatement(`
             CREATE INDEX IF NOT EXISTS idx_purchases_plan_status
             ON purchases(planType, status, createdAt DESC)
         `);
@@ -678,6 +667,17 @@ const ready = (async () => {
         await runStatement(`
             CREATE INDEX IF NOT EXISTS idx_email_outbox_purchase
             ON emailOutbox(purchaseId, createdAt DESC)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_waitlist_entries_filters
+            ON waitlistEntries(planKey, status, createdAt DESC)
+        `);
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_active_email_plan
+            ON waitlistEntries(email COLLATE NOCASE, planKey)
+            WHERE status IN ('waiting', 'notified')
         `);
 
         await runStatement("UPDATE servers SET status = ? WHERE status = 'reserved'", [

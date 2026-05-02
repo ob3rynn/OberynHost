@@ -63,7 +63,7 @@ async function fetchResumeCheckout() {
 
 function getAvailabilityCopy(plan) {
     if (plan.available === 0) {
-        return "Currently sold out";
+        return "Currently full";
     }
 
     if (plan.available === 1) {
@@ -95,7 +95,11 @@ function createPlanCard(plan, options = {}) {
 
     const price = document.createElement("p");
     price.className = "plan-card__price";
-    price.innerHTML = `<strong>$${plan.price}</strong><span>/ month</span>`;
+    if (plan.priceLabel) {
+        price.innerHTML = `<strong>${plan.priceLabel}</strong>`;
+    } else {
+        price.innerHTML = `<strong>$${plan.price}</strong><span>/ month</span>`;
+    }
     card.appendChild(price);
 
     const list = document.createElement("ul");
@@ -115,17 +119,19 @@ function createPlanCard(plan, options = {}) {
     const note = document.createElement("p");
     note.className = "plan-card__note";
     note.textContent = plan.available === 0
-        ? "This server is unavailable right now."
+        ? "This plan is at capacity. Join the waitlist and we’ll contact you when a slot opens."
         : "Checkout will reserve inventory before redirecting to Stripe.";
     footer.appendChild(note);
 
     const button = document.createElement("button");
     button.className = "button button--primary";
-    button.textContent = plan.available === 0 ? "Sold Out" : options.ctaLabel || "Get Server";
-    button.disabled = plan.available === 0;
+    button.textContent = plan.available === 0 ? "Join Waitlist" : options.ctaLabel || "Get Server";
+    button.disabled = false;
     button.dataset.defaultLabel = button.textContent;
 
-    if (plan.available > 0) {
+    if (plan.available === 0) {
+        button.onclick = () => showWaitlistForm(card, plan, button);
+    } else {
         button.onclick = () => startCheckout(plan.type, button);
     }
 
@@ -133,6 +139,83 @@ function createPlanCard(plan, options = {}) {
     card.appendChild(footer);
 
     return card;
+}
+
+function showWaitlistForm(card, plan, button) {
+    const existing = card.querySelector(".waitlist-form");
+
+    if (existing) {
+        existing.querySelector("input")?.focus();
+        return;
+    }
+
+    const form = document.createElement("form");
+    form.className = "waitlist-form";
+    form.innerHTML = `
+        <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" required>
+        </label>
+        <label>
+            <span>Name</span>
+            <input name="name" type="text" autocomplete="name">
+        </label>
+        <label>
+            <span>Note</span>
+            <textarea name="note" rows="3"></textarea>
+        </label>
+        <p class="waitlist-form__message" role="status"></p>
+    `;
+
+    const submit = document.createElement("button");
+    submit.className = "button button--primary";
+    submit.type = "submit";
+    submit.textContent = "Join Waitlist";
+    form.appendChild(submit);
+
+    form.onsubmit = event => submitWaitlist(event, plan, submit);
+    card.appendChild(form);
+    button.disabled = true;
+}
+
+async function submitWaitlist(event, plan, submitButton) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const message = form.querySelector(".waitlist-form__message");
+    const data = new FormData(form);
+    submitButton.disabled = true;
+    submitButton.textContent = "Joining...";
+    message.textContent = "";
+
+    try {
+        const res = await fetch("/api/waitlist", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                planKey: plan.planKey || plan.type,
+                email: data.get("email"),
+                name: data.get("name"),
+                note: data.get("note"),
+                source: "storefront"
+            })
+        });
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+            message.textContent = payload.error || "Could not join the waitlist right now.";
+            return;
+        }
+
+        form.reset();
+        message.textContent = payload.message || "You're on the waitlist. We'll contact you when capacity opens.";
+    } catch {
+        message.textContent = "Network error while joining the waitlist.";
+    } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = "Join Waitlist";
+    }
 }
 
 function renderResumeCheckout(container) {

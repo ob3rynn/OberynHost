@@ -431,6 +431,44 @@ button:disabled {
     min-height: 44px;
 }
 
+.waitlist-form {
+    display: grid;
+    gap: 12px;
+    margin-top: 4px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+}
+
+.waitlist-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--muted-strong);
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+
+.waitlist-form input,
+.waitlist-form textarea {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    font: inherit;
+}
+
+.waitlist-form textarea {
+    resize: vertical;
+    min-height: 86px;
+}
+
+.waitlist-form__message {
+    min-height: 24px;
+    color: var(--accent-glow);
+    font-size: 0.94rem;
+}
+
 .empty-state {
     padding: 18px;
     border-radius: 18px;

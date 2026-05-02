@@ -377,6 +377,41 @@
             gap: 22px;
         }
 
+        .wizard-steps {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+
+        .wizard-step {
+            border-radius: 8px;
+            padding: 9px 12px;
+            border-color: var(--line);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--muted-strong);
+        }
+
+        .wizard-step.is-active {
+            background: var(--accent-soft);
+            color: var(--text);
+            border-color: rgba(42, 139, 143, 0.24);
+        }
+
+        .wizard-panel {
+            display: grid;
+            gap: 14px;
+        }
+
+        .wizard-panel[hidden] {
+            display: none;
+        }
+
+        .generated-review {
+            display: grid;
+            gap: 12px;
+        }
+
         .view-intro {
             display: flex;
             justify-content: space-between;
@@ -1198,8 +1233,39 @@ const TAB_CONFIG = [
         label: "Archive",
         title: "Archive",
         subtitle: "Expired, cancelled, and historical fulfilled orders."
+    },
+    {
+        key: "planBuilder",
+        label: "Plan Builder",
+        title: "Plan Builder",
+        subtitle: "Create, preview, validate, and save generated hosting plan definitions."
+    },
+    {
+        key: "catalog",
+        label: "Catalog",
+        title: "Generated Plans",
+        subtitle: "Review generated plan JSON, storefront visibility, and Stripe metadata."
+    },
+    {
+        key: "inventory",
+        label: "Inventory",
+        title: "Inventory Buckets",
+        subtitle: "Adjust safe slot counts and purchase availability without releasing live capacity."
+    },
+    {
+        key: "targets",
+        label: "Targets",
+        title: "Provisioning Targets",
+        subtitle: "See where each plan routes for provisioning and manage safe target metadata."
+    },
+    {
+        key: "waitlist",
+        label: "Waitlist",
+        title: "Waitlist",
+        subtitle: "Review unpaid demand and update manual outreach status."
     }
 ];
+const RESOURCE_TABS = new Set(["planBuilder", "catalog", "inventory", "targets", "waitlist"]);
 
 const PURCHASE_STATUSES = ["checkout_pending", "paid", "completed", "expired", "cancelled"];
 const SERVER_STATUSES = ["available", "held", "allocated"];
@@ -1243,6 +1309,10 @@ const DETAIL_HELP = {
 };
 const state = {
     purchases: [],
+    plans: [],
+    inventoryBuckets: [],
+    provisioningTargets: [],
+    waitlist: [],
     activeTab: localStorage.getItem("admin.activeTab") || "needsAttention",
     selectedPurchaseIds: new Set(),
     bulkToolbarOpen: false
@@ -1721,7 +1791,15 @@ function renderTabs(data) {
     tabbar.innerHTML = "";
 
     TAB_CONFIG.forEach(tab => {
-        const count = tab.key === "overview" ? data.length : grouped[tab.key].length;
+        const count = RESOURCE_TABS.has(tab.key)
+            ? {
+                planBuilder: state.plans.length,
+                catalog: state.plans.length,
+                inventory: state.inventoryBuckets.length,
+                targets: state.provisioningTargets.length,
+                waitlist: state.waitlist.length
+            }[tab.key] || 0
+            : grouped[tab.key].length;
         const button = document.createElement("button");
         button.type = "button";
         button.className = `tab-button ${state.activeTab === tab.key ? "is-active" : ""}`;
@@ -2967,6 +3045,476 @@ function renderListView(items, emptyText) {
     return wrapper;
 }
 
+function createAdminField(label, name, value = "", options = {}) {
+    const wrapper = createElement("label", "field");
+    wrapper.appendChild(createElement("span", "", label));
+    const input = document.createElement(options.multiline ? "textarea" : "input");
+    input.name = name;
+    input.value = value ?? "";
+    input.type = options.type || "text";
+    if (options.required) input.required = true;
+    if (options.step) input.step = options.step;
+    if (options.min !== undefined) input.min = options.min;
+    if (options.placeholder) input.placeholder = options.placeholder;
+    wrapper.appendChild(input);
+    return wrapper;
+}
+
+function createAdminSelect(label, name, options = [], selectedValue = "") {
+    const wrapper = createElement("label", "field");
+    wrapper.appendChild(createElement("span", "", label));
+    const select = document.createElement("select");
+    select.name = name;
+    options.forEach(entry => {
+        const option = document.createElement("option");
+        option.value = entry.value;
+        option.textContent = entry.label;
+        option.selected = entry.value === selectedValue;
+        select.appendChild(option);
+    });
+    wrapper.appendChild(select);
+    return wrapper;
+}
+
+function createAdminCheckbox(name, labelText, checked = false) {
+    const label = createElement("label", "field");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = name;
+    checkbox.checked = checked;
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(` ${labelText}`));
+    return label;
+}
+
+function slugifyPlanKey(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .replace(/-{2,}/g, "-");
+}
+
+function getProvisioningProfileOptions(selectedValue = "") {
+    const targets = state.provisioningTargets.length
+        ? state.provisioningTargets
+        : [{ code: "paper-launch-default", displayName: "Paper Launch Default", active: true }];
+    return targets.map(target => ({
+        value: target.code,
+        label: `${target.displayName || target.code}${target.active ? "" : " (inactive)"}`
+    })).sort((a, b) => {
+        if (a.value === selectedValue) return -1;
+        if (b.value === selectedValue) return 1;
+        return a.label.localeCompare(b.label);
+    });
+}
+
+function collectPlanForm(form) {
+    const data = new FormData(form);
+    return {
+        planKey: data.get("planKey"),
+        publicName: data.get("publicName"),
+        publicDescription: data.get("publicDescription"),
+        runtimeFamily: data.get("runtimeFamily"),
+        containerMemoryMb: data.get("containerMemoryMb"),
+        jvmMemoryMb: data.get("jvmMemoryMb"),
+        diskMb: data.get("diskMb"),
+        stripePriceId: data.get("stripePriceId"),
+        totalSlots: data.get("totalSlots"),
+        purchaseEnabled: data.get("purchaseEnabled") === "on",
+        provisioningProfileCode: data.get("provisioningProfileCode"),
+        features: data.get("features"),
+        active: data.get("active") === "on",
+        storefrontVisible: data.get("storefrontVisible") === "on"
+    };
+}
+
+function setPlanForm(form, definition) {
+    const flat = {
+        planKey: definition.planKey,
+        publicName: definition.public?.name,
+        publicDescription: definition.public?.description,
+        runtimeFamily: definition.runtime?.family,
+        containerMemoryMb: definition.runtime?.containerMemoryMb,
+        jvmMemoryMb: definition.runtime?.jvmMemoryMb,
+        diskMb: definition.runtime?.diskMb,
+        stripePriceId: definition.stripe?.priceId,
+        totalSlots: definition.inventory?.totalSlots,
+        provisioningProfileCode: definition.provisioning?.targetCode,
+        features: (definition.public?.features || []).join("\n")
+    };
+
+    for (const [name, value] of Object.entries(flat)) {
+        if (form.elements[name]) form.elements[name].value = value ?? "";
+    }
+
+    form.elements.active.checked = Boolean(definition.status?.active);
+    form.elements.storefrontVisible.checked = Boolean(definition.status?.storefrontVisible);
+    form.elements.purchaseEnabled.checked = Boolean(definition.inventory?.purchaseEnabled);
+}
+
+function renderPlanBuilderView() {
+    const wrapper = createElement("div", "view-shell");
+    const form = createElement("form", "detail-card");
+    form.dataset.mode = "create";
+    form.dataset.step = "basics";
+
+    const steps = [
+        { key: "basics", label: "Basics" },
+        { key: "resources", label: "Resources" },
+        { key: "pricing", label: "Pricing" },
+        { key: "capacity", label: "Capacity" },
+        { key: "review", label: "Review" }
+    ];
+    const stepNav = createElement("div", "wizard-steps");
+    const panels = new Map();
+
+    steps.forEach(step => {
+        const button = createElement("button", "wizard-step", step.label);
+        button.type = "button";
+        button.dataset.step = step.key;
+        button.onclick = () => setStep(step.key);
+        stepNav.appendChild(button);
+    });
+    form.appendChild(stepNav);
+
+    const basics = createElement("section", "wizard-panel");
+    basics.dataset.step = "basics";
+    const basicsGrid = createElement("div", "summary-grid");
+    [
+        createAdminField("Plan Name", "publicName", "", { placeholder: "4GB Paper Minecraft Server" }),
+        createAdminField("Plan Short Name", "planKey", "", { placeholder: "paper-4gb" })
+    ].forEach(field => basicsGrid.appendChild(field));
+    basics.appendChild(basicsGrid);
+    basics.appendChild(createAdminField("Public Description", "publicDescription", "", { multiline: true }));
+    basics.appendChild(createAdminField("Features", "features", "", {
+        multiline: true,
+        placeholder: "One storefront bullet per line"
+    }));
+    basics.appendChild(createAdminCheckbox("active", "Active plan", false));
+    basics.appendChild(createAdminCheckbox("storefrontVisible", "Show on storefront", false));
+
+    const resources = createElement("section", "wizard-panel");
+    resources.dataset.step = "resources";
+    const resourcesGrid = createElement("div", "summary-grid");
+    [
+        createAdminSelect("Minecraft Runtime", "runtimeFamily", [{ value: "paper", label: "Paper" }], "paper"),
+        createAdminField("RAM / Container Memory MB", "containerMemoryMb", "2424", { type: "number", min: "1" }),
+        createAdminField("JVM Memory MB", "jvmMemoryMb", "2024", { type: "number", min: "1" }),
+        createAdminField("Disk MB", "diskMb", "10240", { type: "number", min: "1" })
+    ].forEach(field => resourcesGrid.appendChild(field));
+    resources.appendChild(resourcesGrid);
+
+    const pricing = createElement("section", "wizard-panel");
+    pricing.dataset.step = "pricing";
+    const pricingGrid = createElement("div", "summary-grid");
+    [
+        createAdminField("Stripe Price ID", "stripePriceId", "", { placeholder: "price_..." })
+    ].forEach(field => pricingGrid.appendChild(field));
+    pricing.appendChild(pricingGrid);
+    pricing.appendChild(createElement("p", "helper-text", "Drafts can be saved without Stripe. Active or visible plans must pass Stripe price validation."));
+
+    const capacity = createElement("section", "wizard-panel");
+    capacity.dataset.step = "capacity";
+    const capacityGrid = createElement("div", "summary-grid");
+    [
+        createAdminField("Total Slots", "totalSlots", "0", { type: "number", min: "0" }),
+        createAdminSelect("Provisioning Profile", "provisioningProfileCode", getProvisioningProfileOptions("paper-launch-default"), "paper-launch-default")
+    ].forEach(field => capacityGrid.appendChild(field));
+    capacity.appendChild(capacityGrid);
+    capacity.appendChild(createAdminCheckbox("purchaseEnabled", "Purchases enabled when capacity exists", true));
+
+    const review = createElement("section", "wizard-panel generated-review");
+    review.dataset.step = "review";
+    review.appendChild(createElement("p", "", "Generated internals are shown here for review. The builder creates them from the plan short name and selected provisioning profile."));
+    const generated = createElement("div", "summary-grid");
+    review.appendChild(generated);
+    const output = createElement("pre", "json-block", "");
+    output.style.whiteSpace = "pre-wrap";
+    review.appendChild(output);
+
+    [basics, resources, pricing, capacity, review].forEach(panel => {
+        panels.set(panel.dataset.step, panel);
+        form.appendChild(panel);
+    });
+
+    const actions = createElement("div", "hero-actions");
+    const previous = createElement("button", "secondary", "Back");
+    previous.type = "button";
+    const next = createElement("button", "secondary", "Next");
+    next.type = "button";
+    const preview = createElement("button", "secondary", "Generate Review");
+    preview.type = "button";
+    const save = createElement("button", "primary", "Save Plan");
+    save.type = "submit";
+    actions.appendChild(previous);
+    actions.appendChild(next);
+    actions.appendChild(preview);
+    actions.appendChild(save);
+    form.appendChild(actions);
+
+    async function refreshPreview() {
+        try {
+            const payload = await requestJson("/api/admin/plans/preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(collectPlanForm(form))
+            });
+            output.textContent = JSON.stringify(payload, null, 2);
+            generated.replaceChildren();
+            [
+                ["Product code", payload.generated?.productCode],
+                ["Inventory bucket", payload.generated?.inventoryBucketCode],
+                ["Bucket name", payload.generated?.inventoryBucketName],
+                ["Provisioning profile", payload.generated?.provisioningProfileCode],
+                ["Node group", payload.generated?.nodeGroupCode],
+                ["Storefront order", payload.generated?.sortOrder],
+                ["CPU default", payload.generated?.cpuLimit],
+                ["Price label", payload.generated?.priceLabel],
+                ["Price amount", payload.generated?.priceAmount],
+                ["Currency", payload.generated?.priceCurrency || "Pending"],
+                ["Recurring", payload.generated?.recurringInterval || "Pending"],
+                ["Curated versions", payload.generated?.supportedVersionCount]
+            ].forEach(([label, value]) => {
+                const item = createElement("div", "meta-block");
+                item.appendChild(createElement("div", "meta-label", label));
+                item.appendChild(createElement("div", "meta-value", value ?? "-"));
+                generated.appendChild(item);
+            });
+            if (payload.validation?.valid) {
+                showBanner("Plan definition looks valid.", "success");
+            } else {
+                showBanner((payload.validation?.errors || []).join(" "), "error");
+            }
+        } catch (err) {
+            output.textContent = err.message;
+            showBanner(err.message || "Could not generate review.", "error");
+        }
+    }
+
+    function setStep(stepKey) {
+        const index = steps.findIndex(step => step.key === stepKey);
+        const safeStep = index >= 0 ? stepKey : "basics";
+        form.dataset.step = safeStep;
+        panels.forEach((panel, key) => {
+            panel.hidden = key !== safeStep;
+        });
+        stepNav.querySelectorAll("button").forEach(button => {
+            button.classList.toggle("is-active", button.dataset.step === safeStep);
+        });
+        previous.disabled = safeStep === steps[0].key;
+        next.disabled = safeStep === steps[steps.length - 1].key;
+        save.style.display = safeStep === "review" ? "" : "none";
+        if (safeStep === "review") refreshPreview();
+    }
+
+    form.elements.publicName.addEventListener("input", () => {
+        if (!form.elements.planKey.value.trim() || form.dataset.slugTouched !== "true") {
+            form.elements.planKey.value = slugifyPlanKey(form.elements.publicName.value);
+        }
+    });
+    form.elements.planKey.addEventListener("input", () => {
+        form.dataset.slugTouched = "true";
+        form.elements.planKey.value = slugifyPlanKey(form.elements.planKey.value);
+    });
+    previous.onclick = () => {
+        const index = steps.findIndex(step => step.key === form.dataset.step);
+        if (index > 0) setStep(steps[index - 1].key);
+    };
+    next.onclick = () => {
+        const index = steps.findIndex(step => step.key === form.dataset.step);
+        if (index < steps.length - 1) setStep(steps[index + 1].key);
+    };
+    preview.onclick = async () => {
+        if (form.dataset.step === "review") {
+            await refreshPreview();
+            return;
+        }
+
+        setStep("review");
+    };
+
+    form.onsubmit = async event => {
+        event.preventDefault();
+        try {
+            const payload = collectPlanForm(form);
+            const url = form.dataset.mode === "edit"
+                ? `/api/admin/plans/${encodeURIComponent(payload.planKey)}`
+                : "/api/admin/plans";
+            await requestJson(url, {
+                method: form.dataset.mode === "edit" ? "PATCH" : "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            showBanner("Plan saved.", "success");
+            await load({ silent: true });
+        } catch (err) {
+            showBanner(err.message || "Could not save plan.", "error");
+        }
+    };
+
+    wrapper.appendChild(form);
+    setStep("basics");
+    wrapper.appendChild(renderCatalogView({ compact: true, onEdit: definition => {
+        setPlanForm(form, definition);
+        form.dataset.mode = "edit";
+        form.dataset.slugTouched = "true";
+        setStep("basics");
+        showBanner("Plan loaded into builder.", "success");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }}));
+    return wrapper;
+}
+
+function renderCatalogView(options = {}) {
+    const wrapper = createElement("div", "order-grid");
+    if (!state.plans.length) return createElement("div", "empty", "No generated plans yet.");
+
+    state.plans.forEach(plan => {
+        const card = createElement("article", "order-card");
+        card.appendChild(createElement("h3", "", plan.definition.public.name));
+        card.appendChild(createElement("p", "", `Short name: ${plan.planKey} · Product code: ${plan.productCode}`));
+        card.appendChild(createElement("p", "", `${plan.active ? "Active" : "Inactive"} · ${plan.storefrontVisible ? "Visible" : "Hidden"} · ${plan.definition.public.priceLabel}`));
+        card.appendChild(createElement("p", "", `Stripe: ${plan.stripePriceId || "Not set"}`));
+        const pre = createElement("pre", "json-block", JSON.stringify(plan.definition, null, 2));
+        pre.style.whiteSpace = "pre-wrap";
+        card.appendChild(pre);
+        const actions = createElement("div", "card-actions");
+        if (options.onEdit) {
+            const edit = createElement("button", "secondary", "Edit In Builder");
+            edit.onclick = () => options.onEdit(plan.definition);
+            actions.appendChild(edit);
+        }
+        const hide = createElement("button", "warning", plan.storefrontVisible ? "Hide" : "Show");
+        hide.onclick = async () => {
+            await requestJson(`/api/admin/plans/${encodeURIComponent(plan.planKey)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: { storefrontVisible: !plan.storefrontVisible } })
+            });
+            await load({ silent: true });
+        };
+        const deactivate = createElement("button", "danger", plan.active ? "Deactivate" : "Activate");
+        deactivate.onclick = async () => {
+            await requestJson(`/api/admin/plans/${encodeURIComponent(plan.planKey)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: { active: !plan.active } })
+            });
+            await load({ silent: true });
+        };
+        actions.appendChild(hide);
+        actions.appendChild(deactivate);
+        card.appendChild(actions);
+        wrapper.appendChild(card);
+    });
+
+    return options.compact ? wrapper : wrapper;
+}
+
+function renderInventoryView() {
+    const wrapper = createElement("div", "order-grid");
+    if (!state.inventoryBuckets.length) return createElement("div", "empty", "No inventory buckets.");
+
+    state.inventoryBuckets.forEach(bucket => {
+        const card = createElement("article", "order-card");
+        card.appendChild(createElement("h3", "", bucket.displayName));
+        card.appendChild(createElement("p", "", `${bucket.code} · ${bucket.planType || bucket.productCode}`));
+        card.appendChild(createElement("p", "", `Total ${bucket.totalSlots} · Available ${bucket.available} · Reserved ${bucket.reserved} · Consumed ${bucket.consumed}`));
+        card.appendChild(createElement("p", "", `${bucket.active ? "Active" : "Inactive"} · ${bucket.purchaseEnabled ? "Purchases enabled" : "Purchases disabled"} · ${bucket.soldOut ? "Sold out" : "Capacity available"}`));
+        const form = createElement("form", "hero-actions");
+        const total = document.createElement("input");
+        total.type = "number";
+        total.value = bucket.totalSlots;
+        total.min = "0";
+        total.style.maxWidth = "120px";
+        const enabled = document.createElement("input");
+        enabled.type = "checkbox";
+        enabled.checked = bucket.purchaseEnabled;
+        const save = createElement("button", "primary", "Save");
+        save.type = "submit";
+        form.appendChild(total);
+        form.appendChild(enabled);
+        form.appendChild(document.createTextNode(" Purchase enabled "));
+        form.appendChild(save);
+        form.onsubmit = async event => {
+            event.preventDefault();
+            await requestJson(`/api/admin/inventory-buckets/${encodeURIComponent(bucket.code)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ totalSlots: Number(total.value), purchaseEnabled: enabled.checked })
+            });
+            showBanner("Inventory bucket updated.", "success");
+            await load({ silent: true });
+        };
+        card.appendChild(form);
+        wrapper.appendChild(card);
+    });
+    return wrapper;
+}
+
+function renderTargetsView() {
+    const wrapper = createElement("div", "order-grid");
+    if (!state.provisioningTargets.length) return createElement("div", "empty", "No provisioning targets.");
+
+    state.provisioningTargets.forEach(target => {
+        const card = createElement("article", "order-card");
+        card.appendChild(createElement("h3", "", target.displayName));
+        card.appendChild(createElement("p", "", `${target.code} · ${target.runtimeFamily} · ${target.active ? "Active" : "Inactive"}`));
+        card.appendChild(createElement("p", "", `Node group: ${target.nodeGroupCode} (${target.nodeGroupActive ? "active" : "inactive"})`));
+        card.appendChild(createElement("p", "", `Plans: ${(target.linkedPlans || []).join(", ") || "None"}`));
+        card.appendChild(createElement("p", "", `Buckets: ${(target.linkedBuckets || []).join(", ") || "None"}`));
+        card.appendChild(createElement("p", "", `Versions: ${(target.supportedVersions || []).join(", ") || "Not listed"}`));
+        const toggle = createElement("button", "secondary", target.active ? "Deactivate Target" : "Activate Target");
+        toggle.onclick = async () => {
+            await requestJson(`/api/admin/provisioning-targets/${encodeURIComponent(target.code)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ active: !target.active })
+            });
+            await load({ silent: true });
+        };
+        card.appendChild(toggle);
+        wrapper.appendChild(card);
+    });
+    return wrapper;
+}
+
+function renderWaitlistView() {
+    const wrapper = createElement("div", "order-grid");
+    if (!state.waitlist.length) return createElement("div", "empty", "No waitlist entries.");
+    const statuses = ["waiting", "notified", "converted", "closed"];
+
+    state.waitlist.forEach(entry => {
+        const card = createElement("article", "order-card");
+        card.appendChild(createElement("h3", "", entry.email));
+        card.appendChild(createElement("p", "", `${entry.planName || entry.planKey} · ${entry.inventoryBucketCode || "No bucket"} · ${formatTimestamp(entry.createdAt)}`));
+        if (entry.name) card.appendChild(createElement("p", "", entry.name));
+        if (entry.note) card.appendChild(createElement("p", "", entry.note));
+        const select = document.createElement("select");
+        statuses.forEach(status => {
+            const option = document.createElement("option");
+            option.value = status;
+            option.textContent = status;
+            option.selected = entry.status === status;
+            select.appendChild(option);
+        });
+        select.onchange = async () => {
+            await requestJson(`/api/admin/waitlist/${entry.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: select.value })
+            });
+            showBanner("Waitlist status updated.", "success");
+            await load({ silent: true });
+        };
+        card.appendChild(select);
+        wrapper.appendChild(card);
+    });
+    return wrapper;
+}
+
 function renderAdmin() {
     if (!TAB_CONFIG.some(tabConfig => tabConfig.key === state.activeTab)) {
         state.activeTab = TAB_CONFIG[0].key;
@@ -2985,6 +3533,20 @@ function renderAdmin() {
 
     renderTabs(state.purchases);
     content.innerHTML = "";
+
+    if (RESOURCE_TABS.has(state.activeTab)) {
+        const viewShell = createElement("div", "view-shell");
+        const views = {
+            planBuilder: renderPlanBuilderView,
+            catalog: renderCatalogView,
+            inventory: renderInventoryView,
+            targets: renderTargetsView,
+            waitlist: renderWaitlistView
+        };
+        viewShell.appendChild(views[state.activeTab]());
+        content.appendChild(viewShell);
+        return;
+    }
 
     const viewShell = createElement("div", "view-shell");
     viewShell.appendChild(renderSummaryGrid(state.purchases));
@@ -3045,7 +3607,25 @@ async function load({ silent = false } = {}) {
         return;
     }
 
-    state.purchases = await res.json();
+    const [
+        purchases,
+        plansRes,
+        inventoryRes,
+        targetsRes,
+        waitlistRes
+    ] = await Promise.all([
+        res.json(),
+        authFetch("/api/admin/plans"),
+        authFetch("/api/admin/inventory-buckets"),
+        authFetch("/api/admin/provisioning-targets"),
+        authFetch("/api/admin/waitlist")
+    ]);
+
+    state.purchases = purchases;
+    state.plans = plansRes?.ok ? await plansRes.json() : [];
+    state.inventoryBuckets = inventoryRes?.ok ? await inventoryRes.json() : [];
+    state.provisioningTargets = targetsRes?.ok ? await targetsRes.json() : [];
+    state.waitlist = waitlistRes?.ok ? await waitlistRes.json() : [];
     renderAdmin();
 
     if (!silent && !document.getElementById("banner").classList.contains("visible")) {

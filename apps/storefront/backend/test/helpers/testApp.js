@@ -172,6 +172,21 @@ async function createTestApp(t, options = {}) {
                 ]
             }
         }),
+        retrievePrice: async id => ({
+            id,
+            active: true,
+            currency: "usd",
+            unit_amount: 1197,
+            type: "recurring",
+            recurring: {
+                interval: "month",
+                interval_count: 1
+            },
+            product: {
+                id: "prod_test_default",
+                name: "Test Product"
+            }
+        }),
         constructEvent: (body, signature) => {
             if (!signature) {
                 throw new Error("Missing signature");
@@ -220,6 +235,9 @@ async function createTestApp(t, options = {}) {
                         },
                         subscriptions: {
                             retrieve: id => stripeState.retrieveSubscription(id)
+                        },
+                        prices: {
+                            retrieve: (id, params) => stripeState.retrievePrice(id, params)
                         },
                         webhooks: {
                             constructEvent: (body, signature, secret) =>

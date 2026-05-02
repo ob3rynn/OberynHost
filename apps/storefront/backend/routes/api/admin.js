@@ -12,6 +12,15 @@ const {
 } = require("../../constants/status");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { createAdminSession, destroyAdminSession } = require("../../services/adminSessions");
+const {
+    applyStripePriceMetadata,
+    getPlanDefinition,
+    listPlanDefinitions,
+    previewPlanDefinition,
+    savePlanDefinition
+} = require("../../services/catalog");
+const { validatePlanDefinition } = require("../../services/planDefinitions");
+const { validateStripePriceId } = require("../../services/stripePrices");
 const { markPurchasePaid, expirePurchase } = require("../../services/purchases");
 const { enqueueReadyEmailForPurchase } = require("../../services/emailOutbox");
 const {
@@ -705,15 +714,49 @@ async function loadSerializedPurchase(purchaseId, stripeState = null) {
 async function recordAdminAction(req, purchaseId, actionType, note = "", details = null) {
     await runQuery(
         `INSERT INTO adminAuditLog
-            (purchaseId, actionType, note, detailsJson, userAgent, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+            (purchaseId, actionType, note, detailsJson, userAgent, createdAt, actorJson)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
             purchaseId,
             actionType,
             note || "",
             details ? JSON.stringify(details) : null,
             req.headers["user-agent"] || "",
-            Date.now()
+            Date.now(),
+            JSON.stringify({ userAgent: req.headers["user-agent"] || "" })
+        ]
+    );
+}
+
+async function recordEntityAdminAction(req, entityType, entityCode, actionType, oldValue, newValue, note = "") {
+    await runQuery(
+        `INSERT INTO adminAuditLog
+            (
+                purchaseId,
+                actionType,
+                note,
+                detailsJson,
+                userAgent,
+                createdAt,
+                entityType,
+                entityCode,
+                oldValueJson,
+                newValueJson,
+                actorJson
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            null,
+            actionType,
+            note || "",
+            JSON.stringify({ entityType, entityCode }),
+            req.headers["user-agent"] || "",
+            Date.now(),
+            entityType,
+            entityCode,
+            oldValue === undefined ? null : JSON.stringify(oldValue),
+            newValue === undefined ? null : JSON.stringify(newValue),
+            JSON.stringify({ userAgent: req.headers["user-agent"] || "" })
         ]
     );
 }
@@ -1039,6 +1082,564 @@ router.post("/admin/logout", (req, res) => {
 
 router.use(adminApiLimiter);
 router.use(requireAdmin);
+
+function deepMerge(base, patch) {
+    const result = { ...(base || {}) };
+
+    for (const [key, value] of Object.entries(patch || {})) {
+        if (
+            value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            result[key] &&
+            typeof result[key] === "object" &&
+            !Array.isArray(result[key])
+        ) {
+            result[key] = deepMerge(result[key], value);
+        } else {
+            result[key] = value;
+        }
+    }
+
+    return result;
+}
+
+function parseJsonField(value, fallback = null) {
+    if (!value) return fallback;
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return fallback;
+    }
+}
+
+async function maybeValidatePlanStripe(definition) {
+    if (!definition.status.active && !definition.status.storefrontVisible) {
+        return null;
+    }
+
+    return validateStripePriceId(stripe, definition.stripe.priceId, {
+        currency: "usd",
+        requireRecurring: true
+    });
+}
+
+function serializeAdminPlan(plan) {
+    return {
+        planKey: plan.definition.planKey,
+        productCode: plan.definition.productCode,
+        active: plan.active,
+        storefrontVisible: plan.storefrontVisible,
+        sortOrder: plan.sortOrder,
+        stripePriceId: plan.stripePriceId,
+        stripePriceMetadata: plan.stripePriceMetadata,
+        validationStatus: plan.validationStatus,
+        validationErrors: plan.validationErrors,
+        createdAt: plan.createdAt,
+        updatedAt: plan.updatedAt,
+        definition: plan.definition
+    };
+}
+
+router.get("/admin/plans", async (req, res) => {
+    try {
+        const plans = await listPlanDefinitions();
+        res.json(plans.map(serializeAdminPlan));
+    } catch (err) {
+        console.error("Admin plan list failed:", err);
+        res.status(500).json({ error: "Could not load plans" });
+    }
+});
+
+router.post("/admin/plans/preview", async (req, res) => {
+    try {
+        const preview = await previewPlanDefinition(req.body || {});
+        const { definition } = preview;
+        let stripeValidation = null;
+
+        if ((definition.status.active || definition.status.storefrontVisible) && preview.validation.valid) {
+            stripeValidation = await maybeValidatePlanStripe(definition);
+            if (stripeValidation?.metadata) {
+                applyStripePriceMetadata(definition, stripeValidation);
+            }
+        }
+
+        const errors = [
+            ...preview.validation.errors,
+            ...(stripeValidation && !stripeValidation.valid ? stripeValidation.errors : [])
+        ];
+
+        res.json({
+            definition,
+            validation: {
+                valid: errors.length === 0,
+                errors
+            },
+            generated: {
+                ...preview.generated,
+                sortOrder: definition.sortOrder,
+                cpuLimit: definition.runtime.cpuLimit,
+                priceLabel: definition.public.priceLabel,
+                priceAmount: definition.public.priceAmount,
+                priceCurrency: definition.stripe.priceMetadata?.currency || null,
+                recurringInterval: definition.stripe.priceMetadata?.recurringInterval || null
+            },
+            stripe: stripeValidation
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message || "Could not preview plan" });
+    }
+});
+
+router.post("/admin/plans", async (req, res) => {
+    try {
+        const preview = await previewPlanDefinition(req.body || {});
+        const stripeValidation = await maybeValidatePlanStripe(preview.definition);
+        const result = await savePlanDefinition(req.body || {}, { stripeValidation });
+
+        if (!result.saved) {
+            return res.status(400).json({
+                error: "Plan definition is invalid.",
+                validation: result.validation,
+                definition: result.definition
+            });
+        }
+
+        await recordEntityAdminAction(
+            req,
+            "plan",
+            result.definition.planKey,
+            "plan_save",
+            result.previous?.definition || null,
+            result.definition
+        );
+
+        res.status(result.previous ? 200 : 201).json({
+            plan: result.definition,
+            validation: result.validation,
+            stripe: stripeValidation
+        });
+    } catch (err) {
+        console.error("Admin plan save failed:", err);
+        res.status(500).json({ error: "Could not save plan" });
+    }
+});
+
+router.patch("/admin/plans/:planKey", async (req, res) => {
+    try {
+        const existing = await getPlanDefinition(req.params.planKey);
+
+        if (!existing) {
+            return res.status(404).json({ error: "Plan not found" });
+        }
+
+        const merged = deepMerge(existing.definition, req.body || {});
+        const preview = await previewPlanDefinition(merged);
+        const { definition } = preview;
+
+        if (definition.planKey !== existing.definition.planKey) {
+            return res.status(400).json({ error: "Plan short name cannot be changed through edit." });
+        }
+
+        const stripeValidation = await maybeValidatePlanStripe(definition);
+        const result = await savePlanDefinition(merged, { stripeValidation });
+
+        if (!result.saved) {
+            return res.status(400).json({
+                error: "Plan definition is invalid.",
+                validation: result.validation,
+                definition: result.definition
+            });
+        }
+
+        await recordEntityAdminAction(
+            req,
+            "plan",
+            result.definition.planKey,
+            "plan_update",
+            existing.definition,
+            result.definition
+        );
+
+        res.json({
+            plan: result.definition,
+            validation: result.validation,
+            stripe: stripeValidation
+        });
+    } catch (err) {
+        console.error("Admin plan update failed:", err);
+        res.status(500).json({ error: "Could not update plan" });
+    }
+});
+
+router.post("/admin/plans/:planKey/validate", async (req, res) => {
+    try {
+        const existing = await getPlanDefinition(req.params.planKey);
+
+        if (!existing) {
+            return res.status(404).json({ error: "Plan not found" });
+        }
+
+        const validation = validatePlanDefinition(existing.definition);
+        const stripeValidation = await maybeValidatePlanStripe(existing.definition);
+        const errors = [
+            ...validation.errors,
+            ...(stripeValidation && !stripeValidation.valid ? stripeValidation.errors : [])
+        ];
+
+        res.json({
+            valid: errors.length === 0,
+            errors,
+            stripe: stripeValidation
+        });
+    } catch (err) {
+        console.error("Admin plan validation failed:", err);
+        res.status(500).json({ error: "Could not validate plan" });
+    }
+});
+
+async function listInventoryBuckets() {
+    return allQuery(
+        `SELECT
+            b.*,
+            p.planType,
+            p.displayName AS planName,
+            p.active AS planActive,
+            p.storefrontVisible AS planStorefrontVisible,
+            COALESCE(counts.total, 0) AS totalSlots,
+            COALESCE(counts.available, 0) AS available,
+            COALESCE(counts.held, 0) AS reserved,
+            COALESCE(counts.allocated, 0) AS consumed
+         FROM inventoryBuckets b
+         LEFT JOIN products p ON p.code = b.productCode
+         LEFT JOIN (
+            SELECT
+                inventoryBucketCode,
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available,
+                SUM(CASE WHEN status = 'held' THEN 1 ELSE 0 END) AS held,
+                SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END) AS allocated
+            FROM servers
+            GROUP BY inventoryBucketCode
+         ) counts ON counts.inventoryBucketCode = b.code
+         ORDER BY b.code ASC`
+    );
+}
+
+router.get("/admin/inventory-buckets", async (req, res) => {
+    try {
+        const buckets = await listInventoryBuckets();
+
+        res.json(buckets.map(bucket => ({
+            ...bucket,
+            active: Number(bucket.active) === 1,
+            purchaseEnabled: Number(bucket.purchaseEnabled) === 1,
+            planActive: Number(bucket.planActive) === 1,
+            planStorefrontVisible: Number(bucket.planStorefrontVisible) === 1,
+            totalSlots: Number(bucket.totalSlots || 0),
+            available: Number(bucket.available || 0),
+            reserved: Number(bucket.reserved || 0),
+            consumed: Number(bucket.consumed || 0),
+            soldOut: Number(bucket.available || 0) === 0
+        })));
+    } catch (err) {
+        console.error("Admin inventory list failed:", err);
+        res.status(500).json({ error: "Could not load inventory buckets" });
+    }
+});
+
+router.patch("/admin/inventory-buckets/:bucketCode", async (req, res) => {
+    const bucketCode = String(req.params.bucketCode || "").trim();
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const bucket = await getQuery(
+            `SELECT b.*, p.planType, p.price, p.runtimeFamily, p.runtimeTemplate,
+                    p.nodeGroupCode, p.provisioningTargetCode
+             FROM inventoryBuckets b
+             JOIN products p ON p.code = b.productCode
+             WHERE b.code = ?`,
+            [bucketCode]
+        );
+
+        if (!bucket) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Inventory bucket not found" });
+        }
+
+        const counts = await getQuery(
+            `SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS available,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS reserved,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS consumed
+             FROM servers
+             WHERE inventoryBucketCode = ?`,
+            [SERVER_STATUS.AVAILABLE, SERVER_STATUS.HELD, SERVER_STATUS.ALLOCATED, bucketCode]
+        );
+        const oldValue = { bucket, counts };
+        const currentTotal = Number(counts.total || 0);
+        const available = Number(counts.available || 0);
+        const protectedUsage = Number(counts.reserved || 0) + Number(counts.consumed || 0);
+        const totalSlots = req.body?.totalSlots === undefined
+            ? currentTotal
+            : Number(req.body.totalSlots);
+
+        if (!Number.isInteger(totalSlots) || totalSlots < 0) {
+            await rollbackTransaction();
+            return res.status(400).json({ error: "Total slots must be a non-negative integer." });
+        }
+
+        if (totalSlots < protectedUsage) {
+            await rollbackTransaction();
+            return res.status(409).json({ error: "Total slots cannot be reduced below reserved and consumed usage." });
+        }
+
+        if (totalSlots < currentTotal) {
+            const removeCount = currentTotal - totalSlots;
+
+            if (removeCount > available) {
+                await rollbackTransaction();
+                return res.status(409).json({ error: "Only available slots can be removed." });
+            }
+
+            await runQuery(
+                `DELETE FROM servers
+                 WHERE id IN (
+                    SELECT id
+                    FROM servers
+                    WHERE inventoryBucketCode = ?
+                      AND status = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                 )`,
+                [bucketCode, SERVER_STATUS.AVAILABLE, removeCount]
+            );
+        } else if (totalSlots > currentTotal) {
+            for (let index = currentTotal; index < totalSlots; index += 1) {
+                await runQuery(
+                    `INSERT INTO servers
+                        (
+                            type,
+                            price,
+                            status,
+                            productCode,
+                            inventoryBucketCode,
+                            nodeGroupCode,
+                            provisioningTargetCode,
+                            runtimeFamily,
+                            runtimeTemplate
+                        )
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        bucket.planType,
+                        bucket.price,
+                        SERVER_STATUS.AVAILABLE,
+                        bucket.productCode,
+                        bucketCode,
+                        bucket.nodeGroupCode,
+                        bucket.provisioningTargetCode,
+                        bucket.runtimeFamily,
+                        bucket.runtimeTemplate
+                    ]
+                );
+            }
+        }
+
+        const purchaseEnabled = req.body?.purchaseEnabled === undefined
+            ? Number(bucket.purchaseEnabled || 1)
+            : (req.body.purchaseEnabled === true || req.body.purchaseEnabled === "true" ? 1 : 0);
+        const active = req.body?.active === undefined
+            ? Number(bucket.active || 1)
+            : (req.body.active === true || req.body.active === "true" ? 1 : 0);
+        const adminNotes = req.body?.adminNotes === undefined
+            ? bucket.adminNotes
+            : String(req.body.adminNotes || "").trim().slice(0, 1000);
+
+        await runQuery(
+            `UPDATE inventoryBuckets
+             SET capacityTarget = ?,
+                 purchaseEnabled = ?,
+                 active = ?,
+                 adminNotes = ?
+             WHERE code = ?`,
+            [totalSlots, purchaseEnabled, active, adminNotes || null, bucketCode]
+        );
+
+        await runQuery("COMMIT");
+
+        const updated = (await listInventoryBuckets()).find(entry => entry.code === bucketCode);
+        await recordEntityAdminAction(req, "inventory_bucket", bucketCode, "inventory_bucket_update", oldValue, updated);
+
+        res.json({ bucket: updated });
+    } catch (err) {
+        await rollbackTransaction();
+        console.error("Admin inventory update failed:", err);
+        res.status(500).json({ error: "Could not update inventory bucket" });
+    }
+});
+
+router.get("/admin/provisioning-targets", async (req, res) => {
+    try {
+        const targets = await allQuery(
+            `SELECT
+                t.*,
+                g.displayName AS nodeGroupName,
+                g.active AS nodeGroupActive,
+                GROUP_CONCAT(DISTINCT b.code) AS linkedBuckets,
+                GROUP_CONCAT(DISTINCT p.planType) AS linkedPlans
+             FROM provisioningTargets t
+             LEFT JOIN nodeGroups g ON g.code = t.nodeGroupCode
+             LEFT JOIN products p ON p.provisioningTargetCode = t.code
+             LEFT JOIN inventoryBuckets b ON b.productCode = p.code
+             GROUP BY t.code
+             ORDER BY t.code ASC`
+        );
+
+        res.json(targets.map(target => ({
+            ...target,
+            active: Number(target.active) === 1,
+            nodeGroupActive: Number(target.nodeGroupActive) === 1,
+            supportedVersions: parseJsonField(target.supportedVersionsJson, []),
+            linkedBuckets: target.linkedBuckets ? target.linkedBuckets.split(",") : [],
+            linkedPlans: target.linkedPlans ? target.linkedPlans.split(",") : []
+        })));
+    } catch (err) {
+        console.error("Admin target list failed:", err);
+        res.status(500).json({ error: "Could not load provisioning targets" });
+    }
+});
+
+router.patch("/admin/provisioning-targets/:targetCode", async (req, res) => {
+    const targetCode = String(req.params.targetCode || "").trim();
+
+    try {
+        const existing = await getQuery("SELECT * FROM provisioningTargets WHERE code = ?", [targetCode]);
+
+        if (!existing) {
+            return res.status(404).json({ error: "Provisioning target not found" });
+        }
+
+        const active = req.body?.active === undefined
+            ? Number(existing.active || 1)
+            : (req.body.active === true || req.body.active === "true" ? 1 : 0);
+        const displayName = req.body?.displayName === undefined
+            ? existing.displayName
+            : String(req.body.displayName || "").trim().slice(0, 160);
+        const adminNotes = req.body?.adminNotes === undefined
+            ? existing.adminNotes
+            : String(req.body.adminNotes || "").trim().slice(0, 1000);
+
+        if (!displayName) {
+            return res.status(400).json({ error: "Display name is required." });
+        }
+
+        await runQuery(
+            `UPDATE provisioningTargets
+             SET active = ?,
+                 displayName = ?,
+                 adminNotes = ?
+             WHERE code = ?`,
+            [active, displayName, adminNotes || null, targetCode]
+        );
+
+        const updated = await getQuery("SELECT * FROM provisioningTargets WHERE code = ?", [targetCode]);
+        await recordEntityAdminAction(req, "provisioning_target", targetCode, "provisioning_target_update", existing, updated);
+
+        res.json({ target: updated });
+    } catch (err) {
+        console.error("Admin target update failed:", err);
+        res.status(500).json({ error: "Could not update provisioning target" });
+    }
+});
+
+router.get("/admin/waitlist", async (req, res) => {
+    const planKey = typeof req.query.planKey === "string" ? req.query.planKey.trim() : "";
+    const status = typeof req.query.status === "string" ? req.query.status.trim() : "";
+    const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+    const filters = [];
+    const params = [];
+
+    if (planKey) {
+        filters.push("w.planKey = ?");
+        params.push(planKey);
+    }
+
+    if (status) {
+        filters.push("w.status = ?");
+        params.push(status);
+    }
+
+    if (search) {
+        filters.push("w.email LIKE ?");
+        params.push(`%${search}%`);
+    }
+
+    try {
+        const rows = await allQuery(
+            `SELECT
+                w.*,
+                p.displayName AS planName,
+                b.displayName AS bucketName
+             FROM waitlistEntries w
+             LEFT JOIN products p ON p.code = w.productCode
+             LEFT JOIN inventoryBuckets b ON b.code = w.inventoryBucketCode
+             ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
+             ORDER BY w.createdAt DESC, w.id DESC
+             LIMIT 250`,
+            params
+        );
+
+        res.json(rows);
+    } catch (err) {
+        console.error("Admin waitlist list failed:", err);
+        res.status(500).json({ error: "Could not load waitlist" });
+    }
+});
+
+router.patch("/admin/waitlist/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const nextStatus = String(req.body?.status || "").trim();
+    const allowedStatuses = new Set(["waiting", "notified", "converted", "closed"]);
+
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid waitlist entry id." });
+    }
+
+    if (!allowedStatuses.has(nextStatus)) {
+        return res.status(400).json({ error: "Invalid waitlist status." });
+    }
+
+    try {
+        const existing = await getQuery("SELECT * FROM waitlistEntries WHERE id = ?", [id]);
+
+        if (!existing) {
+            return res.status(404).json({ error: "Waitlist entry not found" });
+        }
+
+        await runQuery(
+            "UPDATE waitlistEntries SET status = ?, updatedAt = ? WHERE id = ?",
+            [nextStatus, Date.now(), id]
+        );
+
+        const updated = await getQuery("SELECT * FROM waitlistEntries WHERE id = ?", [id]);
+        await recordEntityAdminAction(
+            req,
+            "waitlist_entry",
+            String(id),
+            "waitlist_status_update",
+            existing,
+            updated
+        );
+
+        res.json({ entry: updated });
+    } catch (err) {
+        console.error("Admin waitlist update failed:", err);
+        res.status(500).json({ error: "Could not update waitlist entry" });
+    }
+});
 
 router.get("/purchases", async (req, res) => {
     try {

@@ -11,6 +11,7 @@ const stripeWebhook = require("./middleware/stripeWebhook");
 const frontendRoutes = require("./routes/frontend");
 
 const plansRoutes = require("./routes/api/plans");
+const waitlistRoutes = require("./routes/api/waitlist");
 const checkoutRoutes = require("./routes/api/checkout");
 const setupRoutes = require("./routes/api/setup");
 const adminRoutes = require("./routes/api/admin");
@@ -38,6 +39,7 @@ app.use(express.static(path.join(__dirname, "../frontend")));
 
 // API routes
 app.use("/api", plansRoutes);
+app.use("/api", waitlistRoutes);
 app.use("/api", checkoutRoutes);
 app.use("/api", setupRoutes);
 app.use("/api", adminRoutes);

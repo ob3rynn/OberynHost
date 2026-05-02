@@ -1,41 +1,37 @@
 const express = require("express");
-const db = require("../../db");
-const { SERVER_STATUS } = require("../../constants/status");
-const { PLAN_DEFINITIONS } = require("../../config/plans");
+
+const { listPublicPlans } = require("../../services/catalog");
 
 const router = express.Router();
 
-router.get("/plans", (req, res) => {
-    db.all(`
-        SELECT
-            productCode,
-            MAX(price) as price,
-            SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as available
-        FROM servers
-        WHERE productCode IS NOT NULL
-        GROUP BY productCode
-    `, [SERVER_STATUS.AVAILABLE], (err, rows) => {
+router.get("/plans", async (req, res) => {
+    try {
+        const plans = await listPublicPlans();
 
-        if (err) {
-            return res.status(500).json({ error: "DB error" });
-        }
-
-        const rowsByProductCode = new Map(rows.map(row => [row.productCode, row]));
-        const plans = Object.entries(PLAN_DEFINITIONS).map(([type, definition]) => {
-            const row = rowsByProductCode.get(definition.code);
+        res.json(plans.map(plan => {
+            const definition = plan.definition;
 
             return {
-                type,
-                code: definition.code,
-                displayName: definition.displayName,
-                price: row?.price ?? definition.price,
-                available: row ? Number(row.available) : 0,
-                features: definition.features || []
+                type: definition.planKey,
+                planKey: definition.planKey,
+                code: definition.productCode,
+                displayName: definition.public.name,
+                description: definition.public.description,
+                price: definition.public.priceAmount,
+                priceLabel: definition.public.priceLabel,
+                available: plan.available,
+                soldOut: plan.soldOut,
+                canCheckout: plan.canCheckout,
+                canJoinWaitlist: plan.canJoinWaitlist,
+                features: definition.public.features || [],
+                runtimeFamily: definition.runtime.family,
+                supportedVersions: definition.runtime.supportedVersions || []
             };
-        });
-
-        res.json(plans);
-    });
+        }));
+    } catch (err) {
+        console.error("Plan list failed:", err);
+        res.status(500).json({ error: "Could not load plans" });
+    }
 });
 
 module.exports = router;

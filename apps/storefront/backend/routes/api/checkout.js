@@ -5,7 +5,7 @@ const { runQuery, getQuery } = require("../../db/queries");
 const { rollbackTransaction } = require("../../db/transactions");
 const { createStripeClient } = require("../../lib/stripeClient");
 const { cancelPurchaseAndRelease, expirePurchase, markPurchasePaid, getStripeObjectId } = require("../../services/purchases");
-const { PLAN_DEFINITIONS, VALID_PLAN_TYPES } = require("../../config/plans");
+const { resolveCheckoutPlan } = require("../../services/catalog");
 const { SERVER_STATUS, PURCHASE_STATUS } = require("../../constants/status");
 const { createRateLimiter } = require("../../middleware/rateLimit");
 const { parseCookies, serializeCookie } = require("../../utils/cookies");
@@ -169,12 +169,20 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
         ? req.body.planType.trim()
         : "";
 
-    if (!VALID_PLAN_TYPES.has(planType)) {
+    const planRecord = await resolveCheckoutPlan(planType);
+
+    if (!planRecord) {
         return res.status(400).json({ error: "Invalid plan type" });
     }
 
-    const planDefinition = PLAN_DEFINITIONS[planType];
-    const stripePriceId = config.stripePriceIds[planType];
+    const planDefinition = planRecord.definition;
+    const stripePriceId = planDefinition.stripe.priceId;
+    const stripePriceSnapshot = planDefinition.stripe.priceMetadata || {
+        id: stripePriceId,
+        active: true,
+        currency: "usd",
+        recurringInterval: "month"
+    };
 
     if (!planDefinition || !hasConfiguredStripePriceId(stripePriceId)) {
         return res.status(503).json({
@@ -297,7 +305,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                        AND status = ?
                      ORDER BY id ASC
                      LIMIT 1`,
-                    [planDefinition.code, SERVER_STATUS.AVAILABLE]
+                    [planDefinition.productCode, SERVER_STATUS.AVAILABLE]
                 );
 
                 if (!server) {
@@ -365,6 +373,10 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                             provisioningTargetCode,
                             runtimeFamily,
                             runtimeTemplate,
+                            planSnapshotJson,
+                            stripePriceSnapshotJson,
+                            inventorySnapshotJson,
+                            provisioningSnapshotJson,
                             setupStatus,
                             fulfillmentStatus,
                             serviceStatus,
@@ -372,7 +384,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                             lastStateOwner,
                             updatedAt
                         )
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         server.id,
                         "",
@@ -384,12 +396,26 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                         setupTokenExpiresAt,
                         browserSessionId || null,
                         planType,
-                        server.productCode || planDefinition.code,
-                        server.inventoryBucketCode || planDefinition.inventoryBucketCode,
-                        server.nodeGroupCode || planDefinition.nodeGroupCode,
-                        server.provisioningTargetCode || planDefinition.provisioningTargetCode,
-                        server.runtimeFamily || planDefinition.runtimeFamily,
-                        server.runtimeTemplate || planDefinition.runtimeTemplate,
+                        server.productCode || planDefinition.productCode,
+                        server.inventoryBucketCode || planDefinition.inventory.bucketCode,
+                        server.nodeGroupCode || planDefinition.provisioning.nodeGroupCode,
+                        server.provisioningTargetCode || planDefinition.provisioning.targetCode,
+                        server.runtimeFamily || planDefinition.runtime.family,
+                        server.runtimeTemplate || planDefinition.runtime.template,
+                        JSON.stringify(planDefinition),
+                        JSON.stringify(stripePriceSnapshot),
+                        JSON.stringify({
+                            bucketCode: server.inventoryBucketCode || planDefinition.inventory.bucketCode,
+                            productCode: server.productCode || planDefinition.productCode,
+                            serverId: server.id,
+                            statusBeforeReservation: SERVER_STATUS.AVAILABLE
+                        }),
+                        JSON.stringify({
+                            nodeGroupCode: server.nodeGroupCode || planDefinition.provisioning.nodeGroupCode,
+                            provisioningTargetCode: server.provisioningTargetCode || planDefinition.provisioning.targetCode,
+                            runtimeFamily: server.runtimeFamily || planDefinition.runtime.family,
+                            runtimeTemplate: server.runtimeTemplate || planDefinition.runtime.template
+                        }),
                         initialPurchase.setupStatus,
                         initialPurchase.fulfillmentStatus,
                         initialPurchase.serviceStatus,
@@ -417,14 +443,14 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                         purchaseId: String(purchaseId),
                         serverId: String(server.id),
                         planType,
-                        productCode: server.productCode || planDefinition.code
+                        productCode: server.productCode || planDefinition.productCode
                     },
                     subscription_data: {
                         metadata: {
                             purchaseId: String(purchaseId),
                             serverId: String(server.id),
                             planType,
-                            productCode: server.productCode || planDefinition.code
+                            productCode: server.productCode || planDefinition.productCode
                         }
                     },
                     success_url: successUrl,

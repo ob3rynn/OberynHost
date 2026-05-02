@@ -55,7 +55,33 @@ function isKnownStripePriceId(priceId) {
     return Object.values(config.stripePriceIds || {}).includes(normalizedPriceId);
 }
 
+function parseJson(value) {
+    if (!value) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
+    }
+}
+
 function getExpectedStripePriceIdForPurchase(purchase) {
+    const stripePriceSnapshot = parseJson(purchase?.stripePriceSnapshotJson);
+    const snapshotPriceId = String(stripePriceSnapshot?.id || stripePriceSnapshot?.priceId || "").trim();
+
+    if (snapshotPriceId) {
+        return snapshotPriceId;
+    }
+
+    const planSnapshot = parseJson(purchase?.planSnapshotJson);
+    const planSnapshotPriceId = String(planSnapshot?.stripe?.priceId || "").trim();
+
+    if (planSnapshotPriceId) {
+        return planSnapshotPriceId;
+    }
+
     const planType = String(purchase?.planType || "").trim();
 
     if (planType && config.stripePriceIds?.[planType]) {
@@ -63,6 +89,16 @@ function getExpectedStripePriceIdForPurchase(purchase) {
     }
 
     return config.stripePriceIds?.["paper-2gb"] || null;
+}
+
+function stripePriceMatchesPurchase(priceId, purchase) {
+    const expectedPriceId = getExpectedStripePriceIdForPurchase(purchase);
+
+    if (expectedPriceId) {
+        return priceId === expectedPriceId;
+    }
+
+    return isKnownStripePriceId(priceId);
 }
 
 function stripeMetadataMatchesPurchase(session, purchase) {
@@ -348,11 +384,7 @@ async function markPurchasePaid(session, subscription = null) {
     });
     const expectedPriceId = getExpectedStripePriceIdForPurchase(purchase);
 
-    if (
-        !runtime.stripePriceId ||
-        !isKnownStripePriceId(runtime.stripePriceId) ||
-        (expectedPriceId && runtime.stripePriceId !== expectedPriceId)
-    ) {
+    if (!runtime.stripePriceId || runtime.stripePriceId !== expectedPriceId) {
         return null;
     }
 
@@ -399,7 +431,7 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
 
     const runtime = buildSubscriptionRuntime(subscription, overrides);
 
-    if (runtime.stripePriceId && !isKnownStripePriceId(runtime.stripePriceId)) {
+    if (runtime.stripePriceId && !stripePriceMatchesPurchase(runtime.stripePriceId, purchase)) {
         return null;
     }
 
