@@ -45,6 +45,60 @@ function buildSubscriptionRuntime(subscription, overrides = {}) {
     };
 }
 
+function isKnownStripePriceId(priceId) {
+    const normalizedPriceId = String(priceId || "").trim();
+
+    if (!normalizedPriceId) {
+        return false;
+    }
+
+    return Object.values(config.stripePriceIds || {}).includes(normalizedPriceId);
+}
+
+function getExpectedStripePriceIdForPurchase(purchase) {
+    const planType = String(purchase?.planType || "").trim();
+
+    if (planType && config.stripePriceIds?.[planType]) {
+        return config.stripePriceIds[planType];
+    }
+
+    return config.stripePriceIds?.["paper-2gb"] || null;
+}
+
+function stripeMetadataMatchesPurchase(session, purchase) {
+    const metadata = session?.metadata || {};
+    const metadataPurchaseId = Number(metadata.purchaseId);
+    const metadataServerId = Number(metadata.serverId);
+    const metadataPlanType = String(metadata.planType || "").trim();
+    const metadataProductCode = String(metadata.productCode || "").trim();
+
+    if (metadataPurchaseId && metadataPurchaseId !== Number(purchase.id)) {
+        return false;
+    }
+
+    if (metadataServerId && metadataServerId !== Number(purchase.serverId)) {
+        return false;
+    }
+
+    if (
+        metadataPlanType &&
+        purchase.planType &&
+        metadataPlanType !== purchase.planType
+    ) {
+        return false;
+    }
+
+    if (
+        metadataProductCode &&
+        purchase.productCode &&
+        metadataProductCode !== purchase.productCode
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
 function inferPaidAt(purchase, nextPurchase, overrides = {}) {
     if (overrides.paidAt !== undefined) {
         return overrides.paidAt;
@@ -83,6 +137,41 @@ async function findPurchaseForStripeEvent({ purchaseId = null, stripeSessionId =
          LIMIT 1`,
         [purchaseId || 0, stripeSessionId || "", stripeSubscriptionId || ""]
     );
+}
+
+async function findCheckoutPurchaseForPaidSession(session, stripeSubscriptionId) {
+    if (session.id) {
+        const purchase = await getQuery(
+            "SELECT * FROM purchases WHERE stripeSessionId = ?",
+            [session.id]
+        );
+
+        if (purchase) {
+            return purchase;
+        }
+    }
+
+    const purchaseId = Number(session.metadata?.purchaseId);
+
+    if (purchaseId) {
+        const purchase = await getQuery(
+            "SELECT * FROM purchases WHERE id = ?",
+            [purchaseId]
+        );
+
+        if (purchase) {
+            return purchase;
+        }
+    }
+
+    if (stripeSubscriptionId) {
+        return getQuery(
+            "SELECT * FROM purchases WHERE stripeSubscriptionId = ?",
+            [stripeSubscriptionId]
+        );
+    }
+
+    return null;
 }
 
 async function releaseServerIfNeeded(serverId) {
@@ -222,28 +311,48 @@ async function markPurchasePaid(session, subscription = null) {
     const email = session.customer_details?.email || session.customer_email || "";
     const fallbackSetupToken = generateOpaqueToken();
     const setupTokenExpiresAt = Date.now() + config.setupTokenTtlMs;
-    const purchaseId = Number(session.metadata?.purchaseId);
     const stripeSubscriptionId = getStripeObjectId(session.subscription) || getStripeObjectId(subscription);
-    const purchase = await findPurchaseForStripeEvent({
-        purchaseId,
-        stripeSessionId: session.id,
-        stripeSubscriptionId
-    });
+
+    if (!stripeSubscriptionId) {
+        return null;
+    }
+
+    const purchase = await findCheckoutPurchaseForPaidSession(session, stripeSubscriptionId);
 
     if (!purchase) {
-        return;
+        return null;
+    }
+
+    if (
+        purchase.status === PURCHASE_STATUS.CANCELLED ||
+        purchase.status === PURCHASE_STATUS.EXPIRED
+    ) {
+        return null;
+    }
+
+    if (!stripeMetadataMatchesPurchase(session, purchase)) {
+        return null;
     }
 
     const runtime = buildSubscriptionRuntime(subscription, {
         stripeCustomerId: getStripeObjectId(session.customer),
         stripeSubscriptionId
     });
+    const expectedPriceId = getExpectedStripePriceIdForPurchase(purchase);
+
+    if (
+        !runtime.stripePriceId ||
+        !isKnownStripePriceId(runtime.stripePriceId) ||
+        (expectedPriceId && runtime.stripePriceId !== expectedPriceId)
+    ) {
+        return null;
+    }
 
     const nextStatus = purchase.status === PURCHASE_STATUS.CHECKOUT_PENDING
         ? PURCHASE_STATUS.PAID
         : purchase.status;
 
-    await savePurchaseRuntime(purchase, {
+    return savePurchaseRuntime(purchase, {
         status: nextStatus,
         stripeSessionId: purchase.stripeSessionId || session.id,
         stripeCustomerId: runtime.stripeCustomerId || purchase.stripeCustomerId || null,
@@ -265,6 +374,11 @@ async function markPurchasePaid(session, subscription = null) {
 
 async function syncPurchaseSubscription(subscription, overrides = {}) {
     const stripeSubscriptionId = overrides.stripeSubscriptionId || getStripeObjectId(subscription);
+
+    if (!stripeSubscriptionId) {
+        return null;
+    }
+
     const purchase = await findPurchaseForStripeEvent({
         purchaseId: Number(overrides.purchaseId),
         stripeSessionId: overrides.stripeSessionId || null,
@@ -276,6 +390,11 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
     }
 
     const runtime = buildSubscriptionRuntime(subscription, overrides);
+
+    if (runtime.stripePriceId && !isKnownStripePriceId(runtime.stripePriceId)) {
+        return null;
+    }
+
     const isTerminal = TERMINAL_SUBSCRIPTION_STATUSES.has(runtime.stripeSubscriptionStatus);
     const isDelinquent = runtime.stripeSubscriptionStatus === "past_due" ||
         runtime.stripeSubscriptionStatus === "unpaid";
@@ -317,6 +436,20 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
 
     if (isTerminal) {
         await releaseServerIfNeeded(purchase.serverId);
+    } else if (
+        !isDelinquent &&
+        purchase.status === PURCHASE_STATUS.COMPLETED &&
+        purchase.serviceSuspendedAt &&
+        purchase.serverId
+    ) {
+        await runQuery(
+            `UPDATE servers
+             SET status = ?,
+                 allocatedAt = COALESCE(allocatedAt, ?)
+             WHERE id = ?
+               AND status = ?`,
+            [SERVER_STATUS.ALLOCATED, Date.now(), purchase.serverId, SERVER_STATUS.HELD]
+        );
     }
 
     return runtime;

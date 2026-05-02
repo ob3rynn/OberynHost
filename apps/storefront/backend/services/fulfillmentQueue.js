@@ -25,6 +25,14 @@ const FULFILLMENT_FAILURE_CLASS = {
     DEAD_LETTER_ESCALATION: "dead_letter_escalation"
 };
 
+let fulfillmentLeaseQueue = Promise.resolve();
+
+function queueFulfillmentLease(work) {
+    const next = fulfillmentLeaseQueue.then(work, work);
+    fulfillmentLeaseQueue = next.then(() => undefined, () => undefined);
+    return next;
+}
+
 function buildProvisioningIdempotencyKey(purchaseId) {
     return `purchase:${purchaseId}:task:${FULFILLMENT_TASK_TYPE.PROVISION_INITIAL_SERVER}`;
 }
@@ -123,116 +131,118 @@ async function enqueueProvisioningJobForPurchase(purchase, options = {}) {
 }
 
 async function leaseNextFulfillmentJob(options = {}) {
-    const now = Number(options.now || Date.now());
-    const leaseMs = Number(options.leaseMs || (1000 * 60));
-    const leaseKey = generateOpaqueToken();
-    const leaseExpiresAt = now + leaseMs;
+    return queueFulfillmentLease(async () => {
+        const now = Number(options.now || Date.now());
+        const leaseMs = Number(options.leaseMs || (1000 * 60));
+        const leaseKey = generateOpaqueToken();
+        const leaseExpiresAt = now + leaseMs;
 
-    try {
-        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            await runQuery("BEGIN IMMEDIATE TRANSACTION");
 
-        const job = await getQuery(
-            `SELECT
-                q.id AS queueId,
-                q.purchaseId,
-                q.taskType,
-                q.state AS queueState,
-                q.payloadJson,
-                q.attempts,
-                p.*,
-                s.status AS serverStatus
-             FROM fulfillmentQueue q
-             JOIN purchases p ON p.id = q.purchaseId
-             LEFT JOIN servers s ON s.id = p.serverId
-             WHERE q.state = ?
-               AND q.availableAt <= ?
-               AND (p.workerLeaseExpiresAt IS NULL OR p.workerLeaseExpiresAt < ?)
-             ORDER BY q.availableAt ASC, q.id ASC
-             LIMIT 1`,
-            [
-                FULFILLMENT_QUEUE_STATE.QUEUED,
-                now,
-                now
-            ]
-        );
+            const job = await getQuery(
+                `SELECT
+                    q.id AS queueId,
+                    q.purchaseId,
+                    q.taskType,
+                    q.state AS queueState,
+                    q.payloadJson,
+                    q.attempts,
+                    p.*,
+                    s.status AS serverStatus
+                 FROM fulfillmentQueue q
+                 JOIN purchases p ON p.id = q.purchaseId
+                 LEFT JOIN servers s ON s.id = p.serverId
+                 WHERE q.state = ?
+                   AND q.availableAt <= ?
+                   AND (p.workerLeaseExpiresAt IS NULL OR p.workerLeaseExpiresAt < ?)
+                 ORDER BY q.availableAt ASC, q.id ASC
+                 LIMIT 1`,
+                [
+                    FULFILLMENT_QUEUE_STATE.QUEUED,
+                    now,
+                    now
+                ]
+            );
 
-        if (!job) {
-            await rollbackTransaction();
-            return null;
-        }
+            if (!job) {
+                await rollbackTransaction();
+                return null;
+            }
 
-        const nextPurchase = mergeLifecycleState(job, {
-            fulfillmentStatus: FULFILLMENT_STATUS.PROVISIONING,
-            workerLeaseKey: leaseKey,
-            workerLeaseExpiresAt: leaseExpiresAt,
-            lastStateOwner: "worker"
-        });
+            const nextPurchase = mergeLifecycleState(job, {
+                fulfillmentStatus: FULFILLMENT_STATUS.PROVISIONING,
+                workerLeaseKey: leaseKey,
+                workerLeaseExpiresAt: leaseExpiresAt,
+                lastStateOwner: "worker"
+            });
 
-        const queueUpdate = await runQuery(
-            `UPDATE fulfillmentQueue
-             SET state = ?,
-                 lockedAt = ?,
-                 leaseKey = ?,
-                 leaseExpiresAt = ?,
-                 attempts = attempts + 1,
-                 updatedAt = ?
-             WHERE id = ?
-               AND state = ?`,
-            [
-                FULFILLMENT_QUEUE_STATE.LEASED,
-                now,
+            const queueUpdate = await runQuery(
+                `UPDATE fulfillmentQueue
+                 SET state = ?,
+                     lockedAt = ?,
+                     leaseKey = ?,
+                     leaseExpiresAt = ?,
+                     attempts = attempts + 1,
+                     updatedAt = ?
+                 WHERE id = ?
+                   AND state = ?`,
+                [
+                    FULFILLMENT_QUEUE_STATE.LEASED,
+                    now,
+                    leaseKey,
+                    leaseExpiresAt,
+                    now,
+                    job.queueId,
+                    FULFILLMENT_QUEUE_STATE.QUEUED
+                ]
+            );
+
+            if (queueUpdate.changes === 0) {
+                await rollbackTransaction();
+                return null;
+            }
+
+            const purchaseUpdate = await runQuery(
+                `UPDATE purchases
+                 SET workerLeaseKey = ?,
+                     workerLeaseExpiresAt = ?,
+                     fulfillmentStatus = ?,
+                     updatedAt = ?,
+                     lastStateOwner = ?
+                 WHERE id = ?
+                   AND (workerLeaseExpiresAt IS NULL OR workerLeaseExpiresAt < ?)`,
+                [
+                    leaseKey,
+                    leaseExpiresAt,
+                    nextPurchase.fulfillmentStatus,
+                    now,
+                    nextPurchase.lastStateOwner,
+                    job.purchaseId,
+                    now
+                ]
+            );
+
+            if (purchaseUpdate.changes === 0) {
+                await rollbackTransaction();
+                return null;
+            }
+
+            await runQuery("COMMIT");
+
+            return {
+                ...job,
+                queueState: FULFILLMENT_QUEUE_STATE.LEASED,
                 leaseKey,
                 leaseExpiresAt,
-                now,
-                job.queueId,
-                FULFILLMENT_QUEUE_STATE.QUEUED
-            ]
-        );
-
-        if (queueUpdate.changes === 0) {
+                fulfillmentStatus: nextPurchase.fulfillmentStatus,
+                lastStateOwner: nextPurchase.lastStateOwner
+            };
+        } catch (err) {
             await rollbackTransaction();
-            return null;
+            throw err;
         }
-
-        const purchaseUpdate = await runQuery(
-            `UPDATE purchases
-             SET workerLeaseKey = ?,
-                 workerLeaseExpiresAt = ?,
-                 fulfillmentStatus = ?,
-                 updatedAt = ?,
-                 lastStateOwner = ?
-             WHERE id = ?
-               AND (workerLeaseExpiresAt IS NULL OR workerLeaseExpiresAt < ?)`,
-            [
-                leaseKey,
-                leaseExpiresAt,
-                nextPurchase.fulfillmentStatus,
-                now,
-                nextPurchase.lastStateOwner,
-                job.purchaseId,
-                now
-            ]
-        );
-
-        if (purchaseUpdate.changes === 0) {
-            await rollbackTransaction();
-            return null;
-        }
-
-        await runQuery("COMMIT");
-
-        return {
-            ...job,
-            queueState: FULFILLMENT_QUEUE_STATE.LEASED,
-            leaseKey,
-            leaseExpiresAt,
-            fulfillmentStatus: nextPurchase.fulfillmentStatus,
-            lastStateOwner: nextPurchase.lastStateOwner
-        };
-    } catch (err) {
-        await rollbackTransaction();
-        throw err;
-    }
+    });
 }
 
 async function moveLeasedJobToAdminReview(job, details = {}) {

@@ -236,6 +236,9 @@ async function createTestApp(t, options = {}) {
 
     try {
         const app = require(path.join(BACKEND_ROOT, "server"));
+        if (options.trustProxy) {
+            app.set("trust proxy", true);
+        }
         await require(path.join(BACKEND_ROOT, "db/init"));
         db = require(path.join(BACKEND_ROOT, "db"));
         server = app.listen(port, "127.0.0.1");
