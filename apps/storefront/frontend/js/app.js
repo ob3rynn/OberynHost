@@ -287,7 +287,7 @@ function setCheckoutLoadingState(activeButton, active) {
 
     if (active) {
         activeButton.disabled = true;
-        activeButton.textContent = "Opening Checkout...";
+        activeButton.textContent = "Opening checkout...";
         return;
     }
 
@@ -301,7 +301,7 @@ function renderPlans(container, options = {}) {
     if (!plans.length) {
         const empty = document.createElement("div");
         empty.className = "empty-state";
-        empty.textContent = "Server availability is not loading right now. Please refresh and try again.";
+        empty.textContent = "We could not load server availability right now. Please refresh and try again.";
         container.appendChild(empty);
         return;
     }
