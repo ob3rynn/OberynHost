@@ -426,6 +426,8 @@ function addSupportConfigChecks(report) {
     const ticketLimit = String(process.env.SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE || "5").trim();
     const resendLimit = String(process.env.SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR || "3").trim();
     const portalLimit = String(process.env.SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE || "8").trim();
+    const serviceAccessEnabled = String(process.env.SERVICE_ACCESS_LINK_ENABLED || "true").trim();
+    const serviceAccessOverlapDays = String(process.env.SERVICE_ACCESS_LINK_OVERLAP_DAYS || "14").trim();
 
     addResult(
         report,
@@ -433,6 +435,14 @@ function addSupportConfigChecks(report) {
         "info",
         "Support rate-limit defaults",
         `tickets/min=${ticketLimit}, ready-resends/hour=${resendLimit}, billing-portal/min=${portalLimit}`
+    );
+
+    addResult(
+        report,
+        "support",
+        "info",
+        "Private service access link defaults",
+        `enabled=${serviceAccessEnabled}, overlapDays=${serviceAccessOverlapDays}`
     );
 
     const presentSupportEnv = OPTIONAL_SUPPORT_ENV_NAMES.filter(name => String(process.env[name] || "").trim());

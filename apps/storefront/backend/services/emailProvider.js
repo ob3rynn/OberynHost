@@ -17,6 +17,13 @@ class EmailDeliveryError extends Error {
     }
 }
 
+function redactPrivateServiceLinks(value) {
+    return String(value || "").replace(
+        /\/support#accessToken=[A-Za-z0-9_-]+/g,
+        "/support#accessToken=[redacted]"
+    );
+}
+
 function isRetryableEmailDeliveryError(err) {
     return Boolean(err && err.retryable === true);
 }
@@ -49,7 +56,7 @@ async function sendWithLogProvider(message) {
             recipientEmail: message.recipientEmail,
             senderEmail: message.senderEmail,
             subject: message.subject,
-            bodyText: message.bodyText,
+            bodyText: redactPrivateServiceLinks(message.bodyText),
             payload: message.payload || null
         })
     );
@@ -246,5 +253,6 @@ module.exports = {
     EmailDeliveryError,
     isRetryableEmailDeliveryError,
     reconcileProviderAcceptedEmail,
+    redactPrivateServiceLinks,
     sendEmailMessage
 };

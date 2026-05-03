@@ -3,6 +3,10 @@ const { allQuery, getQuery, runQuery } = require("../db/queries");
 const { rollbackTransaction } = require("../db/transactions");
 const { assertEmailHeaderSafe } = require("../utils/emailSafety");
 const { generateOpaqueToken } = require("../utils/tokens");
+const {
+    SERVICE_ACCESS_LINK_PLACEHOLDER,
+    materializeServiceAccessLinkForEmail
+} = require("./serviceAccessLinks");
 
 const EMAIL_OUTBOX_STATE = {
     QUEUED: "queued",
@@ -14,6 +18,7 @@ const EMAIL_OUTBOX_STATE = {
 const EMAIL_KIND = {
     READY_ACCESS: "ready_access",
     READY_ACCESS_RESEND: "ready_access_resend",
+    SERVICE_ACCESS_LINK: "service_access_link",
     SETUP_REMINDER: "setup_reminder",
     SUPPORT_TICKET_RECEIVED: "support_ticket_received",
     SUPPORT_TICKET_ADMIN_REPLY: "support_ticket_admin_reply",
@@ -55,6 +60,11 @@ function buildSetupReminderIdempotencyKey(purchaseId) {
 function buildReadyEmailResendIdempotencyKey(purchaseId, now = Date.now()) {
     const hourBucket = Math.floor(Number(now || Date.now()) / (1000 * 60 * 60));
     return `purchase:${purchaseId}:email:${EMAIL_KIND.READY_ACCESS_RESEND}:${hourBucket}`;
+}
+
+function buildServiceAccessEmailIdempotencyKey(purchaseId, now = Date.now()) {
+    const dayBucket = Math.floor(Number(now || Date.now()) / (1000 * 60 * 60 * 24));
+    return `purchase:${purchaseId}:email:${EMAIL_KIND.SERVICE_ACCESS_LINK}:${dayBucket}`;
 }
 
 function buildSuspensionDeleteWarningIdempotencyKey(purchaseId, kind) {
@@ -112,6 +122,18 @@ function buildSetupReminderUrl(purchase) {
     return `${baseUrl}/success`;
 }
 
+function serviceAccessLinkCopyLines() {
+    return [
+        "",
+        "Private service access link:",
+        SERVICE_ACCESS_LINK_PLACEHOLDER,
+        "",
+        "Save this email or bookmark your private service link. This link lets you access support, billing help, service status, and ready-access options for this server without creating an account.",
+        "For security, this link refreshes each billing cycle. Use the newest OberynHost billing/service email if an older link stops working.",
+        "Do not share this link publicly. Anyone with it may be able to access support options for this service."
+    ];
+}
+
 function buildReadyEmailMessage(purchase) {
     const panelUrl = getPanelUrl();
     const recipientEmail = assertEmailHeaderSafe(purchase?.email, "Customer email");
@@ -135,7 +157,8 @@ function buildReadyEmailMessage(purchase) {
         "Your OberynHost Minecraft server is ready.",
         "",
         `Panel URL: ${panelUrl}`,
-        `Username: ${pelicanUsername}`
+        `Username: ${pelicanUsername}`,
+        ...serviceAccessLinkCopyLines()
     ].filter(line => line !== "").join("\n");
 
     return {
@@ -150,7 +173,8 @@ function buildReadyEmailMessage(purchase) {
             pelicanUsername,
             hostname: String(purchase?.hostname || "").trim(),
             serverName,
-            purchaseId: purchase.id
+            purchaseId: purchase.id,
+            serviceAccessLinkIncluded: true
         }
     };
 }
@@ -184,7 +208,8 @@ function buildSetupReminderEmailMessage(purchase) {
         "Your payment has been verified, but server setup is still waiting on your details.",
         "",
         "Open this link to finish setup:",
-        setupUrl
+        setupUrl,
+        ...serviceAccessLinkCopyLines()
     ].join("\n");
 
     return {
@@ -198,7 +223,37 @@ function buildSetupReminderEmailMessage(purchase) {
             setupUrl,
             purchaseId: purchase.id,
             stripeSessionId: String(purchase?.stripeSessionId || "").trim(),
-            email: recipientEmail
+            email: recipientEmail,
+            serviceAccessLinkIncluded: true
+        }
+    };
+}
+
+function buildServiceAccessLinkEmailMessage(purchase) {
+    const recipientEmail = assertEmailHeaderSafe(purchase?.email, "Customer email");
+    const serverName = String(purchase?.serverName || "your server").trim();
+
+    if (!recipientEmail) {
+        throw new Error("Customer email is required before queueing a service access email.");
+    }
+
+    const subject = `Your OberynHost private service link: ${serverName}`;
+    const bodyText = [
+        `Here is the current private service access link for ${serverName}.`,
+        ...serviceAccessLinkCopyLines()
+    ].join("\n");
+
+    return {
+        kind: EMAIL_KIND.SERVICE_ACCESS_LINK,
+        recipientEmail,
+        senderEmail: getSafeSenderEmail(),
+        subject,
+        bodyText,
+        payload: {
+            kind: EMAIL_KIND.SERVICE_ACCESS_LINK,
+            purchaseId: purchase.id,
+            serverName,
+            serviceAccessLinkIncluded: true
         }
     };
 }
@@ -267,6 +322,7 @@ function buildSupportTicketReceivedMessage(ticket, recommendation) {
         `Category: ${categoryLabel}`,
         "",
         guidance || "A founder will review the request with the verified service context.",
+        ...serviceAccessLinkCopyLines(),
         "",
         "OberynHost support covers hosting, billing, panel access, provisioning, routing, allocation, and platform issues. Minecraft plugins, gameplay, moderation, custom configs, and server administration are self-managed unless OberynHost explicitly provides that service."
     ].join("\n");
@@ -283,8 +339,24 @@ function buildSupportTicketReceivedMessage(ticket, recommendation) {
             publicRef,
             category: ticket.category,
             status: ticket.status,
-            macroId: recommendation?.macroId || ""
+            macroId: recommendation?.macroId || "",
+            serviceAccessLinkIncluded: true
         }
+    };
+}
+
+async function materializeServiceAccessLinkPlaceholders(message) {
+    if (!message?.bodyText || !message.bodyText.includes(SERVICE_ACCESS_LINK_PLACEHOLDER)) {
+        return message;
+    }
+
+    const purchaseId = Number(message.purchaseId || message.payload?.purchaseId || 0);
+    const serviceAccessUrl = await materializeServiceAccessLinkForEmail(purchaseId);
+    const replacement = serviceAccessUrl || "If you cannot access your private service link, email support@oberynn.com for purchase-access recovery.";
+
+    return {
+        ...message,
+        bodyText: message.bodyText.split(SERVICE_ACCESS_LINK_PLACEHOLDER).join(replacement)
     };
 }
 
@@ -467,6 +539,18 @@ async function enqueueSetupReminderEmailForPurchase(purchase, options = {}) {
         ...message,
         idempotencyKey
     };
+}
+
+async function enqueueServiceAccessLinkEmailForPurchase(purchase, options = {}) {
+    const now = Number(options.now || Date.now());
+    const message = buildServiceAccessLinkEmailMessage(purchase);
+    const idempotencyKey = buildServiceAccessEmailIdempotencyKey(purchase.id, now);
+
+    return enqueueEmailMessage(message, idempotencyKey, {
+        ...options,
+        now,
+        purchaseId: purchase.id
+    });
 }
 
 async function enqueueSuspensionDeleteWarningEmailForPurchase(purchase, kind, options = {}) {
@@ -823,6 +907,8 @@ module.exports = {
     buildReadyEmailMessage,
     buildReadyEmailResendIdempotencyKey,
     buildReadyEmailResendMessage,
+    buildServiceAccessEmailIdempotencyKey,
+    buildServiceAccessLinkEmailMessage,
     buildSetupReminderEmailMessage,
     buildSetupReminderIdempotencyKey,
     buildSupportAdminReplyMessage,
@@ -832,11 +918,13 @@ module.exports = {
     buildSuspensionDeleteWarningIdempotencyKey,
     enqueueReadyEmailForPurchase,
     enqueueReadyEmailResendForPurchase,
+    enqueueServiceAccessLinkEmailForPurchase,
     enqueueSetupReminderEmailForPurchase,
     enqueueSupportTicketAdminReplyEmail,
     enqueueSupportTicketReceivedEmail,
     enqueueSuspensionDeleteWarningEmailForPurchase,
     leaseNextEmailOutboxMessage,
+    materializeServiceAccessLinkPlaceholders,
     recoverExpiredEmailOutboxLeases,
     markEmailOutboxFailed,
     markEmailOutboxSent

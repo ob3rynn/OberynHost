@@ -22,7 +22,10 @@ const {
 const { validatePlanDefinition } = require("../../services/planDefinitions");
 const { validateStripePriceId } = require("../../services/stripePrices");
 const { markPurchasePaid, expirePurchase } = require("../../services/purchases");
-const { enqueueReadyEmailForPurchase } = require("../../services/emailOutbox");
+const {
+    enqueueReadyEmailForPurchase,
+    enqueueServiceAccessLinkEmailForPurchase
+} = require("../../services/emailOutbox");
 const {
     buildProvisioningIdempotencyKey,
     buildProvisioningPayload,
@@ -49,6 +52,10 @@ const {
     getPurchasePolicyState
 } = require("../../services/policyRules");
 const { mergeLifecycleState } = require("../../services/lifecycle");
+const {
+    listServiceAccessLinksForPurchase,
+    revokeServiceAccessLink
+} = require("../../services/serviceAccessLinks");
 
 const stripe = createStripeClient(config.stripeSecretKey, config.stripeApiVersion);
 const router = express.Router();
@@ -1742,6 +1749,140 @@ router.post("/admin/purchases/:purchaseId/reconcile-stripe", async (req, res) =>
     } catch (err) {
         console.error("Stripe reconcile failed:", err);
         res.status(500).json({ error: "Could not reconcile purchase with Stripe" });
+    }
+});
+
+router.get("/admin/purchases/:purchaseId/service-access-links", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        const links = await listServiceAccessLinksForPurchase(purchaseId);
+
+        res.json({ links });
+    } catch (err) {
+        console.error("Admin service access list failed:", err);
+        res.status(500).json({ error: "Could not load service access links" });
+    }
+});
+
+router.post("/admin/purchases/:purchaseId/service-access-links/rotate", async (req, res) => {
+    const purchaseId = Number(req.params.purchaseId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+        return res.status(400).json({ error: "Invalid purchase id" });
+    }
+
+    try {
+        await runQuery("BEGIN IMMEDIATE TRANSACTION");
+
+        const purchase = await getPurchaseRecord(purchaseId);
+
+        if (!purchase) {
+            await rollbackTransaction();
+            return res.status(404).json({ error: "Purchase not found" });
+        }
+
+        if (!purchase.email) {
+            await rollbackTransaction();
+            return res.status(409).json({ error: "This purchase does not have a customer email on file." });
+        }
+
+        const existingLinks = await listServiceAccessLinksForPurchase(purchaseId);
+        const now = Date.now();
+
+        await runQuery(
+            `UPDATE serviceAccessLinks
+             SET active = 0,
+                 revokedAt = COALESCE(revokedAt, ?),
+                 rotatedAt = COALESCE(rotatedAt, ?),
+                 expiresAt = CASE WHEN expiresAt > ? THEN ? ELSE expiresAt END
+             WHERE purchaseId = ?
+               AND purpose = 'service_support'
+               AND active = 1
+               AND revokedAt IS NULL`,
+            [now, now, now, now, purchaseId]
+        );
+
+        const email = await enqueueServiceAccessLinkEmailForPurchase(purchase, { now });
+
+        await recordAdminAction(req, purchaseId, "service_access_rotate", adminNote.value || "", {
+            revokedLinkPrefixes: existingLinks
+                .filter(link => link.active && !link.revokedAt)
+                .map(link => link.tokenPrefix),
+            replacementEmailIdempotencyKey: email.idempotencyKey
+        });
+
+        await runQuery("COMMIT");
+
+        res.json({
+            success: true,
+            message: "Replacement private service access link email queued.",
+            links: await listServiceAccessLinksForPurchase(purchaseId)
+        });
+    } catch (err) {
+        await rollbackTransaction();
+        console.error("Admin service access rotation failed:", err);
+        res.status(500).json({ error: "Could not rotate service access link" });
+    }
+});
+
+router.post("/admin/service-access-links/:linkId/revoke", async (req, res) => {
+    const linkId = Number(req.params.linkId);
+    let adminNote;
+
+    try {
+        adminNote = normalizeOptionalText(req.body?.adminNote, 500);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    if (!Number.isInteger(linkId) || linkId <= 0) {
+        return res.status(400).json({ error: "Invalid service access link id" });
+    }
+
+    try {
+        const existing = await getQuery(
+            "SELECT id, purchaseId, tokenPrefix, active, revokedAt FROM serviceAccessLinks WHERE id = ?",
+            [linkId]
+        );
+
+        if (!existing) {
+            return res.status(404).json({ error: "Service access link not found" });
+        }
+
+        await revokeServiceAccessLink(linkId);
+
+        await recordAdminAction(req, existing.purchaseId, "service_access_revoke", adminNote.value || "", {
+            serviceAccessLinkId: existing.id,
+            tokenPrefix: existing.tokenPrefix || "",
+            wasActive: Boolean(existing.active),
+            wasRevoked: Boolean(existing.revokedAt)
+        });
+
+        res.json({
+            success: true,
+            links: await listServiceAccessLinksForPurchase(existing.purchaseId)
+        });
+    } catch (err) {
+        console.error("Admin service access revoke failed:", err);
+        res.status(500).json({ error: "Could not revoke service access link" });
     }
 });
 

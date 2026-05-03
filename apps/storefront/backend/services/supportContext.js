@@ -9,6 +9,7 @@ const {
     SETUP_STATUS
 } = require("../constants/status");
 const { getPurchasePolicyState } = require("./policyRules");
+const { verifyServiceAccessToken } = require("./serviceAccessLinks");
 
 function getSetupTokenFromRequest(req) {
     const cookies = parseCookies(req.headers.cookie);
@@ -20,6 +21,17 @@ function getSetupTokenFromRequest(req) {
         : "";
 
     return cookieToken || bodyToken;
+}
+
+function getServiceAccessTokenFromRequest(req) {
+    const bodyToken = typeof req.body?.accessToken === "string"
+        ? req.body.accessToken.trim()
+        : "";
+    const paramToken = typeof req.params?.accessToken === "string"
+        ? req.params.accessToken.trim()
+        : "";
+
+    return bodyToken || paramToken;
 }
 
 function parseJson(value, fallback = null) {
@@ -123,6 +135,7 @@ function sanitizePurchaseForSnapshot(purchase) {
         stripeSubscriptionPresent: Boolean(purchase.stripeSubscriptionId),
         stripeSubscriptionStatus: purchase.stripeSubscriptionStatus || "",
         stripeCancelAtPeriodEnd: Number(purchase.stripeCancelAtPeriodEnd || 0) || null,
+        stripeCurrentPeriodStart: Number(purchase.stripeCurrentPeriodStart || 0) || null,
         stripeCurrentPeriodEnd: Number(purchase.stripeCurrentPeriodEnd || 0) || null,
         pelicanUserLinked: Boolean(purchase.pelicanUserId),
         pelicanServerLinked: Boolean(purchase.pelicanServerId),
@@ -170,9 +183,7 @@ async function getRecentEmailOutboxEntries(purchaseId) {
     }));
 }
 
-async function loadVerifiedSupportContext(req) {
-    const setupToken = getSetupTokenFromRequest(req);
-
+async function loadSetupTokenSupportContext(setupToken) {
     if (!isOpaqueToken(setupToken)) {
         return {
             verified: false,
@@ -262,6 +273,88 @@ async function loadVerifiedSupportContext(req) {
     };
 }
 
+async function buildVerifiedSupportContextForPurchase(purchase) {
+    const snapshot = sanitizePurchaseForSnapshot(purchase);
+    const recentEmailOutbox = await getRecentEmailOutboxEntries(purchase.id);
+    const readyAccess = isReadyForCustomerAccess(purchase)
+        ? {
+            available: true,
+            panelUrl: config.pelican.panelUrl,
+            hostname: purchase.hostname || "",
+            username: purchase.pelicanUsername || ""
+        }
+        : {
+            available: false,
+            panelUrl: "",
+            hostname: "",
+            username: ""
+        };
+
+    return {
+        verified: true,
+        purchase,
+        purchaseId: purchase.id,
+        email: purchase.email || "",
+        snapshot: {
+            purchase: snapshot,
+            recentEmailOutbox,
+            diagnostics: {
+                available: false,
+                message: "Diagnostics are not available yet."
+            }
+        },
+        publicContext: {
+            verified: true,
+            purchaseId: purchase.id,
+            email: purchase.email || "",
+            serverName: purchase.serverName || "",
+            hostname: purchase.hostname || "",
+            planType: snapshot.planType,
+            billingPortalAvailable: Boolean(
+                config.stripeBillingPortalConfigurationId &&
+                purchase.stripeCustomerId &&
+                (
+                    purchase.status === PURCHASE_STATUS.PAID ||
+                    purchase.status === PURCHASE_STATUS.COMPLETED
+                )
+            ),
+            readyAccess,
+            state: snapshot.publicState
+        }
+    };
+}
+
+async function loadVerifiedSupportContext(req) {
+    const setupToken = getSetupTokenFromRequest(req);
+    const accessToken = getServiceAccessTokenFromRequest(req);
+    let setupFailure = null;
+
+    if (isOpaqueToken(setupToken)) {
+        const setupContext = await loadSetupTokenSupportContext(setupToken);
+
+        if (setupContext.verified) {
+            return setupContext;
+        }
+
+        setupFailure = setupContext;
+    }
+
+    if (isOpaqueToken(accessToken)) {
+        const accessContext = await verifyServiceAccessToken(accessToken);
+
+        if (accessContext.verified) {
+            return buildVerifiedSupportContextForPurchase(accessContext.purchase);
+        }
+
+        return accessContext;
+    }
+
+    return setupFailure || {
+        verified: false,
+        reason: "missing_verified_context"
+    };
+}
+
 function buildSupportSnapshot(context) {
     return {
         capturedAt: Date.now(),
@@ -277,6 +370,7 @@ function buildSupportSnapshot(context) {
 
 module.exports = {
     buildSupportSnapshot,
+    getServiceAccessTokenFromRequest,
     getSetupTokenFromRequest,
     isReadyForCustomerAccess,
     loadVerifiedSupportContext,

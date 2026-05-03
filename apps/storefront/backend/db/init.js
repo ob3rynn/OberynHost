@@ -412,6 +412,27 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE TABLE IF NOT EXISTS serviceAccessLinks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchaseId INTEGER NOT NULL,
+                tokenHash TEXT NOT NULL,
+                tokenPrefix TEXT,
+                purpose TEXT NOT NULL DEFAULT 'service_support',
+                billingPeriodStart INTEGER,
+                billingPeriodEnd INTEGER,
+                expiresAt INTEGER NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                createdAt INTEGER NOT NULL,
+                lastUsedAt INTEGER,
+                revokedAt INTEGER,
+                rotatedAt INTEGER,
+                rotatedFromId INTEGER,
+                FOREIGN KEY(purchaseId) REFERENCES purchases(id),
+                FOREIGN KEY(rotatedFromId) REFERENCES serviceAccessLinks(id)
+            )
+        `);
+
+        await runStatement(`
             CREATE TABLE IF NOT EXISTS adminAuditLog (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 purchaseId INTEGER,
@@ -512,6 +533,8 @@ const ready = (async () => {
         if (!purchaseColumnNames.has("stripeCurrentPeriodEnd")) {
             await runStatement("ALTER TABLE purchases ADD COLUMN stripeCurrentPeriodEnd INTEGER");
         }
+
+        await addColumnIfMissing("purchases", purchaseColumnNames, "stripeCurrentPeriodStart", "INTEGER");
 
         if (!purchaseColumnNames.has("stripeCancelAtPeriodEnd")) {
             await runStatement("ALTER TABLE purchases ADD COLUMN stripeCancelAtPeriodEnd INTEGER");
@@ -691,6 +714,22 @@ const ready = (async () => {
         await runStatement(`
             CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket_created
             ON supportTicketEvents(ticketId, createdAt ASC, id ASC)
+        `);
+
+        await runStatement(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_service_access_links_token_hash
+            ON serviceAccessLinks(tokenHash)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_service_access_links_purchase
+            ON serviceAccessLinks(purchaseId, purpose, active, expiresAt DESC)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_service_access_links_rotation
+            ON serviceAccessLinks(rotatedFromId)
+            WHERE rotatedFromId IS NOT NULL
         `);
 
         await runStatement(`
