@@ -2,7 +2,12 @@ const crypto = require("crypto");
 
 const config = require("../config");
 const { allQuery, getQuery, runQuery } = require("../db/queries");
-const { PURCHASE_STATUS } = require("../constants/status");
+const {
+    CUSTOMER_RISK_STATUS,
+    FULFILLMENT_STATUS,
+    PURCHASE_STATUS,
+    SERVICE_STATUS
+} = require("../constants/status");
 const { generateOpaqueToken, isOpaqueToken, sha256Hex } = require("../utils/tokens");
 const { TERMINAL_SUBSCRIPTION_STATUSES } = require("./policyRules");
 
@@ -40,14 +45,15 @@ function asTimestamp(value) {
 }
 
 function getPurchasePeriodBounds(purchase, now = Date.now()) {
-    const previousEnd = asTimestamp(purchase?.stripeCurrentPeriodEnd);
-    const start = asTimestamp(purchase?.stripeCurrentPeriodStart) ||
-        previousEnd ||
+    const periodStart = asTimestamp(purchase?.stripeCurrentPeriodStart);
+    const periodEnd = asTimestamp(purchase?.stripeCurrentPeriodEnd);
+    const fallbackStart =
         asTimestamp(purchase?.paidAt) ||
         asTimestamp(purchase?.createdAt) ||
         now;
-    const end = previousEnd && previousEnd > start
-        ? previousEnd
+    const start = periodStart || fallbackStart;
+    const end = periodEnd && periodEnd > start
+        ? periodEnd
         : start + DEFAULT_PERIOD_MS;
 
     return {
@@ -247,7 +253,10 @@ async function verifyServiceAccessToken(rawToken, options = {}) {
     if (
         row.status === PURCHASE_STATUS.CANCELLED ||
         row.status === PURCHASE_STATUS.EXPIRED ||
-        TERMINAL_SUBSCRIPTION_STATUSES.has(row.stripeSubscriptionStatus || "")
+        TERMINAL_SUBSCRIPTION_STATUSES.has(row.stripeSubscriptionStatus || "") ||
+        row.fulfillmentStatus === FULFILLMENT_STATUS.DELETED ||
+        row.serviceStatus === SERVICE_STATUS.DELETED ||
+        row.customerRiskStatus === CUSTOMER_RISK_STATUS.HARD_FLAGGED
     ) {
         return {
             verified: false,

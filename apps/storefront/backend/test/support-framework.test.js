@@ -169,6 +169,85 @@ test("private service access tokens fail closed when invalid, revoked, expired, 
     assert.equal((await overlapResponse.json()).verified, true);
 });
 
+test("private service access tokens fail closed for deleted service states but allow suspended recovery", async t => {
+    const app = await createTestApp(t);
+    const { createServiceAccessLinkForPurchase } = require("../services/serviceAccessLinks");
+
+    const deletedService = await seedPaidSetupPurchase(app, {
+        serverId: 1,
+        setupToken: tokenFor("setup_token_deleted_service", 1),
+        email: "deleted-service@example.com",
+        serviceStatus: "deleted"
+    });
+    const deletedServiceLink = await createServiceAccessLinkForPurchase(deletedService.purchase);
+    const deletedServiceResponse = await postJson(app, "/api/support/context", {
+        accessToken: deletedServiceLink.rawToken
+    });
+    assert.equal((await deletedServiceResponse.json()).verified, false);
+
+    const deletedFulfillment = await seedPaidSetupPurchase(app, {
+        serverId: 2,
+        setupToken: tokenFor("setup_token_deleted_fulfillment", 2),
+        email: "deleted-fulfillment@example.com",
+        fulfillmentStatus: "deleted"
+    });
+    const deletedFulfillmentLink = await createServiceAccessLinkForPurchase(deletedFulfillment.purchase);
+    const deletedFulfillmentResponse = await postJson(app, "/api/support/context", {
+        accessToken: deletedFulfillmentLink.rawToken
+    });
+    assert.equal((await deletedFulfillmentResponse.json()).verified, false);
+
+    const hardFlagged = await seedPaidSetupPurchase(app, {
+        serverId: 3,
+        setupToken: tokenFor("setup_token_hard_flagged", 3),
+        email: "hard-flagged@example.com",
+        customerRiskStatus: "hard_flagged"
+    });
+    const hardFlaggedLink = await createServiceAccessLinkForPurchase(hardFlagged.purchase);
+    const hardFlaggedResponse = await postJson(app, "/api/support/context", {
+        accessToken: hardFlaggedLink.rawToken
+    });
+    assert.equal((await hardFlaggedResponse.json()).verified, false);
+
+    const suspendedRecoverable = await seedPaidSetupPurchase(app, {
+        serverId: 4,
+        setupToken: tokenFor("setup_token_suspended_recovery", 4),
+        email: "suspended-recovery@example.com",
+        serviceStatus: "suspended_final_recovery",
+        customerRiskStatus: "purchase_blocked_delinquent"
+    });
+    const suspendedRecoverableLink = await createServiceAccessLinkForPurchase(suspendedRecoverable.purchase);
+    const suspendedRecoverableResponse = await postJson(app, "/api/support/context", {
+        accessToken: suspendedRecoverableLink.rawToken
+    });
+    assert.equal((await suspendedRecoverableResponse.json()).verified, true);
+});
+
+test("service access period fallback uses paid or created start when Stripe period start is missing", async t => {
+    const app = await createTestApp(t);
+    const now = 1_900_000_000_000;
+    const paidAt = now - 5 * 86_400_000;
+    const periodEnd = now + 25 * 86_400_000;
+    const seeded = await seedPaidSetupPurchase(app, {
+        setupToken: tokenFor("setup_token_period_fallback", 1),
+        email: "period-fallback@example.com",
+        paidAt,
+        createdAt: paidAt - 86_400_000,
+        stripeCurrentPeriodEnd: periodEnd
+    });
+    const { createServiceAccessLinkForPurchase, getPurchasePeriodBounds } = require("../services/serviceAccessLinks");
+
+    const bounds = getPurchasePeriodBounds(seeded.purchase, now);
+    assert.equal(bounds.start, paidAt);
+    assert.equal(bounds.end, periodEnd);
+    assert.equal(bounds.expiresAt, periodEnd + 14 * 86_400_000);
+
+    const created = await createServiceAccessLinkForPurchase(seeded.purchase, { now });
+    assert.equal(created.link.billingPeriodStart, paidAt);
+    assert.equal(created.link.billingPeriodEnd, periodEnd);
+    assert.equal(created.link.expiresAt, periodEnd + 14 * 86_400_000);
+});
+
 test("private service access token supports tickets, billing portal, and ready-email resend without unsafe mutations", async t => {
     const app = await createTestApp(t, {
         stripeBillingPortalConfigurationId: "bpc_test_access",
