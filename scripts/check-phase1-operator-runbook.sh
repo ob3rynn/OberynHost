@@ -44,6 +44,40 @@ require_text() {
     fi
 }
 
+require_current_launch_truth() {
+    require_text "$runbook_path" "Runbook documents current launch truth: 2GB Paper Minecraft Server" "2GB Paper Minecraft Server"
+    require_text "$runbook_path" "Runbook documents current launch truth: paper-2gb" "paper-2gb"
+    require_text "$runbook_path" "Runbook documents current launch truth: minecraft-paper-2gb" "minecraft-paper-2gb"
+    require_text "$runbook_path" "Runbook documents current launch truth: \$11.97/month" '$11.97/month'
+    require_text "$runbook_path" "Runbook documents current launch truth: 25 slots" "25 slots"
+    require_text "$runbook_path" "Runbook documents current launch truth: 2424 MB" "2424 MB"
+    require_text "$runbook_path" "Runbook documents current launch truth: 2024 MB" "2024 MB"
+    require_text "$runbook_path" "Runbook documents current launch truth: STRIPE_PRICE_PAPER_2GB" "STRIPE_PRICE_PAPER_2GB"
+}
+
+find_docs_literal_matches() {
+    local needle="$1"
+
+    grep -R -n -F "$needle" "${repo_root}/docs" "${repo_root}/deploy" 2>/dev/null || true
+}
+
+find_active_legacy_env_matches() {
+    local needle="$1"
+
+    find_docs_literal_matches "$needle" | grep -Eiv 'do not|no legacy|legacy .*such as|forbidden|must not|should not' || true
+}
+
+fail_on_matches() {
+    local label="$1"
+    local matches="$2"
+
+    if [[ -n "$matches" ]]; then
+        fail "${label}: ${matches//$'\n'/; }"
+    else
+        pass "$label"
+    fi
+}
+
 printf 'Phase-1 operator readiness check\n'
 
 if [[ "$repo_root" == /mnt/* ]]; then
@@ -64,14 +98,14 @@ require_text "$runbook_path" "Runbook blocks automated Pelican deletion" "Do not
 require_text "$runbook_path" "Runbook blocks Windows-side Node/npm and mounted paths" "Do not use Windows-side Node/npm"
 require_text "$plan_path" "Frozen plan links the phase-1 runbook" "PHASE1_OPERATOR_RUNBOOK.md"
 require_text "$plan_path" "Frozen plan keeps destructive purge operator-gated" "does not delete Pelican resources or release capacity"
+require_current_launch_truth
 
-stale_capacity_matches="$(grep -R -n -F "22 active server slots" "${repo_root}/docs" 2>/dev/null || true)"
-
-if [[ -n "$stale_capacity_matches" ]]; then
-    fail "Docs still mention stale 22-slot launch capacity: ${stale_capacity_matches//$'\n'/; }"
-else
-    pass "Docs do not mention stale 22-slot launch capacity"
-fi
+fail_on_matches "Docs/deploy do not mention stale \$11.98 launch pricing" "$(find_docs_literal_matches '$11.98')"
+fail_on_matches "Docs/deploy do not mention stale 11.98 launch pricing" "$(find_docs_literal_matches '11.98')"
+fail_on_matches "Docs/deploy do not mention stale 22-slot launch capacity" "$(find_docs_literal_matches '22 active server slots')"
+fail_on_matches "Docs/deploy do not claim legacy STRIPE_PRICE_2GB as active launch truth" "$(find_active_legacy_env_matches 'STRIPE_PRICE_2GB')"
+fail_on_matches "Docs/deploy do not claim legacy STRIPE_PRICE_3GB as active launch truth" "$(find_active_legacy_env_matches 'STRIPE_PRICE_3GB')"
+fail_on_matches "Docs/deploy do not claim legacy STRIPE_PRICE_4GB as active launch truth" "$(find_active_legacy_env_matches 'STRIPE_PRICE_4GB')"
 
 if [[ "$failures" -gt 0 ]]; then
     printf 'Phase-1 operator readiness check found %s issue(s).\n' "$failures" >&2

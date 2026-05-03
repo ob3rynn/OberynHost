@@ -1,6 +1,6 @@
 # Pelican Production Prep
 
-This path is the repo-owned production source of truth for the first real Pelican rollout. It is intentionally separate from [`../../apps/pelicanpanel`](../../apps/pelicanpanel), which remains a locally bound, production-adjacent stack rather than the real host deployment path.
+This path is the repo-owned production source of truth for the first real Pelican rollout. It is intentionally separate from [`../../../apps/pelicanpanel`](../../../apps/pelicanpanel), which remains a locally bound, production-adjacent stack rather than the real host deployment path.
 
 Storefront production deployment is a separate Compose project under [`../../storefront/production`](../../storefront/production). The first VM can run both stacks, but they stay separate deployment boundaries.
 

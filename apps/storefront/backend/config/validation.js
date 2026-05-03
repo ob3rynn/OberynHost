@@ -9,23 +9,51 @@ const REQUIRED_RUNTIME_ENV_NAMES = [
 
 const PLACEHOLDER_ENV_NAMES = [
     ...REQUIRED_RUNTIME_ENV_NAMES,
-    "ALLOWED_ORIGINS"
+    "ALLOWED_ORIGINS",
+    "SETUP_SECRET_KEY",
+    "POSTMARK_SERVER_TOKEN",
+    "PELICAN_PANEL_URL",
+    "PELICAN_APPLICATION_API_KEY",
+    "PELICAN_PROVISIONING_TARGETS_JSON"
 ];
 
 const EXACT_PLACEHOLDER_VALUES = {
     ADMIN_KEY: new Set([
-        "replace-with-a-long-random-secret"
+        "replace-with-a-long-random-secret",
+        "CHANGE_ME_LONG_RANDOM_SECRET"
+    ]),
+    SETUP_SECRET_KEY: new Set([
+        "replace-with-a-long-random-secret",
+        "CHANGE_ME_LONG_RANDOM_SECRET"
     ]),
     STRIPE_SECRET_KEY: new Set([
-        "sk_test_replace_me"
+        "sk_test_replace_me",
+        "sk_live_CHANGE_ME"
     ]),
     STRIPE_WEBHOOK_SECRET: new Set([
-        "whsec_replace_me"
+        "whsec_replace_me",
+        "whsec_CHANGE_ME"
     ]),
     STRIPE_PRICE_PAPER_2GB: new Set([
-        "price_replace_me"
+        "price_replace_me",
+        "price_CHANGE_ME"
+    ]),
+    POSTMARK_SERVER_TOKEN: new Set([
+        "CHANGE_ME"
+    ]),
+    PELICAN_APPLICATION_API_KEY: new Set([
+        "CHANGE_ME"
+    ]),
+    PELICAN_PROVISIONING_TARGETS_JSON: new Set([
+        "CHANGE_ME"
     ])
 };
+
+const PLACEHOLDER_URL_ENV_NAMES = new Set([
+    "ALLOWED_ORIGINS",
+    "BASE_URL",
+    "PELICAN_PANEL_URL"
+]);
 
 const OPTIONAL_PELICAN_ENV_NAMES = [
     "PELICAN_PANEL_URL",
@@ -385,7 +413,7 @@ function isPlaceholderValue(name, value) {
         return false;
     }
 
-    if (name === "BASE_URL" || name === "ALLOWED_ORIGINS") {
+    if (PLACEHOLDER_URL_ENV_NAMES.has(name)) {
         return isPlaceholderUrlValue(name, trimmedValue);
     }
 

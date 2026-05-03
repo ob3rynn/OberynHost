@@ -14,6 +14,7 @@ This runbook covers the launch flow where the storefront can provision through P
 
 Before treating the storefront as production-capable, fill and verify these values in the production environment:
 
+- Launch truth: `2GB Paper Minecraft Server`, plan `paper-2gb`, product code `minecraft-paper-2gb`, `$11.97/month`, `25 slots`, `2424 MB` container memory, `2024 MB` JVM target, Stripe env `STRIPE_PRICE_PAPER_2GB`.
 - `BASE_URL`: real storefront URL.
 - `ALLOWED_ORIGINS`: only if the storefront is served through additional trusted origins.
 - `ADMIN_KEY`: long random secret.
