@@ -3,6 +3,8 @@ const { runQuery, getQuery } = require("../db/queries");
 const { PURCHASE_STATUS, SERVER_STATUS } = require("../constants/status");
 const { generateOpaqueToken } = require("../utils/tokens");
 const { mergeLifecycleState } = require("./lifecycle");
+const { syncServiceAccessLinkForBillingPeriod } = require("./serviceAccessLinks");
+const { enqueueServiceAccessLinkEmailForPurchase } = require("./emailOutbox");
 
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);
 
@@ -22,6 +24,16 @@ function extractPriceIdFromSubscription(subscription) {
     return subscription?.items?.data?.[0]?.price?.id || null;
 }
 
+function extractCurrentPeriodStart(subscription) {
+    const itemPeriodStart = subscription?.items?.data?.[0]?.current_period_start;
+
+    if (itemPeriodStart) {
+        return asMilliseconds(itemPeriodStart);
+    }
+
+    return asMilliseconds(subscription?.current_period_start);
+}
+
 function extractCurrentPeriodEnd(subscription) {
     const itemPeriodEnd = subscription?.items?.data?.[0]?.current_period_end;
 
@@ -37,6 +49,7 @@ function buildSubscriptionRuntime(subscription, overrides = {}) {
         stripeCustomerId: overrides.stripeCustomerId ?? getStripeObjectId(subscription?.customer),
         stripeSubscriptionId: overrides.stripeSubscriptionId ?? getStripeObjectId(subscription),
         stripeSubscriptionStatus: overrides.stripeSubscriptionStatus ?? subscription?.status ?? null,
+        stripeCurrentPeriodStart: overrides.stripeCurrentPeriodStart ?? extractCurrentPeriodStart(subscription),
         stripeCurrentPeriodEnd: overrides.stripeCurrentPeriodEnd ?? extractCurrentPeriodEnd(subscription),
         stripeCancelAtPeriodEnd: Number(
             overrides.stripeCancelAtPeriodEnd ?? Boolean(subscription?.cancel_at_period_end)
@@ -241,6 +254,7 @@ async function savePurchaseRuntime(purchase, values) {
              stripeCustomerId = ?,
              stripeSubscriptionId = ?,
              stripeSubscriptionStatus = ?,
+             stripeCurrentPeriodStart = ?,
              stripeCurrentPeriodEnd = ?,
              stripeCancelAtPeriodEnd = ?,
              stripePriceId = ?,
@@ -264,6 +278,7 @@ async function savePurchaseRuntime(purchase, values) {
             nextPurchase.stripeCustomerId,
             nextPurchase.stripeSubscriptionId,
             nextPurchase.stripeSubscriptionStatus,
+            nextPurchase.stripeCurrentPeriodStart,
             nextPurchase.stripeCurrentPeriodEnd,
             nextPurchase.stripeCancelAtPeriodEnd,
             nextPurchase.stripePriceId,
@@ -392,12 +407,13 @@ async function markPurchasePaid(session, subscription = null) {
         ? PURCHASE_STATUS.PAID
         : purchase.status;
 
-    return savePurchaseRuntime(purchase, {
+    const updatedPurchase = await savePurchaseRuntime(purchase, {
         status: nextStatus,
         stripeSessionId: purchase.stripeSessionId || session.id,
         stripeCustomerId: runtime.stripeCustomerId || purchase.stripeCustomerId || null,
         stripeSubscriptionId: runtime.stripeSubscriptionId || purchase.stripeSubscriptionId || null,
         stripeSubscriptionStatus: runtime.stripeSubscriptionStatus || purchase.stripeSubscriptionStatus || null,
+        stripeCurrentPeriodStart: runtime.stripeCurrentPeriodStart || purchase.stripeCurrentPeriodStart || null,
         stripeCurrentPeriodEnd: runtime.stripeCurrentPeriodEnd || purchase.stripeCurrentPeriodEnd || null,
         stripeCancelAtPeriodEnd: runtime.stripeSubscriptionId
             ? runtime.stripeCancelAtPeriodEnd
@@ -410,6 +426,14 @@ async function markPurchasePaid(session, subscription = null) {
         setupTokenExpiresAt,
         lastStateOwner: "webhook"
     });
+
+    const serviceAccessSync = await syncServiceAccessLinkForBillingPeriod(updatedPurchase);
+
+    if (serviceAccessSync?.rotated && updatedPurchase.email) {
+        await enqueueServiceAccessLinkEmailForPurchase(updatedPurchase);
+    }
+
+    return updatedPurchase;
 }
 
 async function syncPurchaseSubscription(subscription, overrides = {}) {
@@ -447,12 +471,13 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
         nextStatus = PURCHASE_STATUS.CANCELLED;
     }
 
-    await savePurchaseRuntime(purchase, {
+    const updatedPurchase = await savePurchaseRuntime(purchase, {
         status: nextStatus,
         stripeSessionId: overrides.stripeSessionId || purchase.stripeSessionId || null,
         stripeCustomerId: runtime.stripeCustomerId || purchase.stripeCustomerId || null,
         stripeSubscriptionId: runtime.stripeSubscriptionId || purchase.stripeSubscriptionId || null,
         stripeSubscriptionStatus: runtime.stripeSubscriptionStatus || purchase.stripeSubscriptionStatus || null,
+        stripeCurrentPeriodStart: runtime.stripeCurrentPeriodStart || purchase.stripeCurrentPeriodStart || null,
         stripeCurrentPeriodEnd: runtime.stripeCurrentPeriodEnd || purchase.stripeCurrentPeriodEnd || null,
         stripeCancelAtPeriodEnd: runtime.stripeSubscriptionId
             ? runtime.stripeCancelAtPeriodEnd
@@ -473,6 +498,14 @@ async function syncPurchaseSubscription(subscription, overrides = {}) {
         setupTokenExpiresAt: purchase.setupTokenExpiresAt || (Date.now() + config.setupTokenTtlMs),
         lastStateOwner: "webhook"
     });
+
+    if (!isTerminal) {
+        const serviceAccessSync = await syncServiceAccessLinkForBillingPeriod(updatedPurchase);
+
+        if (serviceAccessSync?.rotated && updatedPurchase.email) {
+            await enqueueServiceAccessLinkEmailForPurchase(updatedPurchase);
+        }
+    }
 
     if (isTerminal) {
         await releaseServerIfNeeded(purchase.serverId);

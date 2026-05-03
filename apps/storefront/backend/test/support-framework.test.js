@@ -45,12 +45,23 @@ async function adminLogin(app) {
     return app.parseSetCookie(response);
 }
 
+function extractAccessTokenFromBody(bodyText) {
+    const match = String(bodyText || "").match(/\/support#accessToken=([A-Za-z0-9_-]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+}
+
 test("support hub serves and anonymous support context cannot create tickets", async t => {
     const app = await createTestApp(t);
 
     const supportPage = await app.request("/support");
     assert.equal(supportPage.status, 200);
-    assert.match(await supportPage.text(), /Support for your server/i);
+    const supportHtml = await supportPage.text();
+    assert.match(supportHtml, /Support for your server/i);
+    assert.match(supportHtml, /history\.replaceState/);
+
+    const accessPage = await app.request(`/support/access/${encodeURIComponent(tokenFor("path_access_token", 1))}`);
+    assert.equal(accessPage.status, 200);
+    assert.match(await accessPage.text(), /getAccessTokenFromLocation/);
 
     const context = await postJson(app, "/api/support/context");
     assert.equal(context.status, 200);
@@ -67,6 +78,364 @@ test("support hub serves and anonymous support context cannot create tickets", a
 
     const ticketCount = await app.queries.getQuery("SELECT COUNT(*) AS count FROM supportTickets");
     assert.equal(ticketCount.count, 0);
+});
+
+test("support context verifies setup cookie, setup body token, and private service access token", async t => {
+    const app = await createTestApp(t);
+    const seeded = await seedPaidSetupPurchase(app, {
+        setupToken: tokenFor("setup_token_support_context", 1),
+        email: "context-owner@example.com",
+        serverName: "Context Server"
+    });
+
+    const cookieContext = await postJson(app, "/api/support/context", {}, {
+        cookie: setupCookie(seeded.setupToken)
+    });
+    assert.equal(cookieContext.status, 200);
+    assert.equal((await cookieContext.json()).verified, true);
+
+    const bodyContext = await postJson(app, "/api/support/context", {
+        setupToken: seeded.setupToken
+    });
+    assert.equal(bodyContext.status, 200);
+    assert.equal((await bodyContext.json()).verified, true);
+
+    const { createServiceAccessLinkForPurchase } = require("../services/serviceAccessLinks");
+    const created = await createServiceAccessLinkForPurchase(seeded.purchase);
+    const accessContext = await postJson(app, "/api/support/context", {
+        accessToken: created.rawToken
+    });
+    assert.equal(accessContext.status, 200);
+    const accessPayload = await accessContext.json();
+    assert.equal(accessPayload.verified, true);
+    assert.equal(accessPayload.purchaseId, seeded.purchase.id);
+
+    const stored = await app.queries.getQuery("SELECT tokenHash, tokenPrefix FROM serviceAccessLinks WHERE purchaseId = ?", [
+        seeded.purchase.id
+    ]);
+    assert.ok(stored.tokenHash);
+    assert.equal(stored.tokenHash.includes(created.rawToken), false);
+    assert.equal(stored.tokenPrefix, created.rawToken.slice(0, 10));
+});
+
+test("private service access tokens fail closed when invalid, revoked, expired, or outside overlap", async t => {
+    const app = await createTestApp(t);
+    const now = Date.now();
+    const seeded = await seedPaidSetupPurchase(app, {
+        setupToken: tokenFor("setup_token_support_access_fail", 1),
+        email: "access-fail@example.com",
+        stripeCurrentPeriodEnd: now + 30 * 86_400_000
+    });
+    const { createServiceAccessLinkForPurchase, revokeServiceAccessLink } = require("../services/serviceAccessLinks");
+
+    const invalid = await postJson(app, "/api/support/context", {
+        accessToken: tokenFor("not_a_service_access_token", 1)
+    });
+    assert.equal(invalid.status, 200);
+    assert.equal((await invalid.json()).verified, false);
+
+    const revoked = await createServiceAccessLinkForPurchase(seeded.purchase);
+    await revokeServiceAccessLink(revoked.link.id);
+    const revokedResponse = await postJson(app, "/api/support/context", {
+        accessToken: revoked.rawToken
+    });
+    assert.equal(revokedResponse.status, 200);
+    assert.equal((await revokedResponse.json()).verified, false);
+
+    const expired = await createServiceAccessLinkForPurchase(seeded.purchase, {
+        period: {
+            start: now - 60 * 86_400_000,
+            end: now - 45 * 86_400_000,
+            expiresAt: now - 1000
+        }
+    });
+    const expiredResponse = await postJson(app, "/api/support/context", {
+        accessToken: expired.rawToken
+    });
+    assert.equal(expiredResponse.status, 200);
+    assert.equal((await expiredResponse.json()).verified, false);
+
+    const overlap = await createServiceAccessLinkForPurchase(seeded.purchase, {
+        period: {
+            start: now - 30 * 86_400_000,
+            end: now - 1000,
+            expiresAt: now + 1000
+        }
+    });
+    const overlapResponse = await postJson(app, "/api/support/context", {
+        accessToken: overlap.rawToken
+    });
+    assert.equal(overlapResponse.status, 200);
+    assert.equal((await overlapResponse.json()).verified, true);
+});
+
+test("private service access token supports tickets, billing portal, and ready-email resend without unsafe mutations", async t => {
+    const app = await createTestApp(t, {
+        stripeBillingPortalConfigurationId: "bpc_test_access",
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.test"
+        }
+    });
+    const seeded = await seedPendingActivationPurchase(app, {
+        status: "completed",
+        setupToken: tokenFor("setup_token_support_access_actions", 1),
+        email: "access-actions@example.com",
+        fulfillmentStatus: "ready",
+        serviceStatus: "active",
+        stripeCustomerId: "cus_access_actions"
+    });
+    const { createServiceAccessLinkForPurchase } = require("../services/serviceAccessLinks");
+    const created = await createServiceAccessLinkForPurchase(seeded.purchase);
+    const countsBefore = {
+        purchases: await app.queries.getQuery("SELECT COUNT(*) AS count FROM purchases"),
+        servers: await app.queries.getQuery("SELECT COUNT(*) AS count FROM servers"),
+        fulfillment: await app.queries.getQuery("SELECT COUNT(*) AS count FROM fulfillmentQueue")
+    };
+
+    const ticket = await postJson(app, "/api/support/tickets", {
+        accessToken: created.rawToken,
+        email: "access-actions@example.com",
+        category: "service_not_ready",
+        subject: "Support from private link",
+        message: "Please check the verified service."
+    });
+    assert.equal(ticket.status, 201);
+    const ticketPayload = await ticket.json();
+    const snapshot = await app.queries.getQuery(
+        `SELECT snapshotJson
+         FROM supportTicketSnapshots sts
+         JOIN supportTickets st ON st.id = sts.ticketId
+         WHERE st.publicRef = ?`,
+        [ticketPayload.ticket.publicRef]
+    );
+    assert.equal(String(snapshot.snapshotJson).includes(created.rawToken), false);
+
+    const mismatch = await postJson(app, "/api/support/tickets", {
+        accessToken: created.rawToken,
+        email: "other@example.com",
+        category: "service_not_ready",
+        subject: "Wrong owner",
+        message: "This should not work."
+    });
+    assert.equal(mismatch.status, 403);
+
+    const portal = await postJson(app, "/api/support/billing-portal-session", {
+        accessToken: created.rawToken
+    });
+    assert.equal(portal.status, 200);
+    assert.equal(app.stripeState.lastCreatedPortalSessionParams.customer, "cus_access_actions");
+
+    const resend = await postJson(app, "/api/support/resend-ready-email", {
+        accessToken: created.rawToken
+    });
+    assert.equal(resend.status, 200);
+
+    const countsAfter = {
+        purchases: await app.queries.getQuery("SELECT COUNT(*) AS count FROM purchases"),
+        servers: await app.queries.getQuery("SELECT COUNT(*) AS count FROM servers"),
+        fulfillment: await app.queries.getQuery("SELECT COUNT(*) AS count FROM fulfillmentQueue")
+    };
+    assert.equal(countsAfter.purchases.count, countsBefore.purchases.count);
+    assert.equal(countsAfter.servers.count, countsBefore.servers.count);
+    assert.equal(countsAfter.fulfillment.count, countsBefore.fulfillment.count);
+});
+
+test("private service link emails store placeholders and materialize usable fragment links only at delivery", async t => {
+    const app = await createTestApp(t, {
+        pelicanEnv: {
+            PELICAN_PANEL_URL: "https://panel.oberyn.test"
+        }
+    });
+    const seeded = await seedPendingActivationPurchase(app, {
+        status: "completed",
+        setupToken: tokenFor("setup_token_support_email_link", 1),
+        email: "email-link@example.com",
+        fulfillmentStatus: "ready",
+        serviceStatus: "active"
+    });
+    const { enqueueReadyEmailForPurchase } = require("../services/emailOutbox");
+    await enqueueReadyEmailForPurchase(seeded.purchase);
+
+    const stored = await app.queries.getQuery(
+        "SELECT bodyText, payloadJson FROM emailOutbox WHERE purchaseId = ? AND kind = ?",
+        [seeded.purchase.id, "ready_access"]
+    );
+    assert.match(stored.bodyText, /\{\{SERVICE_ACCESS_LINK\}\}/);
+    assert.doesNotMatch(stored.bodyText, /accessToken=[A-Za-z0-9_-]+/);
+    assert.doesNotMatch(stored.payloadJson, /accessToken=/);
+
+    let delivered = null;
+    const { runEmailOutboxWorkerIteration } = require("../workers/fulfillmentWorker");
+    const iteration = await runEmailOutboxWorkerIteration({
+        sendEmailMessage: async message => {
+            delivered = message;
+            return { provider: "test", providerMessageId: "msg_private_link", statusCode: 202 };
+        }
+    });
+    assert.equal(iteration.outcome, "sent");
+    assert.match(delivered.bodyText, /\/support#accessToken=/);
+
+    const rawToken = extractAccessTokenFromBody(delivered.bodyText);
+    assert.ok(rawToken);
+
+    const context = await postJson(app, "/api/support/context", {
+        accessToken: rawToken
+    });
+    assert.equal(context.status, 200);
+    assert.equal((await context.json()).verified, true);
+
+    const storedLink = await app.queries.getQuery(
+        "SELECT tokenHash, tokenPrefix FROM serviceAccessLinks WHERE purchaseId = ?",
+        [seeded.purchase.id]
+    );
+    assert.ok(storedLink.tokenHash);
+    assert.equal(storedLink.tokenHash.includes(rawToken), false);
+    assert.equal(storedLink.tokenPrefix, rawToken.slice(0, 10));
+});
+
+test("billing period sync preserves old-token overlap and queues replacement service-link email without fulfillment mutations", async t => {
+    const app = await createTestApp(t, {
+        stripe: {
+            retrieveSubscription: async id => ({
+                id,
+                status: "active",
+                cancel_at_period_end: false,
+                customer: "cus_period_rotation",
+                items: {
+                    data: [
+                        {
+                            current_period_start: 1_900_100_000,
+                            current_period_end: 1_902_692_000,
+                            price: { id: "price_test_paper_2gb" }
+                        }
+                    ]
+                }
+            })
+        }
+    });
+    const seeded = await seedPaidSetupPurchase(app, {
+        setupToken: tokenFor("setup_token_support_rotation", 1),
+        email: "rotation@example.com",
+        stripeSubscriptionId: "sub_period_rotation",
+        stripeCurrentPeriodEnd: 1_900_099_999_000
+    });
+    const { createServiceAccessLinkForPurchase } = require("../services/serviceAccessLinks");
+    const old = await createServiceAccessLinkForPurchase(seeded.purchase, {
+        period: {
+            start: 1_897_507_200_000,
+            end: 1_900_099_999_000,
+            expiresAt: 1_902_000_000_000
+        }
+    });
+
+    const before = {
+        purchases: await app.queries.getQuery("SELECT COUNT(*) AS count FROM purchases"),
+        fulfillment: await app.queries.getQuery("SELECT COUNT(*) AS count FROM fulfillmentQueue")
+    };
+
+    const response = await app.request("/api/stripe/webhook", {
+        method: "POST",
+        headers: {
+            "stripe-signature": "test-signature",
+            "content-type": "application/json"
+        },
+        body: JSON.stringify({
+            id: "evt_period_rotation",
+            type: "invoice.paid",
+            data: {
+                object: {
+                    subscription: "sub_period_rotation",
+                    customer: "cus_period_rotation",
+                    lines: { data: [{ price: { id: "price_test_paper_2gb" } }] }
+                }
+            }
+        })
+    });
+    assert.equal(response.status, 200);
+
+    const oldContext = await postJson(app, "/api/support/context", {
+        accessToken: old.rawToken
+    });
+    assert.equal(oldContext.status, 200);
+    assert.equal((await oldContext.json()).verified, true);
+
+    const cappedOld = await app.queries.getQuery("SELECT expiresAt, rotatedAt FROM serviceAccessLinks WHERE id = ?", [
+        old.link.id
+    ]);
+    assert.equal(cappedOld.expiresAt, 1_900_100_000_000 + 14 * 86_400_000);
+    assert.ok(cappedOld.rotatedAt);
+
+    const queued = await app.queries.getQuery(
+        "SELECT bodyText FROM emailOutbox WHERE purchaseId = ? AND kind = ?",
+        [seeded.purchase.id, "service_access_link"]
+    );
+    assert.match(queued.bodyText, /\{\{SERVICE_ACCESS_LINK\}\}/);
+
+    const after = {
+        purchases: await app.queries.getQuery("SELECT COUNT(*) AS count FROM purchases"),
+        fulfillment: await app.queries.getQuery("SELECT COUNT(*) AS count FROM fulfillmentQueue")
+    };
+    assert.equal(after.purchases.count, before.purchases.count);
+    assert.equal(after.fulfillment.count, before.fulfillment.count);
+});
+
+test("admin can list, rotate, and revoke service access metadata without exposing raw tokens", async t => {
+    const app = await createTestApp(t);
+    const seeded = await seedPaidSetupPurchase(app, {
+        setupToken: tokenFor("setup_token_support_admin_access", 1),
+        email: "admin-access@example.com"
+    });
+    const { createServiceAccessLinkForPurchase } = require("../services/serviceAccessLinks");
+    const created = await createServiceAccessLinkForPurchase(seeded.purchase);
+    const adminCookieValue = await adminLogin(app);
+
+    const list = await app.request(`/api/admin/purchases/${seeded.purchase.id}/service-access-links`, {
+        headers: { cookie: adminCookieValue },
+        userAgent: "SupportFramework/1.0"
+    });
+    assert.equal(list.status, 200);
+    const listPayload = await list.json();
+    assert.equal(listPayload.links.length, 1);
+    assert.equal(JSON.stringify(listPayload).includes(created.rawToken), false);
+    assert.equal(listPayload.links[0].tokenPrefix, created.rawToken.slice(0, 10));
+
+    const rotate = await postJson(app, `/api/admin/purchases/${seeded.purchase.id}/service-access-links/rotate`, {
+        adminNote: "Replace private service link."
+    }, {
+        cookie: adminCookieValue
+    });
+    assert.equal(rotate.status, 200);
+    assert.equal(JSON.stringify(await rotate.json()).includes(created.rawToken), false);
+
+    const oldContext = await postJson(app, "/api/support/context", {
+        accessToken: created.rawToken
+    });
+    assert.equal((await oldContext.json()).verified, false);
+
+    const replacementEmail = await app.queries.getQuery(
+        "SELECT bodyText FROM emailOutbox WHERE purchaseId = ? AND kind = ?",
+        [seeded.purchase.id, "service_access_link"]
+    );
+    assert.match(replacementEmail.bodyText, /\{\{SERVICE_ACCESS_LINK\}\}/);
+    assert.doesNotMatch(replacementEmail.bodyText, /accessToken=/);
+
+    const linkRow = await app.queries.getQuery(
+        "SELECT id FROM serviceAccessLinks WHERE purchaseId = ? ORDER BY id DESC LIMIT 1",
+        [seeded.purchase.id]
+    );
+    const revoke = await postJson(app, `/api/admin/service-access-links/${linkRow.id}/revoke`, {
+        adminNote: "Revoke private link."
+    }, {
+        cookie: adminCookieValue
+    });
+    assert.equal(revoke.status, 200);
+    assert.equal(JSON.stringify(await revoke.json()).includes(created.rawToken), false);
+
+    const audit = await app.queries.allQuery(
+        "SELECT detailsJson FROM adminAuditLog WHERE purchaseId = ? ORDER BY id",
+        [seeded.purchase.id]
+    );
+    assert.equal(audit.some(row => String(row.detailsJson || "").includes(created.rawToken)), false);
 });
 
 test("verified low-risk support ticket stores context, auto-guidance event, and acknowledgment email", async t => {

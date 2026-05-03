@@ -110,6 +110,8 @@ async function createTestApp(t, options = {}) {
         "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
         "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
         "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE",
+        "SERVICE_ACCESS_LINK_ENABLED",
+        "SERVICE_ACCESS_LINK_OVERLAP_DAYS",
         "DATABASE_PATH"
     ];
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -151,7 +153,9 @@ async function createTestApp(t, options = {}) {
         "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE",
         "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
         "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
-        "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE"
+        "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE",
+        "SERVICE_ACCESS_LINK_ENABLED",
+        "SERVICE_ACCESS_LINK_OVERLAP_DAYS"
     ]) {
         delete process.env[key];
     }

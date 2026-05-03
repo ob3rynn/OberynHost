@@ -11,6 +11,7 @@ const {
     enqueueSupportTicketReceivedEmail
 } = require("../../services/emailOutbox");
 const {
+    getServiceAccessTokenFromRequest,
     getSetupTokenFromRequest,
     isReadyForCustomerAccess,
     loadVerifiedSupportContext
@@ -28,7 +29,8 @@ function supportLimiter(windowMs, max, message) {
         message,
         keyGenerator: req => {
             const setupToken = getSetupTokenFromRequest(req);
-            return setupToken || req.ip || req.socket.remoteAddress || "unknown";
+            const accessToken = getServiceAccessTokenFromRequest(req);
+            return setupToken || accessToken || req.ip || req.socket.remoteAddress || "unknown";
         }
     });
 }
@@ -67,7 +69,7 @@ async function requireVerifiedContext(req, res) {
         res.status(401).json({
             verified: false,
             reason: context.reason,
-            message: "Use the verified setup or billing link for support. If you cannot access it, email support@oberynn.com for purchase-access recovery."
+            message: "Use the verified setup or private service access link for support. If you cannot access it, email support@oberynn.com for purchase-access recovery."
         });
         return null;
     }
@@ -84,7 +86,7 @@ router.post("/support/context", contextLimiter, async (req, res) => {
                 verified: false,
                 reason: context.reason,
                 mailto: "support@oberynn.com",
-                message: "Verified customer support opens from your setup or billing link. For purchase-access recovery, email support@oberynn.com."
+                message: "Verified customer support opens from your setup or private service access link. For purchase-access recovery, email support@oberynn.com."
             });
         }
 

@@ -174,18 +174,24 @@ test("runtime config defaults support tickets on and assistant flags off", () =>
     assert.equal(config.support.ticketRateLimitPerMinute, 5);
     assert.equal(config.support.readyEmailResendRateLimitPerHour, 3);
     assert.equal(config.support.billingPortalRateLimitPerMinute, 8);
+    assert.equal(config.serviceAccessLinks.enabled, true);
+    assert.equal(config.serviceAccessLinks.overlapDays, 14);
 
     const configured = buildRuntimeConfig(createRuntimeEnv({
         SUPPORT_TICKETS_ENABLED: "false",
         SUPPORT_EMAIL_ACK_ENABLED: "false",
         SUPPORT_ASSISTANT_ENABLED: "true",
-        SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE: "2"
+        SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE: "2",
+        SERVICE_ACCESS_LINK_ENABLED: "false",
+        SERVICE_ACCESS_LINK_OVERLAP_DAYS: "7"
     }));
 
     assert.equal(configured.support.ticketsEnabled, false);
     assert.equal(configured.support.emailAckEnabled, false);
     assert.equal(configured.support.assistantEnabled, true);
     assert.equal(configured.support.ticketRateLimitPerMinute, 2);
+    assert.equal(configured.serviceAccessLinks.enabled, false);
+    assert.equal(configured.serviceAccessLinks.overlapDays, 7);
 
     assert.throws(
         () => buildRuntimeConfig(createRuntimeEnv({

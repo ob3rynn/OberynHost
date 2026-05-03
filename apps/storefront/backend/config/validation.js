@@ -51,7 +51,9 @@ const OPTIONAL_SUPPORT_ENV_NAMES = [
     "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE",
     "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
     "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
-    "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE"
+    "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE",
+    "SERVICE_ACCESS_LINK_ENABLED",
+    "SERVICE_ACCESS_LINK_OVERLAP_DAYS"
 ];
 
 const EMAIL_PROVIDER = {
@@ -452,6 +454,15 @@ function buildRuntimeConfig(env = process.env) {
         "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE",
         getTrimmedEnvValue(env, "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE") || "8"
     );
+    const serviceAccessLinkEnabled = parseEnvBoolean(
+        "SERVICE_ACCESS_LINK_ENABLED",
+        getTrimmedEnvValue(env, "SERVICE_ACCESS_LINK_ENABLED"),
+        true
+    );
+    const serviceAccessLinkOverlapDays = parseInteger(
+        "SERVICE_ACCESS_LINK_OVERLAP_DAYS",
+        getTrimmedEnvValue(env, "SERVICE_ACCESS_LINK_OVERLAP_DAYS") || "14"
+    );
     const stripePriceIds = {
         "paper-2gb": getTrimmedEnvValue(env, "STRIPE_PRICE_PAPER_2GB")
     };
@@ -551,6 +562,10 @@ function buildRuntimeConfig(env = process.env) {
             readyEmailResendRateLimitPerHour: supportReadyEmailResendRateLimitPerHour,
             billingPortalRateLimitPerMinute: supportBillingPortalRateLimitPerMinute,
             presentEnvNames: OPTIONAL_SUPPORT_ENV_NAMES.filter(name => getTrimmedEnvValue(env, name))
+        },
+        serviceAccessLinks: {
+            enabled: serviceAccessLinkEnabled,
+            overlapDays: serviceAccessLinkOverlapDays
         },
         setupTokenTtlMs: 1000 * 60 * 60 * 24 * 7
     };

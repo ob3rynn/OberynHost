@@ -15,7 +15,8 @@ const {
     DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS,
     leaseNextEmailOutboxMessage,
     markEmailOutboxFailed,
-    markEmailOutboxSent
+    markEmailOutboxSent,
+    materializeServiceAccessLinkPlaceholders
 } = require("../services/emailOutbox");
 const {
     isRetryableEmailDeliveryError,
@@ -332,16 +333,17 @@ async function processEmailOutboxMessage(message, options = {}) {
     const retryDelayMs = Number(options.emailRetryDelayMs || DEFAULT_EMAIL_OUTBOX_RETRY_DELAY_MS);
 
     try {
+        const materializedMessage = await materializeServiceAccessLinkPlaceholders(message);
         const deliveryResult = await sendEmailMessage({
-            id: message.id,
-            purchaseId: message.purchaseId,
-            kind: message.kind,
-            idempotencyKey: message.idempotencyKey,
-            recipientEmail: message.recipientEmail,
-            senderEmail: message.senderEmail,
-            subject: message.subject,
-            bodyText: message.bodyText,
-            payload: message.payload || null
+            id: materializedMessage.id,
+            purchaseId: materializedMessage.purchaseId,
+            kind: materializedMessage.kind,
+            idempotencyKey: materializedMessage.idempotencyKey,
+            recipientEmail: materializedMessage.recipientEmail,
+            senderEmail: materializedMessage.senderEmail,
+            subject: materializedMessage.subject,
+            bodyText: materializedMessage.bodyText,
+            payload: materializedMessage.payload || null
         });
 
         const markedSent = await markEmailOutboxSent(message, {

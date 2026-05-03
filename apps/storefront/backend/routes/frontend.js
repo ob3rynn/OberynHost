@@ -41,6 +41,12 @@ router.get("/support", (req, res) => {
     res.sendFile(path.join(__dirname, "../../frontend/support.html"));
 });
 
+router.get("/support/access/:accessToken", (req, res) => {
+    ensureBrowserSession(req, res);
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(__dirname, "../../frontend/support.html"));
+});
+
 router.get("/billing", (req, res) => {
     ensureBrowserSession(req, res);
     res.sendFile(path.join(__dirname, "../../frontend/billing.html"));
