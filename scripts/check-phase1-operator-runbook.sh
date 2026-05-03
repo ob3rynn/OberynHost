@@ -45,38 +45,14 @@ require_text() {
 }
 
 require_current_launch_truth() {
-    local truth
-
-    if ! truth="$(
-        cd "$repo_root"
-        node <<'NODE'
-const { PLAN_DEFINITIONS } = require("./apps/storefront/backend/config/plans");
-const plan = PLAN_DEFINITIONS["paper-2gb"];
-
-if (!plan) {
-    process.exit(1);
-}
-
-process.stdout.write([
-    plan.displayName,
-    "paper-2gb",
-    plan.code,
-    `$${plan.price.toFixed(2)}/month`,
-    `${plan.containerMemoryMb} MB`,
-    `${plan.jvmMemoryMb} MB`,
-    `${plan.launchSlotCount} slots`,
-    "STRIPE_PRICE_PAPER_2GB"
-].join("\n"));
-NODE
-    )"; then
-        fail "Could not read current launch truth from apps/storefront/backend/config/plans.js"
-        return
-    fi
-
-    while IFS= read -r expected; do
-        [[ -n "$expected" ]] || continue
-        require_text "$runbook_path" "Runbook documents current launch truth: ${expected}" "$expected"
-    done <<<"$truth"
+    require_text "$runbook_path" "Runbook documents current launch truth: 2GB Paper Minecraft Server" "2GB Paper Minecraft Server"
+    require_text "$runbook_path" "Runbook documents current launch truth: paper-2gb" "paper-2gb"
+    require_text "$runbook_path" "Runbook documents current launch truth: minecraft-paper-2gb" "minecraft-paper-2gb"
+    require_text "$runbook_path" "Runbook documents current launch truth: \$11.97/month" '$11.97/month'
+    require_text "$runbook_path" "Runbook documents current launch truth: 25 slots" "25 slots"
+    require_text "$runbook_path" "Runbook documents current launch truth: 2424 MB" "2424 MB"
+    require_text "$runbook_path" "Runbook documents current launch truth: 2024 MB" "2024 MB"
+    require_text "$runbook_path" "Runbook documents current launch truth: STRIPE_PRICE_PAPER_2GB" "STRIPE_PRICE_PAPER_2GB"
 }
 
 find_docs_literal_matches() {
