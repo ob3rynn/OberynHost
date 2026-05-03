@@ -43,6 +43,17 @@ const OPTIONAL_STRIPE_ENV_NAMES = [
     "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
 ];
 
+const OPTIONAL_SUPPORT_ENV_NAMES = [
+    "SUPPORT_TICKETS_ENABLED",
+    "SUPPORT_EMAIL_ACK_ENABLED",
+    "SUPPORT_ASSISTANT_ENABLED",
+    "SUPPORT_ASSISTANT_ADMIN_DRAFTS",
+    "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE",
+    "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
+    "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
+    "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE"
+];
+
 const EMAIL_PROVIDER = {
     LOG: "log",
     POSTMARK: "postmark"
@@ -108,6 +119,24 @@ function parseBoolean(name, value, defaultValue = false) {
     }
 
     failConfigValidation(`${name} must be a boolean.`);
+}
+
+function parseEnvBoolean(name, value, defaultValue = false) {
+    if (value === undefined || value === null || value === "") {
+        return defaultValue;
+    }
+
+    const normalized = String(value).trim().toLowerCase();
+
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+        return true;
+    }
+
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+        return false;
+    }
+
+    failConfigValidation(`${name} must be true or false.`);
 }
 
 function parseEmailProvider(value) {
@@ -386,6 +415,43 @@ function buildRuntimeConfig(env = process.env) {
     const stripeWebhookSecret = getTrimmedEnvValue(env, "STRIPE_WEBHOOK_SECRET");
     const stripeBillingPortalConfigurationId = getTrimmedEnvValue(env, "STRIPE_BILLING_PORTAL_CONFIGURATION_ID");
     const setupSecretKey = getTrimmedEnvValue(env, "SETUP_SECRET_KEY") || adminKey;
+    const supportTicketsEnabled = parseEnvBoolean(
+        "SUPPORT_TICKETS_ENABLED",
+        getTrimmedEnvValue(env, "SUPPORT_TICKETS_ENABLED"),
+        true
+    );
+    const supportEmailAckEnabled = parseEnvBoolean(
+        "SUPPORT_EMAIL_ACK_ENABLED",
+        getTrimmedEnvValue(env, "SUPPORT_EMAIL_ACK_ENABLED"),
+        true
+    );
+    const supportAssistantEnabled = parseEnvBoolean(
+        "SUPPORT_ASSISTANT_ENABLED",
+        getTrimmedEnvValue(env, "SUPPORT_ASSISTANT_ENABLED"),
+        false
+    );
+    const supportAssistantAdminDrafts = parseEnvBoolean(
+        "SUPPORT_ASSISTANT_ADMIN_DRAFTS",
+        getTrimmedEnvValue(env, "SUPPORT_ASSISTANT_ADMIN_DRAFTS"),
+        false
+    );
+    const supportAssistantCustomerVisible = parseEnvBoolean(
+        "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE",
+        getTrimmedEnvValue(env, "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE"),
+        false
+    );
+    const supportTicketRateLimitPerMinute = parseInteger(
+        "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
+        getTrimmedEnvValue(env, "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE") || "5"
+    );
+    const supportReadyEmailResendRateLimitPerHour = parseInteger(
+        "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
+        getTrimmedEnvValue(env, "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR") || "3"
+    );
+    const supportBillingPortalRateLimitPerMinute = parseInteger(
+        "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE",
+        getTrimmedEnvValue(env, "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE") || "8"
+    );
     const stripePriceIds = {
         "paper-2gb": getTrimmedEnvValue(env, "STRIPE_PRICE_PAPER_2GB")
     };
@@ -475,6 +541,17 @@ function buildRuntimeConfig(env = process.env) {
             ),
             presentEnvNames: OPTIONAL_PELICAN_ENV_NAMES.filter(name => getTrimmedEnvValue(env, name))
         },
+        support: {
+            ticketsEnabled: supportTicketsEnabled,
+            emailAckEnabled: supportEmailAckEnabled,
+            assistantEnabled: supportAssistantEnabled,
+            assistantAdminDrafts: supportAssistantAdminDrafts,
+            assistantCustomerVisible: supportAssistantCustomerVisible,
+            ticketRateLimitPerMinute: supportTicketRateLimitPerMinute,
+            readyEmailResendRateLimitPerHour: supportReadyEmailResendRateLimitPerHour,
+            billingPortalRateLimitPerMinute: supportBillingPortalRateLimitPerMinute,
+            presentEnvNames: OPTIONAL_SUPPORT_ENV_NAMES.filter(name => getTrimmedEnvValue(env, name))
+        },
         setupTokenTtlMs: 1000 * 60 * 60 * 24 * 7
     };
 }
@@ -484,6 +561,7 @@ module.exports = {
     EMAIL_PROVIDER,
     OPTIONAL_EMAIL_ENV_NAMES,
     OPTIONAL_PELICAN_ENV_NAMES,
+    OPTIONAL_SUPPORT_ENV_NAMES,
     OPTIONAL_STRIPE_ENV_NAMES,
     PLACEHOLDER_ENV_NAMES,
     REQUIRED_RUNTIME_ENV_NAMES,

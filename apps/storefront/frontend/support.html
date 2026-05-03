@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Support Scope | OberynHost</title>
+    <title>Support | OberynHost</title>
     <meta
         name="description"
-        content="Understand what OberynHost support covers, who support is for, and what server owners remain responsible for."
+        content="Verified OberynHost support for billing, panel access, provisioning, routing, and platform issues."
     >
     <link rel="icon" type="image/png" href="/assets/brand/oberynhost_icon_web.png">
     <link rel="apple-touch-icon" href="/assets/brand/oberynhost_icon_web.png">
@@ -19,64 +19,279 @@
             <img class="brand__mark" src="/assets/brand/oberynhost_icon_web.png" alt="" aria-hidden="true">
             <span class="brand__copy">
                 <strong>OberynHost</strong>
-                <small>Support scope</small>
+                <small>Customer support</small>
             </span>
         </a>
 
         <nav class="topnav" aria-label="Primary">
             <a href="/">Home</a>
             <a href="/pricing">Servers</a>
+            <a href="/billing">Billing</a>
         </nav>
     </header>
 
     <main class="pricing-wrap">
-        <section class="pricing-card policy-page">
+        <section class="pricing-card policy-page support-hub">
             <div class="pricing-intro">
                 <p class="eyebrow">Support</p>
-                <h1>Support for your hosting service.</h1>
+                <h1>Support for your server.</h1>
                 <p>
-                    Support replies within one business day for account, billing, panel-access, and hosting-related issues.
-                    Most orders are prepared later the same day or within one business day.
+                    If something about your OberynHost service is not lining up, start here. We can help with
+                    billing, panel access, setup, routing, allocation, and platform issues. Your Minecraft
+                    plugins, gameplay, moderation, and custom server settings stay in your hands.
                 </p>
             </div>
 
-            <section class="policy-section">
-                <h2>Support covers</h2>
-                <ul class="feature-list">
-                    <li>billing and account questions</li>
-                    <li>panel access and login issues</li>
-                    <li>hosting-related issues tied to the purchased server</li>
-                    <li>questions about order status and fulfillment</li>
-                </ul>
+            <section id="supportStatus" class="hero-note hero-note--status" aria-live="polite">
+                Looking for your server details...
+            </section>
+            <noscript>
+                <section class="policy-section">
+                    <h2>Use your setup or billing link</h2>
+                    <p>
+                        This page needs JavaScript to load your server details. If you bought a server but cannot
+                        reach your setup or billing link, email <a href="mailto:support@oberynn.com">support@oberynn.com</a>
+                        for purchase-access recovery.
+                    </p>
+                </section>
+            </noscript>
+
+            <section id="verifiedSupport" class="support-verified" hidden>
+                <div class="support-grid">
+                    <section class="policy-section">
+                        <h2>Service Status</h2>
+                        <dl class="support-details" id="supportDetails"></dl>
+                    </section>
+
+                    <section class="policy-section">
+                        <h2>Common Actions</h2>
+                        <div class="support-actions">
+                            <button id="openBillingPortal" type="button" class="button--secondary">Open Billing Portal</button>
+                            <button id="resendReadyEmail" type="button" class="button--secondary">Resend Ready Email</button>
+                        </div>
+                        <p id="actionMessage" class="waitlist-form__message" aria-live="polite"></p>
+                    </section>
+                </div>
+
+                <section class="policy-section">
+                    <h2>Open a Support Ticket</h2>
+                    <form id="supportForm" class="waitlist-form">
+                        <label>
+                            Category
+                            <select name="category" required>
+                                <option value="">Choose a category</option>
+                                <option value="panel_access">Panel access</option>
+                                <option value="service_not_ready">Service not ready</option>
+                                <option value="billing_subscription">Billing or subscription</option>
+                                <option value="cancellation">Cancellation</option>
+                                <option value="connection_hostname">Connection or hostname</option>
+                                <option value="performance_or_lag">Performance or lag</option>
+                                <option value="server_wont_start">Server will not start</option>
+                                <option value="provisioning_failure">Provisioning failure</option>
+                                <option value="node_or_platform_outage">Node or platform outage</option>
+                                <option value="plan_allocation">Plan allocation</option>
+                                <option value="customer_plugin_or_config">Plugins or custom config</option>
+                                <option value="abuse_or_policy">Abuse or policy</option>
+                                <option value="account_security">Account security</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </label>
+                        <p id="categoryGuidance" class="hero-note hero-note--status"></p>
+                        <label>
+                            Email
+                            <input name="email" type="email" autocomplete="email" required>
+                        </label>
+                        <label>
+                            Hostname or server name
+                            <input name="serviceReference" type="text" autocomplete="off" maxlength="120">
+                        </label>
+                        <label>
+                            Subject
+                            <input name="subject" type="text" required maxlength="140">
+                        </label>
+                        <label>
+                            Message
+                            <textarea name="message" required maxlength="5000"></textarea>
+                        </label>
+                        <button type="submit">Send Support Ticket</button>
+                        <p id="ticketMessage" class="waitlist-form__message" aria-live="polite"></p>
+                    </form>
+                </section>
             </section>
 
-            <section class="policy-section">
-                <h2>Support does not cover</h2>
-                <ul class="feature-list">
-                    <li>support for your players or community members</li>
-                    <li>community moderation or in-game disputes</li>
-                    <li>ongoing management of your server after delivery</li>
-                </ul>
-            </section>
-
-            <section class="policy-section">
-                <h2>Who should contact support</h2>
+            <section id="anonymousSupport" class="policy-section" hidden>
+                <h2>Need purchase-access recovery?</h2>
                 <p>
-                    Support is intended for the server owner. If someone on your server needs help with gameplay,
-                    moderation, or your community rules, they should reach out through your server instead.
+                    Support tickets open from your setup or billing link so they are tied to the right server.
+                    If you bought a server but cannot reach that link, email
+                    <a href="mailto:support@oberynn.com">support@oberynn.com</a> for purchase-access recovery.
                 </p>
-                <p class="policy-contact">
-                    Contact: <a href="mailto:support@oberynn.com">support@oberynn.com</a>
+                <p class="page-note">
+                    Looking for a server? Start on the <a href="/pricing">servers page</a>. This support path
+                    is not for plugin help, gameplay questions, moderation, or custom Minecraft administration.
                 </p>
+            </section>
+
+            <section class="policy-section">
+                <h2>What OberynHost Supports</h2>
+                <ul class="feature-list">
+                    <li>billing and subscription questions tied to an OberynHost purchase</li>
+                    <li>panel account access and ready-access email delivery</li>
+                    <li>purchased service unavailable because of platform, node, routing, or allocation issues</li>
+                    <li>provisioning, setup, hostname, or routing issues caused by OberynHost</li>
+                    <li>incorrect plan allocation or baseline template/runtime problems</li>
+                </ul>
+            </section>
+
+            <section class="policy-section">
+                <h2>What You Manage</h2>
+                <ul class="feature-list">
+                    <li>plugins, datapacks, modpacks, custom jars, and custom configs</li>
+                    <li>player moderation, OP/whitelist decisions, and gameplay disputes</li>
+                    <li>world changes, server.properties choices, and workload-caused lag</li>
+                </ul>
             </section>
         </section>
     </main>
 
     <footer class="site-footer">
-        <a href="/support">Support Scope</a>
+        <a href="/support">Support</a>
         <a href="/billing">Billing & Refunds</a>
         <a href="/guidelines">Service Guidelines</a>
     </footer>
 </div>
+
+<script>
+const statusEl = document.getElementById("supportStatus");
+const verifiedEl = document.getElementById("verifiedSupport");
+const anonymousEl = document.getElementById("anonymousSupport");
+const detailsEl = document.getElementById("supportDetails");
+const actionMessageEl = document.getElementById("actionMessage");
+const ticketMessageEl = document.getElementById("ticketMessage");
+const categoryGuidanceEl = document.getElementById("categoryGuidance");
+const supportForm = document.getElementById("supportForm");
+const categorySelect = supportForm.elements.category;
+
+const categoryGuidance = {
+    customer_plugin_or_config: "Plugins and custom config are usually yours to manage. Send this only if you think the OberynHost platform or required baseline setup is involved.",
+    performance_or_lag: "Lag can come from the host, but it can also come from worlds, entities, view distance, farms, or plugins. Tell us what changed and when it started.",
+    server_wont_start: "Startup trouble can be platform-related or caused by custom jars, worlds, plugins, or config changes. Include any recent changes.",
+    billing_subscription: "Billing changes usually happen through Stripe Billing Portal. Send a ticket if the portal is unavailable or something looks wrong.",
+    cancellation: "Cancellation usually happens through Stripe Billing Portal. Send a ticket if the portal is unavailable for this server.",
+    account_security: "Account security requests go straight to founder review."
+};
+
+function setText(node, value) {
+    node.textContent = value || "";
+}
+
+function appendDetail(label, value) {
+    const dt = document.createElement("dt");
+    const dd = document.createElement("dd");
+    dt.textContent = label;
+    dd.textContent = value || "Not available";
+    detailsEl.append(dt, dd);
+}
+
+async function postJson(path, body = {}) {
+    const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Request failed.");
+    }
+
+    return payload;
+}
+
+function showVerifiedContext(data) {
+    statusEl.hidden = true;
+    anonymousEl.hidden = true;
+    verifiedEl.hidden = false;
+    detailsEl.innerHTML = "";
+
+    appendDetail("Server", data.serverName || "Not submitted yet");
+    appendDetail("Hostname", data.hostname || data.readyAccess?.hostname || "Not available yet");
+    appendDetail("Plan", data.planType || "Not available");
+    appendDetail("Setup", data.state?.setup);
+    appendDetail("Provisioning", data.state?.fulfillment);
+    appendDetail("Service", data.state?.service);
+
+    if (data.readyAccess?.available) {
+        appendDetail("Panel URL", data.readyAccess.panelUrl);
+        appendDetail("Panel username", data.readyAccess.username);
+    }
+
+    supportForm.elements.email.value = data.email || "";
+    supportForm.elements.serviceReference.value = data.hostname || data.serverName || "";
+    document.getElementById("openBillingPortal").disabled = !data.billingPortalAvailable;
+    document.getElementById("resendReadyEmail").disabled = !data.readyAccess?.available;
+}
+
+async function loadSupportContext() {
+    try {
+        const data = await postJson("/api/support/context");
+
+        if (!data.verified) {
+            statusEl.hidden = true;
+            verifiedEl.hidden = true;
+            anonymousEl.hidden = false;
+            return;
+        }
+
+        showVerifiedContext(data);
+    } catch (err) {
+        setText(statusEl, err.message || "Could not load your server details.");
+        anonymousEl.hidden = false;
+    }
+}
+
+categorySelect.addEventListener("change", () => {
+    setText(categoryGuidanceEl, categoryGuidance[categorySelect.value] || "Choose the closest category. Your server details will be included with the ticket.");
+});
+
+document.getElementById("openBillingPortal").addEventListener("click", async () => {
+    setText(actionMessageEl, "Opening billing management...");
+    try {
+        const payload = await postJson("/api/support/billing-portal-session");
+        window.location.href = payload.url;
+    } catch (err) {
+        setText(actionMessageEl, err.message);
+    }
+});
+
+document.getElementById("resendReadyEmail").addEventListener("click", async () => {
+    setText(actionMessageEl, "Queueing ready-access email...");
+    try {
+        const payload = await postJson("/api/support/resend-ready-email");
+        setText(actionMessageEl, payload.message || "Ready-access email queued.");
+    } catch (err) {
+        setText(actionMessageEl, err.message);
+    }
+});
+
+supportForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    setText(ticketMessageEl, "Sending ticket...");
+
+    const formData = new FormData(supportForm);
+    const body = Object.fromEntries(formData.entries());
+
+    try {
+        const payload = await postJson("/api/support/tickets", body);
+        setText(ticketMessageEl, `Ticket ${payload.ticket.publicRef} created. ${payload.guidance || ""}`);
+        supportForm.elements.subject.value = "";
+        supportForm.elements.message.value = "";
+    } catch (err) {
+        setText(ticketMessageEl, err.message);
+    }
+});
+
+loadSupportContext();
+</script>
 </body>
 </html>

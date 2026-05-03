@@ -163,6 +163,38 @@ test("runtime config defaults email delivery to log and validates Postmark requi
     );
 });
 
+test("runtime config defaults support tickets on and assistant flags off", () => {
+    const config = buildRuntimeConfig(createRuntimeEnv());
+
+    assert.equal(config.support.ticketsEnabled, true);
+    assert.equal(config.support.emailAckEnabled, true);
+    assert.equal(config.support.assistantEnabled, false);
+    assert.equal(config.support.assistantAdminDrafts, false);
+    assert.equal(config.support.assistantCustomerVisible, false);
+    assert.equal(config.support.ticketRateLimitPerMinute, 5);
+    assert.equal(config.support.readyEmailResendRateLimitPerHour, 3);
+    assert.equal(config.support.billingPortalRateLimitPerMinute, 8);
+
+    const configured = buildRuntimeConfig(createRuntimeEnv({
+        SUPPORT_TICKETS_ENABLED: "false",
+        SUPPORT_EMAIL_ACK_ENABLED: "false",
+        SUPPORT_ASSISTANT_ENABLED: "true",
+        SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE: "2"
+    }));
+
+    assert.equal(configured.support.ticketsEnabled, false);
+    assert.equal(configured.support.emailAckEnabled, false);
+    assert.equal(configured.support.assistantEnabled, true);
+    assert.equal(configured.support.ticketRateLimitPerMinute, 2);
+
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            SUPPORT_ASSISTANT_ENABLED: "maybe"
+        })),
+        /SUPPORT_ASSISTANT_ENABLED must be true or false/
+    );
+});
+
 test("runtime config parses optional Pelican provisioning targets", () => {
     const config = buildRuntimeConfig(createRuntimeEnv({
         PELICAN_PANEL_URL: "https://panel.oberyn.net/",

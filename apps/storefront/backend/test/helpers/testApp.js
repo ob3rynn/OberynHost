@@ -102,6 +102,14 @@ async function createTestApp(t, options = {}) {
         "PELICAN_PANEL_URL",
         "PELICAN_APPLICATION_API_KEY",
         "PELICAN_PROVISIONING_TARGETS_JSON",
+        "SUPPORT_TICKETS_ENABLED",
+        "SUPPORT_EMAIL_ACK_ENABLED",
+        "SUPPORT_ASSISTANT_ENABLED",
+        "SUPPORT_ASSISTANT_ADMIN_DRAFTS",
+        "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE",
+        "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
+        "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
+        "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE",
         "DATABASE_PATH"
     ];
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -132,6 +140,23 @@ async function createTestApp(t, options = {}) {
     delete process.env.PELICAN_PROVISIONING_TARGETS_JSON;
     if (options.pelicanEnv) {
         for (const [key, value] of Object.entries(options.pelicanEnv)) {
+            process.env[key] = value;
+        }
+    }
+    for (const key of [
+        "SUPPORT_TICKETS_ENABLED",
+        "SUPPORT_EMAIL_ACK_ENABLED",
+        "SUPPORT_ASSISTANT_ENABLED",
+        "SUPPORT_ASSISTANT_ADMIN_DRAFTS",
+        "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE",
+        "SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE",
+        "SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR",
+        "SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE"
+    ]) {
+        delete process.env[key];
+    }
+    if (options.supportEnv) {
+        for (const [key, value] of Object.entries(options.supportEnv)) {
             process.env[key] = value;
         }
     }

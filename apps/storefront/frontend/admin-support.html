@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support Admin | OberynHost</title>
+    <link rel="icon" type="image/png" href="/assets/brand/oberynhost_icon_web.png">
+    <link rel="apple-touch-icon" href="/assets/brand/oberynhost_icon_web.png">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="site-frame">
+    <header class="topbar">
+        <a class="brand" href="/admin">
+            <img class="brand__mark" src="/assets/brand/oberynhost_icon_web.png" alt="" aria-hidden="true">
+            <span class="brand__copy">
+                <strong>OberynHost</strong>
+                <small>Support admin</small>
+            </span>
+        </a>
+        <nav class="topnav" aria-label="Admin">
+            <a href="/admin">Main Admin</a>
+            <a href="/support">Customer Support</a>
+        </nav>
+    </header>
+
+    <main class="pricing-wrap">
+        <section class="pricing-card policy-page support-hub">
+            <div class="pricing-intro">
+                <p class="eyebrow">Founder Inbox</p>
+                <h1>Needs attention first.</h1>
+                <p>Tickets are sorted so human-required and active review items stay at the top.</p>
+            </div>
+
+            <section id="adminSupportStatus" class="hero-note hero-note--status" aria-live="polite">Loading support tickets...</section>
+            <noscript>
+                <section class="policy-section">
+                    <h2>JavaScript required</h2>
+                    <p>The support admin inbox needs JavaScript to load tickets and record immutable events.</p>
+                </section>
+            </noscript>
+
+            <div class="support-grid">
+                <section class="policy-section">
+                    <h2>Tickets</h2>
+                    <div id="ticketList" class="support-list"></div>
+                </section>
+
+                <section class="policy-section">
+                    <h2>Detail</h2>
+                    <div id="ticketDetail" class="support-detail empty-state">Select a ticket.</div>
+                </section>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+const statusEl = document.getElementById("adminSupportStatus");
+const listEl = document.getElementById("ticketList");
+const detailEl = document.getElementById("ticketDetail");
+let selectedTicketId = null;
+
+function setText(node, value) {
+    node.textContent = value || "";
+}
+
+function createNode(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text) node.textContent = text;
+    return node;
+}
+
+async function api(path, options = {}) {
+    const response = await fetch(path, {
+        ...options,
+        headers: {
+            "content-type": "application/json",
+            ...(options.headers || {})
+        }
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(payload.error || "Request failed.");
+    }
+
+    return payload;
+}
+
+function renderTicketList(tickets) {
+    listEl.innerHTML = "";
+
+    if (!tickets.length) {
+        listEl.appendChild(createNode("p", "empty-state", "No support tickets yet."));
+        return;
+    }
+
+    for (const ticket of tickets) {
+        const button = createNode("button", "button--secondary support-ticket-button");
+        button.type = "button";
+        button.textContent = `${ticket.publicRef} - ${ticket.status} - ${ticket.category}`;
+        button.addEventListener("click", () => loadTicket(ticket.id));
+        listEl.appendChild(button);
+    }
+}
+
+function appendDetailLine(parent, label, value) {
+    const line = createNode("p", "", `${label}: ${value || "Not available"}`);
+    parent.appendChild(line);
+}
+
+function renderEvents(parent, events) {
+    const wrapper = createNode("section", "policy-section");
+    wrapper.appendChild(createNode("h3", "", "Events"));
+
+    if (!events.length) {
+        wrapper.appendChild(createNode("p", "", "No events recorded."));
+    }
+
+    for (const event of events) {
+        const item = createNode("p", "", `${event.eventType} by ${event.actorType}: ${event.body || ""}`);
+        wrapper.appendChild(item);
+    }
+
+    parent.appendChild(wrapper);
+}
+
+function renderTicketDetail(payload) {
+    const { ticket, events, creationSnapshot, currentPurchase } = payload;
+    selectedTicketId = ticket.id;
+    detailEl.innerHTML = "";
+    detailEl.className = "support-detail";
+
+    detailEl.appendChild(createNode("h3", "", `${ticket.publicRef}: ${ticket.subject}`));
+    appendDetailLine(detailEl, "Status", ticket.status);
+    appendDetailLine(detailEl, "Category", ticket.category);
+    appendDetailLine(detailEl, "Scope", ticket.scopeClassification);
+    appendDetailLine(detailEl, "Priority", ticket.priority);
+    appendDetailLine(detailEl, "Human required", ticket.humanRequired ? "yes" : "no");
+    appendDetailLine(detailEl, "Email", ticket.email);
+    appendDetailLine(detailEl, "Message", ticket.message);
+    appendDetailLine(detailEl, "Rule macro", ticket.ruleRecommendation?.macroId);
+
+    const snapshot = creationSnapshot?.purchase || {};
+    const current = currentPurchase || {};
+    appendDetailLine(detailEl, "Creation service", snapshot.publicState?.service);
+    appendDetailLine(detailEl, "Current service", current.publicState?.service);
+    appendDetailLine(detailEl, "Hostname", current.hostname || snapshot.hostname);
+
+    const replyForm = createNode("form", "waitlist-form");
+    const textarea = document.createElement("textarea");
+    textarea.name = "body";
+    textarea.placeholder = "Reply or note";
+    const replyButton = createNode("button", "", "Send Reply");
+    replyButton.type = "submit";
+    const noteButton = createNode("button", "button--secondary", "Add Note");
+    noteButton.type = "button";
+    const statusSelect = document.createElement("select");
+    for (const status of ["waiting_on_customer", "needs_admin", "admin_review", "replied", "resolved", "closed_no_response"]) {
+        const option = document.createElement("option");
+        option.value = status;
+        option.textContent = status;
+        if (status === ticket.status) option.selected = true;
+        statusSelect.appendChild(option);
+    }
+    const statusButton = createNode("button", "button--secondary", "Update Status");
+    statusButton.type = "button";
+
+    replyForm.append(textarea, replyButton, noteButton, statusSelect, statusButton);
+    detailEl.appendChild(replyForm);
+
+    replyForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        await api(`/api/admin/support/tickets/${selectedTicketId}/events`, {
+            method: "POST",
+            body: JSON.stringify({ eventType: "reply", body: textarea.value })
+        });
+        textarea.value = "";
+        await loadTicket(selectedTicketId);
+        await loadTickets();
+    });
+
+    noteButton.addEventListener("click", async () => {
+        await api(`/api/admin/support/tickets/${selectedTicketId}/events`, {
+            method: "POST",
+            body: JSON.stringify({ eventType: "internal_note", body: textarea.value })
+        });
+        textarea.value = "";
+        await loadTicket(selectedTicketId);
+    });
+
+    statusButton.addEventListener("click", async () => {
+        await api(`/api/admin/support/tickets/${selectedTicketId}/status`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: statusSelect.value, note: "Status updated from support admin." })
+        });
+        await loadTicket(selectedTicketId);
+        await loadTickets();
+    });
+
+    renderEvents(detailEl, events || []);
+}
+
+async function loadTicket(id) {
+    try {
+        const payload = await api(`/api/admin/support/tickets/${id}`);
+        renderTicketDetail(payload);
+    } catch (err) {
+        setText(statusEl, err.message);
+    }
+}
+
+async function loadTickets() {
+    try {
+        const payload = await api("/api/admin/support/tickets");
+        statusEl.hidden = true;
+        renderTicketList(payload.tickets || []);
+    } catch (err) {
+        statusEl.hidden = false;
+        setText(statusEl, `${err.message} Open /admin to sign in, then return here.`);
+    }
+}
+
+loadTickets();
+</script>
+</body>
+</html>

@@ -364,6 +364,54 @@ const ready = (async () => {
         `);
 
         await runStatement(`
+            CREATE TABLE IF NOT EXISTS supportTickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                publicRef TEXT NOT NULL UNIQUE,
+                customerId TEXT,
+                purchaseId INTEGER,
+                serviceId TEXT,
+                email TEXT NOT NULL COLLATE NOCASE,
+                subject TEXT NOT NULL,
+                message TEXT NOT NULL,
+                category TEXT NOT NULL,
+                scopeClassification TEXT NOT NULL DEFAULT 'unknown',
+                priority TEXT NOT NULL DEFAULT 'normal',
+                humanRequired INTEGER NOT NULL DEFAULT 1,
+                ruleRecommendationJson TEXT,
+                escalationReason TEXT,
+                status TEXT NOT NULL DEFAULT 'needs_admin',
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,
+                resolvedAt INTEGER,
+                FOREIGN KEY(purchaseId) REFERENCES purchases(id)
+            )
+        `);
+
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS supportTicketEvents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticketId INTEGER NOT NULL,
+                eventType TEXT NOT NULL,
+                actorType TEXT NOT NULL,
+                body TEXT,
+                payloadJson TEXT,
+                createdAt INTEGER NOT NULL,
+                FOREIGN KEY(ticketId) REFERENCES supportTickets(id)
+            )
+        `);
+
+        await runStatement(`
+            CREATE TABLE IF NOT EXISTS supportTicketSnapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticketId INTEGER NOT NULL,
+                snapshotType TEXT NOT NULL,
+                snapshotJson TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                FOREIGN KEY(ticketId) REFERENCES supportTickets(id)
+            )
+        `);
+
+        await runStatement(`
             CREATE TABLE IF NOT EXISTS adminAuditLog (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 purchaseId INTEGER,
@@ -617,6 +665,32 @@ const ready = (async () => {
         await runStatement(`
             CREATE INDEX IF NOT EXISTS idx_purchases_plan_status
             ON purchases(planType, status, createdAt DESC)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_support_tickets_status_created
+            ON supportTickets(status, createdAt DESC, id DESC)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_support_tickets_email_created
+            ON supportTickets(email, createdAt DESC)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_support_tickets_purchase_created
+            ON supportTickets(purchaseId, createdAt DESC)
+            WHERE purchaseId IS NOT NULL
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_support_tickets_category_created
+            ON supportTickets(category, createdAt DESC)
+        `);
+
+        await runStatement(`
+            CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket_created
+            ON supportTicketEvents(ticketId, createdAt ASC, id ASC)
         `);
 
         await runStatement(`

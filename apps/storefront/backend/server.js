@@ -14,7 +14,9 @@ const plansRoutes = require("./routes/api/plans");
 const waitlistRoutes = require("./routes/api/waitlist");
 const checkoutRoutes = require("./routes/api/checkout");
 const setupRoutes = require("./routes/api/setup");
+const supportRoutes = require("./routes/api/support");
 const adminRoutes = require("./routes/api/admin");
+const adminSupportRoutes = require("./routes/api/adminSupport");
 const { startFulfillmentWorker } = require("./workers/fulfillmentWorker");
 
 const app = express();
@@ -42,7 +44,9 @@ app.use("/api", plansRoutes);
 app.use("/api", waitlistRoutes);
 app.use("/api", checkoutRoutes);
 app.use("/api", setupRoutes);
+app.use("/api", supportRoutes);
 app.use("/api", adminRoutes);
+app.use("/api", adminSupportRoutes);
 
 async function startServer() {
     await dbReady;

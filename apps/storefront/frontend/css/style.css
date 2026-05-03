@@ -448,6 +448,7 @@ button:disabled {
 }
 
 .waitlist-form input,
+.waitlist-form select,
 .waitlist-form textarea {
     width: 100%;
     padding: 12px 14px;
@@ -500,6 +501,62 @@ button:disabled {
     color: var(--accent-glow);
     text-decoration: none;
     font-weight: 700;
+}
+
+.support-hub {
+    max-width: 980px;
+}
+
+.support-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(240px, 0.8fr);
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.support-details {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.45fr) minmax(0, 1fr);
+    gap: 10px 14px;
+    margin: 0;
+}
+
+.support-details dt {
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.support-details dd {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+.support-actions {
+    display: grid;
+    gap: 12px;
+}
+
+.support-list {
+    display: grid;
+    gap: 10px;
+}
+
+.support-ticket-button {
+    width: 100%;
+    justify-content: flex-start;
+    border-radius: 14px;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.support-detail {
+    display: grid;
+    gap: 12px;
+}
+
+.support-detail .policy-section {
+    padding: 14px;
 }
 
 .hero-note--status {
@@ -556,7 +613,8 @@ input {
     }
 
     .policy-strip,
-    .inline-policy-grid {
+    .inline-policy-grid,
+    .support-grid {
         grid-template-columns: 1fr;
     }
 

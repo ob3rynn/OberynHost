@@ -62,6 +62,11 @@ router.get("/admin", (req, res) => {
     res.sendFile(path.join(__dirname, "../../frontend/admin.html"));
 });
 
+router.get("/admin/support", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(__dirname, "../../frontend/admin-support.html"));
+});
+
 router.get("/admin.html", (req, res) => {
     return res.status(403).send("Forbidden");
 });

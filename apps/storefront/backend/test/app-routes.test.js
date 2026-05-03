@@ -75,6 +75,9 @@ test("public routes serve correctly and set security headers", async t => {
     const admin = await app.request("/admin");
     assert.equal(admin.status, 200);
 
+    const adminSupport = await app.request("/admin/support");
+    assert.equal(adminSupport.status, 200);
+
     const forbidden = await app.request("/admin.html");
     assert.equal(forbidden.status, 403);
 });

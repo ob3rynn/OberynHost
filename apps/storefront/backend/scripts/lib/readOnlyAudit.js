@@ -5,6 +5,7 @@ const sqlite3 = require("sqlite3").verbose();
 const dotenv = require("dotenv");
 const {
     OPTIONAL_PELICAN_ENV_NAMES,
+    OPTIONAL_SUPPORT_ENV_NAMES,
     REQUIRED_RUNTIME_ENV_NAMES,
     findPlaceholderEnvNames
 } = require("../../config/validation");
@@ -400,6 +401,53 @@ function addProductionReadinessChecks(report) {
     }
 }
 
+function addSupportConfigChecks(report) {
+    const assistantFlags = [
+        "SUPPORT_ASSISTANT_ENABLED",
+        "SUPPORT_ASSISTANT_ADMIN_DRAFTS",
+        "SUPPORT_ASSISTANT_CUSTOMER_VISIBLE"
+    ];
+    const enabledAssistantFlags = assistantFlags.filter(name =>
+        ["true", "1", "yes"].includes(String(process.env[name] || "").trim().toLowerCase())
+    );
+
+    if (enabledAssistantFlags.length === 0) {
+        addResult(report, "support", "pass", "Support assistant/model flags are disabled by default");
+    } else {
+        addResult(
+            report,
+            "support",
+            "warn",
+            "Support assistant/model flags are enabled",
+            enabledAssistantFlags.join(", ")
+        );
+    }
+
+    const ticketLimit = String(process.env.SUPPORT_TICKET_RATE_LIMIT_PER_MINUTE || "5").trim();
+    const resendLimit = String(process.env.SUPPORT_READY_EMAIL_RESEND_RATE_LIMIT_PER_HOUR || "3").trim();
+    const portalLimit = String(process.env.SUPPORT_BILLING_PORTAL_RATE_LIMIT_PER_MINUTE || "8").trim();
+
+    addResult(
+        report,
+        "support",
+        "info",
+        "Support rate-limit defaults",
+        `tickets/min=${ticketLimit}, ready-resends/hour=${resendLimit}, billing-portal/min=${portalLimit}`
+    );
+
+    const presentSupportEnv = OPTIONAL_SUPPORT_ENV_NAMES.filter(name => String(process.env[name] || "").trim());
+
+    if (presentSupportEnv.length > 0) {
+        addResult(
+            report,
+            "support",
+            "info",
+            "Support environment overrides are present",
+            presentSupportEnv.join(", ")
+        );
+    }
+}
+
 async function buildConfigAuditReport() {
     loadLocalEnv();
 
@@ -434,6 +482,7 @@ async function buildConfigAuditReport() {
     }
 
     addProductionReadinessChecks(report);
+    addSupportConfigChecks(report);
 
     const baseUrl = (process.env.BASE_URL || "").trim();
 

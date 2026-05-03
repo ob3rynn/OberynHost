@@ -13,7 +13,12 @@ const EMAIL_OUTBOX_STATE = {
 
 const EMAIL_KIND = {
     READY_ACCESS: "ready_access",
+    READY_ACCESS_RESEND: "ready_access_resend",
     SETUP_REMINDER: "setup_reminder",
+    SUPPORT_TICKET_RECEIVED: "support_ticket_received",
+    SUPPORT_TICKET_ADMIN_REPLY: "support_ticket_admin_reply",
+    SUPPORT_TICKET_RESOLVED: "support_ticket_resolved",
+    SUPPORT_TICKET_WAITING_ON_CUSTOMER: "support_ticket_waiting_on_customer",
     SUSPENSION_DELETE_WARNING_72H: "suspension_delete_warning_72h",
     SUSPENSION_DELETE_WARNING_48H: "suspension_delete_warning_48h",
     SUSPENSION_DELETE_WARNING_24H: "suspension_delete_warning_24h"
@@ -47,8 +52,17 @@ function buildSetupReminderIdempotencyKey(purchaseId) {
     return `purchase:${purchaseId}:email:${EMAIL_KIND.SETUP_REMINDER}`;
 }
 
+function buildReadyEmailResendIdempotencyKey(purchaseId, now = Date.now()) {
+    const hourBucket = Math.floor(Number(now || Date.now()) / (1000 * 60 * 60));
+    return `purchase:${purchaseId}:email:${EMAIL_KIND.READY_ACCESS_RESEND}:${hourBucket}`;
+}
+
 function buildSuspensionDeleteWarningIdempotencyKey(purchaseId, kind) {
     return `purchase:${purchaseId}:email:${kind}`;
+}
+
+function buildSupportEmailIdempotencyKey(ticketRef, kind, suffix = "") {
+    return `support:${ticketRef}:email:${kind}${suffix ? `:${suffix}` : ""}`;
 }
 
 function parsePayloadJson(value) {
@@ -141,6 +155,21 @@ function buildReadyEmailMessage(purchase) {
     };
 }
 
+function buildReadyEmailResendMessage(purchase) {
+    const message = buildReadyEmailMessage(purchase);
+
+    return {
+        ...message,
+        kind: EMAIL_KIND.READY_ACCESS_RESEND,
+        subject: `OberynHost panel access resend: ${String(purchase?.serverName || "your server").trim() || "your server"}`,
+        payload: {
+            ...message.payload,
+            kind: EMAIL_KIND.READY_ACCESS_RESEND,
+            resend: true
+        }
+    };
+}
+
 function buildSetupReminderEmailMessage(purchase) {
     const recipientEmail = assertEmailHeaderSafe(purchase?.email, "Customer email");
     const setupUrl = buildSetupReminderUrl(purchase);
@@ -218,6 +247,126 @@ function buildSuspensionDeleteWarningEmailMessage(purchase, kind) {
     };
 }
 
+function buildSupportTicketReceivedMessage(ticket, recommendation) {
+    const recipientEmail = assertEmailHeaderSafe(ticket?.email, "Customer email");
+    const publicRef = String(ticket?.publicRef || "").trim();
+    const categoryLabel = recommendation?.categoryLabel || ticket?.category || "support";
+    const guidance = String(recommendation?.customerGuidance || "").trim();
+
+    if (!recipientEmail) {
+        throw new Error("Customer email is required before queueing a support acknowledgment.");
+    }
+
+    if (!publicRef) {
+        throw new Error("Ticket reference is required before queueing a support acknowledgment.");
+    }
+
+    const bodyText = [
+        `We received your OberynHost support request ${publicRef}.`,
+        "",
+        `Category: ${categoryLabel}`,
+        "",
+        guidance || "A founder will review the request with the verified service context.",
+        "",
+        "OberynHost support covers hosting, billing, panel access, provisioning, routing, allocation, and platform issues. Minecraft plugins, gameplay, moderation, custom configs, and server administration are self-managed unless OberynHost explicitly provides that service."
+    ].join("\n");
+
+    return {
+        kind: EMAIL_KIND.SUPPORT_TICKET_RECEIVED,
+        recipientEmail,
+        senderEmail: getSafeSenderEmail(),
+        subject: `We received your OberynHost support request ${publicRef}`,
+        bodyText,
+        payload: {
+            kind: EMAIL_KIND.SUPPORT_TICKET_RECEIVED,
+            ticketId: ticket.id,
+            publicRef,
+            category: ticket.category,
+            status: ticket.status,
+            macroId: recommendation?.macroId || ""
+        }
+    };
+}
+
+function buildSupportAdminReplyMessage(ticket, body, kind = EMAIL_KIND.SUPPORT_TICKET_ADMIN_REPLY) {
+    const recipientEmail = assertEmailHeaderSafe(ticket?.email, "Customer email");
+    const publicRef = String(ticket?.publicRef || "").trim();
+    const replyBody = String(body || "").trim();
+
+    if (!recipientEmail) {
+        throw new Error("Customer email is required before queueing a support reply.");
+    }
+
+    if (!publicRef) {
+        throw new Error("Ticket reference is required before queueing a support reply.");
+    }
+
+    if (!replyBody) {
+        throw new Error("Reply body is required before queueing a support reply.");
+    }
+
+    return {
+        kind,
+        recipientEmail,
+        senderEmail: getSafeSenderEmail(),
+        subject: `OberynHost support update ${publicRef}`,
+        bodyText: [
+            `Support request: ${publicRef}`,
+            "",
+            replyBody
+        ].join("\n"),
+        payload: {
+            kind,
+            ticketId: ticket.id,
+            publicRef,
+            status: ticket.status
+        }
+    };
+}
+
+async function enqueueEmailMessage(message, idempotencyKey, options = {}) {
+    const now = Number(options.now || Date.now());
+
+    await runQuery(
+        `INSERT INTO emailOutbox
+            (
+                purchaseId,
+                kind,
+                state,
+                idempotencyKey,
+                recipientEmail,
+                senderEmail,
+                subject,
+                bodyText,
+                payloadJson,
+                availableAt,
+                createdAt,
+                updatedAt
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(idempotencyKey) DO NOTHING`,
+        [
+            options.purchaseId || null,
+            message.kind,
+            EMAIL_OUTBOX_STATE.QUEUED,
+            idempotencyKey,
+            message.recipientEmail,
+            message.senderEmail,
+            message.subject,
+            message.bodyText,
+            JSON.stringify(message.payload),
+            now,
+            now,
+            now
+        ]
+    );
+
+    return {
+        ...message,
+        idempotencyKey
+    };
+}
+
 async function enqueueReadyEmailForPurchase(purchase, options = {}) {
     const now = Number(options.now || Date.now());
     const message = buildReadyEmailMessage(purchase);
@@ -261,6 +410,18 @@ async function enqueueReadyEmailForPurchase(purchase, options = {}) {
         ...message,
         idempotencyKey
     };
+}
+
+async function enqueueReadyEmailResendForPurchase(purchase, options = {}) {
+    const now = Number(options.now || Date.now());
+    const message = buildReadyEmailResendMessage(purchase);
+    const idempotencyKey = buildReadyEmailResendIdempotencyKey(purchase.id, now);
+
+    return enqueueEmailMessage(message, idempotencyKey, {
+        ...options,
+        now,
+        purchaseId: purchase.id
+    });
 }
 
 async function enqueueSetupReminderEmailForPurchase(purchase, options = {}) {
@@ -351,6 +512,36 @@ async function enqueueSuspensionDeleteWarningEmailForPurchase(purchase, kind, op
         ...message,
         idempotencyKey
     };
+}
+
+async function enqueueSupportTicketReceivedEmail(ticket, recommendation, options = {}) {
+    const message = buildSupportTicketReceivedMessage(ticket, recommendation);
+    const idempotencyKey = buildSupportEmailIdempotencyKey(
+        ticket.publicRef,
+        EMAIL_KIND.SUPPORT_TICKET_RECEIVED
+    );
+
+    return enqueueEmailMessage(message, idempotencyKey, {
+        ...options,
+        purchaseId: ticket.purchaseId || null
+    });
+}
+
+async function enqueueSupportTicketAdminReplyEmail(ticket, body, options = {}) {
+    const now = Number(options.now || Date.now());
+    const kind = options.kind || EMAIL_KIND.SUPPORT_TICKET_ADMIN_REPLY;
+    const message = buildSupportAdminReplyMessage(ticket, body, kind);
+    const idempotencyKey = buildSupportEmailIdempotencyKey(
+        ticket.publicRef,
+        kind,
+        String(now)
+    );
+
+    return enqueueEmailMessage(message, idempotencyKey, {
+        ...options,
+        now,
+        purchaseId: ticket.purchaseId || null
+    });
 }
 
 function getExpiredLeaseFailureMessage() {
@@ -630,12 +821,20 @@ module.exports = {
     SUSPENSION_DELETE_WARNING_CONFIG,
     buildReadyEmailIdempotencyKey,
     buildReadyEmailMessage,
+    buildReadyEmailResendIdempotencyKey,
+    buildReadyEmailResendMessage,
     buildSetupReminderEmailMessage,
     buildSetupReminderIdempotencyKey,
+    buildSupportAdminReplyMessage,
+    buildSupportEmailIdempotencyKey,
+    buildSupportTicketReceivedMessage,
     buildSuspensionDeleteWarningEmailMessage,
     buildSuspensionDeleteWarningIdempotencyKey,
     enqueueReadyEmailForPurchase,
+    enqueueReadyEmailResendForPurchase,
     enqueueSetupReminderEmailForPurchase,
+    enqueueSupportTicketAdminReplyEmail,
+    enqueueSupportTicketReceivedEmail,
     enqueueSuspensionDeleteWarningEmailForPurchase,
     leaseNextEmailOutboxMessage,
     recoverExpiredEmailOutboxLeases,
