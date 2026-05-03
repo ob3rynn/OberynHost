@@ -4,7 +4,7 @@
 
 ## Summary
 
-Direct-replacement launch scope is one live Paper-only Paper 2 GB product at `$11.98/month` with `25` sellable slots. Checkout resolves that product into a real internal chain of `product -> inventory_bucket -> node_group -> provisioning_target`, even though only one product is active at launch.
+Direct-replacement launch scope is one live Paper-only `2GB Paper Minecraft Server` product at `$11.97/month` with `25` sellable slots, `2424 MB` container memory, and a `2024 MB` JVM target. Checkout resolves that product into a real internal chain of `product -> inventory_bucket -> node_group -> provisioning_target`, even though only one product is active at launch.
 
 The storefront remains the request surface; a separate OberynHost worker becomes the automation owner for queueing follow-up, provisioning, retries, timed lifecycle enforcement, reconcile follow-up, and email outbox delivery.
 
@@ -96,7 +96,7 @@ Merge blockers that remain intentionally out of scope:
   - pre-provisioning checkout is expired or canceled,
   - a not-yet-ready service is successfully rolled back,
   - or a live, canceled, or delinquent service reaches terminal deletion and cleanup completes.
-- Sold-out launch inventory disables direct purchase cleanly. Waitlist is deferred.
+- Sold-out launch inventory disables direct purchase cleanly. Waitlist intake exists now; waitlist notification, conversion, and emailing customers from the waitlist are not part of the current automated launch flow unless separately implemented.
 
 ## Key Changes
 
@@ -219,7 +219,7 @@ Merge blockers that remain intentionally out of scope:
 
 ## Assumptions And Defaults
 
-- Launch product: one Paper-only Paper 2 GB product, `$11.98/month`, `25` slots.
+- Launch product: `2GB Paper Minecraft Server`, plan `paper-2gb`, product code `minecraft-paper-2gb`, `$11.97/month`, `25` slots, `2424 MB` container memory, `2024 MB` JVM target, Stripe env `STRIPE_PRICE_PAPER_2GB`.
 - Supported versions: curated backend-defined Paper version list.
 - Email delivery runs behind a provider boundary; local default is `log`, production target is Postmark.
 - Sender identity: `support@oberynn.com`.
@@ -228,4 +228,4 @@ Merge blockers that remain intentionally out of scope:
 - Immediate or user-requested cancellation uses the short `3-day` reversal window.
 - Delinquency uses `7-day` live grace, then automatic suspension, then `30-day` suspended recovery, then urgent warnings at `72h`, `48h`, and `24h` before a non-destructive admin purge review task opens.
 - Pre-delete warning sequence applies to delinquency deletion, not user-requested cancellation deletion.
-- Waitlist and reserve mode are intentionally deferred, but the catalog and inventory model must leave room for them without redesign.
+- Waitlist intake exists now. Waitlist notification, conversion, and emailing customers from the waitlist are not part of the current automated launch flow unless separately implemented; reserve mode remains future work.

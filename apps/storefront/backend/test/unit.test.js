@@ -215,6 +215,19 @@ test("runtime config parses optional Pelican provisioning targets", () => {
     assert.equal(config.pelican.provisioningTargets["paper-launch-default"].limits.memory, 2424);
 });
 
+test("runtime config allows blank optional Pelican provisioning config", () => {
+    const config = buildRuntimeConfig(createRuntimeEnv({
+        PELICAN_PANEL_URL: "",
+        PELICAN_APPLICATION_API_KEY: "",
+        PELICAN_PROVISIONING_TARGETS_JSON: ""
+    }));
+
+    assert.equal(config.pelican.configured, false);
+    assert.equal(config.pelican.panelUrl, "");
+    assert.deepEqual(config.pelican.provisioningTargets, {});
+    assert.deepEqual(config.pelican.presentEnvNames, []);
+});
+
 test("runtime config allows zero Pelican IO weight for local Docker targets", () => {
     const config = buildRuntimeConfig(createRuntimeEnv({
         PELICAN_PANEL_URL: "http://127.0.0.1:8081",
@@ -256,12 +269,36 @@ test("runtime config rejects shipped placeholder values", () => {
     assert.throws(
         () => buildRuntimeConfig(createRuntimeEnv({
             BASE_URL: "https://storefront.example.com",
-            ADMIN_KEY: "replace-with-a-long-random-secret",
-            STRIPE_SECRET_KEY: "sk_test_replace_me",
-            STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
-            STRIPE_PRICE_PAPER_2GB: "price_replace_me"
+            ADMIN_KEY: "CHANGE_ME_LONG_RANDOM_SECRET",
+            SETUP_SECRET_KEY: "CHANGE_ME_LONG_RANDOM_SECRET",
+            STRIPE_SECRET_KEY: "sk_live_CHANGE_ME",
+            STRIPE_WEBHOOK_SECRET: "whsec_CHANGE_ME",
+            STRIPE_PRICE_PAPER_2GB: "price_CHANGE_ME",
+            POSTMARK_SERVER_TOKEN: "CHANGE_ME",
+            PELICAN_PANEL_URL: "https://panel.example.com",
+            PELICAN_APPLICATION_API_KEY: "CHANGE_ME",
+            PELICAN_PROVISIONING_TARGETS_JSON: "CHANGE_ME"
         })),
-        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PAPER_2GB/
+        /Replace placeholder configuration values before startup: BASE_URL, ADMIN_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PAPER_2GB, SETUP_SECRET_KEY, POSTMARK_SERVER_TOKEN, PELICAN_PANEL_URL, PELICAN_APPLICATION_API_KEY, PELICAN_PROVISIONING_TARGETS_JSON/
+    );
+});
+
+test("runtime config rejects Postmark token placeholder when Postmark is enabled", () => {
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            EMAIL_PROVIDER: "postmark",
+            POSTMARK_SERVER_TOKEN: "CHANGE_ME"
+        })),
+        /Replace placeholder configuration values before startup: POSTMARK_SERVER_TOKEN/
+    );
+});
+
+test("runtime config rejects placeholder Pelican panel URL when present", () => {
+    assert.throws(
+        () => buildRuntimeConfig(createRuntimeEnv({
+            PELICAN_PANEL_URL: "https://panel.example.com"
+        })),
+        /Replace placeholder configuration values before startup: PELICAN_PANEL_URL/
     );
 });
 
