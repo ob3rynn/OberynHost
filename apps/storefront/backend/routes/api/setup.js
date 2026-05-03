@@ -318,11 +318,11 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
     const pelicanPassword = getTrimmedBodyValue(req.body?.pelicanPassword);
 
     if (!isOpaqueToken(setupToken)) {
-        return res.status(400).json({ error: "Invalid setup token" });
+        return res.status(400).json({ error: "This setup link is not valid." });
     }
 
     if (!serverName) {
-        return res.status(400).json({ error: "Server name required" });
+        return res.status(400).json({ error: "Please enter a server name." });
     }
 
     if (!SERVER_NAME_PATTERN.test(serverName)) {
@@ -332,7 +332,7 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
     }
 
     if (!minecraftVersion) {
-        return res.status(400).json({ error: "Minecraft version required" });
+        return res.status(400).json({ error: "Please choose a Minecraft version." });
     }
 
     try {
@@ -360,7 +360,7 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
         if (!purchase) {
             await rollbackTransaction();
             return res.status(400).json({
-                error: "Setup is not available for this purchase state"
+                error: "Setup is not available for this order right now."
             });
         }
 
@@ -392,13 +392,13 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
         if (!effectivePelicanUsername) {
             if (!requestedPelicanUsername) {
                 await rollbackTransaction();
-                return res.status(400).json({ error: "Pelican username required" });
+                return res.status(400).json({ error: "Panel username required" });
             }
 
             if (!PELICAN_USERNAME_PATTERN.test(requestedPelicanUsername)) {
                 await rollbackTransaction();
                 return res.status(400).json({
-                    error: "Pelican username must be 3-32 characters and use only letters, numbers, dots, hyphens, or underscores."
+                    error: "Panel username must be 3-32 characters and use only letters, numbers, dots, hyphens, or underscores."
                 });
             }
 
@@ -410,7 +410,7 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
             if (usernameConflict) {
                 await rollbackTransaction();
                 return res.status(409).json({
-                    error: "That Pelican username is already claimed. Please choose another."
+                    error: "That panel username is already claimed. Please choose another."
                 });
             }
 
@@ -424,7 +424,7 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
             ) {
                 await rollbackTransaction();
                 return res.status(409).json({
-                    error: "This customer already has a Pelican username pending provisioning."
+                    error: "This customer already has a panel username pending setup."
                 });
             }
         }
@@ -432,13 +432,13 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
         if (!effectivePelicanUserId) {
             if (!pelicanPassword) {
                 await rollbackTransaction();
-                return res.status(400).json({ error: "Pelican password required" });
+                return res.status(400).json({ error: "Panel password required" });
             }
 
             if (pelicanPassword.length < MIN_PELICAN_PASSWORD_LENGTH) {
                 await rollbackTransaction();
                 return res.status(400).json({
-                    error: `Pelican password must be at least ${MIN_PELICAN_PASSWORD_LENGTH} characters long.`
+                    error: `Panel password must be at least ${MIN_PELICAN_PASSWORD_LENGTH} characters long.`
                 });
             }
 
@@ -553,7 +553,7 @@ router.post("/complete-setup", setupCompleteLimiter, async (req, res) => {
         if (result.changes === 0) {
             await rollbackTransaction();
             return res.status(400).json({
-                error: "Setup is not available for this purchase state"
+                error: "Setup is not available for this order right now."
             });
         }
 

@@ -163,7 +163,7 @@ router.post("/support/resend-ready-email", readyResendLimiter, async (req, res) 
 
         if (!isReadyForCustomerAccess(purchase)) {
             return res.status(409).json({
-                error: "Ready-access email can only be resent for verified ready services with customer-facing access details."
+                error: "The server-ready email can only be resent after your server is ready."
             });
         }
 
@@ -189,7 +189,7 @@ router.post("/support/resend-ready-email", readyResendLimiter, async (req, res) 
             now - Number(recentResend.createdAt) < READY_RESEND_COOLDOWN_MS
         ) {
             return res.status(429).json({
-                error: "The ready-access email was resent recently. Please wait before requesting another copy."
+                error: "The server-ready email was resent recently. Please wait before requesting another copy."
             });
         }
 
@@ -198,11 +198,11 @@ router.post("/support/resend-ready-email", readyResendLimiter, async (req, res) 
         return res.json({
             success: true,
             idempotencyKey: message.idempotencyKey,
-            message: "Ready-access email queued."
+            message: "Server-ready email queued."
         });
     } catch (err) {
         console.error("Ready email resend failed:", err);
-        return res.status(500).json({ error: "Could not resend the ready-access email" });
+        return res.status(500).json({ error: "Could not resend the server-ready email" });
     }
 });
 

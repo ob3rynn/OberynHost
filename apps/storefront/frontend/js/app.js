@@ -119,8 +119,8 @@ function createPlanCard(plan, options = {}) {
     const note = document.createElement("p");
     note.className = "plan-card__note";
     note.textContent = plan.available === 0
-        ? "This plan is at capacity. Join the waitlist and we’ll contact you when a slot opens."
-        : "Checkout will reserve inventory before redirecting to Stripe.";
+        ? "This server option is full. Join the waitlist and we’ll contact you when a slot opens."
+        : "We’ll hold your slot while Stripe opens checkout.";
     footer.appendChild(note);
 
     const button = document.createElement("button");
@@ -209,7 +209,7 @@ async function submitWaitlist(event, plan, submitButton) {
         }
 
         form.reset();
-        message.textContent = payload.message || "You're on the waitlist. We'll contact you when capacity opens.";
+        message.textContent = payload.message || "You're on the waitlist. We'll contact you when a slot opens.";
     } catch {
         message.textContent = "Network error while joining the waitlist.";
     } finally {

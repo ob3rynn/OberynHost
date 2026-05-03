@@ -31,7 +31,7 @@ router.post("/waitlist", waitlistLimiter, async (req, res) => {
     }
 
     if (!planKey) {
-        return res.status(400).json({ error: "Choose a plan before joining the waitlist." });
+        return res.status(400).json({ error: "Choose a server option before joining the waitlist." });
     }
 
     try {
@@ -39,11 +39,11 @@ router.post("/waitlist", waitlistLimiter, async (req, res) => {
         const plan = plans.find(entry => entry.definition.planKey === planKey);
 
         if (!plan || !plan.active || !plan.storefrontVisible) {
-            return res.status(404).json({ error: "That plan is not available for waitlist right now." });
+            return res.status(404).json({ error: "That server option is not available for the waitlist right now." });
         }
 
         if (plan.available > 0) {
-            return res.status(409).json({ error: "This plan has capacity right now. Checkout is available." });
+            return res.status(409).json({ error: "This server option has openings right now. Checkout is available." });
         }
 
         const existing = await getQuery(
@@ -59,7 +59,7 @@ router.post("/waitlist", waitlistLimiter, async (req, res) => {
         if (existing) {
             return res.json({
                 success: true,
-                message: "You're on the waitlist. We'll contact you when capacity opens."
+                message: "You're on the waitlist. We'll contact you when a slot opens."
             });
         }
 
@@ -96,7 +96,7 @@ router.post("/waitlist", waitlistLimiter, async (req, res) => {
 
         return res.json({
             success: true,
-            message: "You're on the waitlist. We'll contact you when capacity opens."
+            message: "You're on the waitlist. We'll contact you when a slot opens."
         });
     } catch (err) {
         console.error("Waitlist submission failed:", err);

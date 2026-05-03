@@ -172,7 +172,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
     const planRecord = await resolveCheckoutPlan(planType);
 
     if (!planRecord) {
-        return res.status(400).json({ error: "Invalid plan type" });
+        return res.status(400).json({ error: "That server option is not available." });
     }
 
     const planDefinition = planRecord.definition;
@@ -313,7 +313,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                     return {
                         kind: "noneAvailable",
                         status: 400,
-                        body: { error: "No servers available" }
+                        body: { error: "No servers are available for this option right now." }
                     };
                 }
 
@@ -339,7 +339,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
                     return {
                         kind: "taken",
                         status: 400,
-                        body: { error: "Server taken, try again" }
+                        body: { error: "That slot was just taken. Please try again." }
                     };
                 }
 
@@ -500,7 +500,7 @@ router.post("/create-checkout", checkoutLimiter, async (req, res) => {
             console.error("Cleanup after checkout failure failed:", cleanupErr);
         }
 
-        return res.status(500).json({ error: "Stripe error" });
+        return res.status(500).json({ error: "Checkout could not open right now. Please try again." });
     }
 });
 

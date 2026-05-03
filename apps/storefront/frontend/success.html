@@ -6,7 +6,7 @@
     <title>Finish Server Details | OberynHost</title>
     <meta
         name="description"
-        content="Finish your server details after checkout. Once fulfilled, your panel link and login will be emailed from support@oberynn.com."
+        content="Finish your server details after checkout. When your server is ready, your panel link and login will be emailed from support@oberynn.com."
     >
     <link rel="icon" type="image/png" href="/assets/brand/oberynhost_icon_web.png">
     <link rel="apple-touch-icon" href="/assets/brand/oberynhost_icon_web.png">
@@ -67,7 +67,7 @@
                 <label for="serverName">Server name</label>
                 <input id="serverName" placeholder="My Server" disabled>
                 <p class="page-note">
-                    Your public server hostname is generated from this name and must be unique.
+                    This creates your public server address, so the name needs to be unique.
                     Preview: <strong id="hostnamePreview">choose a server name</strong>
                 </p>
             </div>
@@ -81,28 +81,28 @@
 
             <div id="pelicanCreateFields">
                 <div class="field-group">
-                    <label for="pelicanUsername">Pelican username</label>
+                    <label for="pelicanUsername">Panel username</label>
                     <input id="pelicanUsername" placeholder="oberyn_admin" disabled>
                 </div>
 
                 <div class="field-group">
-                    <label for="pelicanPassword">Pelican password</label>
+                    <label for="pelicanPassword">Panel password</label>
                     <input id="pelicanPassword" type="password" placeholder="Create a one-time password" disabled>
                 </div>
 
                 <p class="page-note">
-                    This password is only used once to create your Pelican account and is not retained in retrievable form afterward.
+                    This password is only used once to create your panel account and is not shown back later.
                 </p>
             </div>
 
             <div id="pelicanReuseFields" style="display:none;">
                 <div class="field-group">
-                    <label for="linkedPelicanUsername">Pelican username</label>
+                    <label for="linkedPelicanUsername">Panel username</label>
                     <input id="linkedPelicanUsername" disabled>
                 </div>
 
                 <p class="page-note">
-                    Your existing Pelican account will be reused for this order. No password is needed here.
+                    Your existing panel account will be reused for this order. No password is needed here.
                 </p>
             </div>
 
@@ -352,22 +352,22 @@ async function complete() {
         : pelicanPasswordInput.value.trim();
 
     if (!name) {
-        statusEl.innerText = "Please enter a server name first.";
+        statusEl.innerText = "Please enter a server name.";
         return;
     }
 
     if (!minecraftVersion) {
-        statusEl.innerText = "Please choose a supported Minecraft version.";
+        statusEl.innerText = "Please choose a Minecraft version.";
         return;
     }
 
     if (!pelicanUsername) {
-        statusEl.innerText = "Please enter your Pelican username first.";
+        statusEl.innerText = "Please enter your panel username first.";
         return;
     }
 
     if (pelicanAccountMode === "create" && !pelicanPassword) {
-        statusEl.innerText = "Please enter a one-time Pelican password first.";
+        statusEl.innerText = "Please enter a one-time panel password first.";
         return;
     }
 

@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const http = require("node:http");
 
 const { createTestApp } = require("./helpers/testApp");
 
@@ -56,6 +57,26 @@ function jsonResponse(status, payload) {
     });
 }
 
+function rawHttpRequest(url, headers = {}) {
+    return new Promise((resolve, reject) => {
+        const request = http.request(url, { headers }, response => {
+            const chunks = [];
+
+            response.on("data", chunk => chunks.push(chunk));
+            response.on("end", () => {
+                resolve({
+                    status: response.statusCode,
+                    headers: response.headers,
+                    body: Buffer.concat(chunks).toString("utf8")
+                });
+            });
+        });
+
+        request.on("error", reject);
+        request.end();
+    });
+}
+
 test("public routes serve correctly and set security headers", async t => {
     const app = await createTestApp(t);
 
@@ -105,6 +126,58 @@ test("plans api returns seeded inventory counts", async t => {
 
     assert.equal(soldOutByType["paper-2gb"].available, 0);
     assert.equal(soldOutByType["paper-2gb"].price, 11.97);
+});
+
+test("api browser navigation is hidden while frontend fetches still work", async t => {
+    const app = await createTestApp(t);
+
+    const apiRootNavigation = await app.request("/api", {
+        headers: {
+            accept: "text/html",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-dest": "document"
+        }
+    });
+    assert.equal(apiRootNavigation.status, 404);
+    assert.match(apiRootNavigation.headers.get("content-type") || "", /text\/plain/);
+    assert.equal(await apiRootNavigation.text(), "Not Found");
+
+    const plansNavigation = await app.request("/api/plans", {
+        headers: {
+            accept: "text/html",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-dest": "document"
+        }
+    });
+    assert.equal(plansNavigation.status, 404);
+    assert.equal(await plansNavigation.text(), "Not Found");
+
+    const plansHtmlFallback = await rawHttpRequest(`${app.baseUrl}/api/plans`, {
+        accept: "text/html"
+    });
+    assert.equal(plansHtmlFallback.status, 404);
+    const fallbackBody = plansHtmlFallback.body;
+    assert.equal(fallbackBody, "Not Found");
+    assert.doesNotMatch(fallbackBody, /paper-2gb|features|available|route|diagnostic/i);
+
+    const jsonFetch = await app.request("/api/plans", {
+        headers: {
+            accept: "application/json"
+        }
+    });
+    assert.equal(jsonFetch.status, 200);
+    assert.match(jsonFetch.headers.get("content-type") || "", /application\/json/);
+    const jsonPlans = await jsonFetch.json();
+    assert.equal(jsonPlans[0].type, "paper-2gb");
+
+    const wildcardFetch = await app.request("/api/plans", {
+        headers: {
+            accept: "*/*"
+        }
+    });
+    assert.equal(wildcardFetch.status, 200);
+    const wildcardPlans = await wildcardFetch.json();
+    assert.equal(wildcardPlans[0].type, "paper-2gb");
 });
 
 test("checkout creates a pending purchase, reserves inventory, and sets setup cookie", async t => {

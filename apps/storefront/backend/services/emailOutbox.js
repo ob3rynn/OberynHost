@@ -128,7 +128,7 @@ function serviceAccessLinkCopyLines() {
         "Private service access link:",
         SERVICE_ACCESS_LINK_PLACEHOLDER,
         "",
-        "Save this email or bookmark your private service link. This link lets you access support, billing help, service status, and ready-access options for this server without creating an account.",
+        "Save this email or bookmark your private service link. This link lets you access support, billing help, service status, and panel access options for this server without creating an account.",
         "For security, this link refreshes each billing cycle. Use the newest OberynHost billing/service email if an older link stops working.",
         "Do not share this link publicly. Anyone with it may be able to access support options for this service."
     ];
@@ -141,7 +141,7 @@ function buildReadyEmailMessage(purchase) {
     const serverName = String(purchase?.serverName || "your server").trim();
 
     if (!panelUrl) {
-        throw new Error("Pelican panel URL is required before queueing a ready email.");
+        throw new Error("Panel URL is required before queueing a ready email.");
     }
 
     if (!recipientEmail) {
@@ -149,7 +149,7 @@ function buildReadyEmailMessage(purchase) {
     }
 
     if (!pelicanUsername) {
-        throw new Error("Pelican username is required before queueing a ready email.");
+        throw new Error("Panel username is required before queueing a ready email.");
     }
 
     const subject = `Your OberynHost server is ready: ${serverName}`;

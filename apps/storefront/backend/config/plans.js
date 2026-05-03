@@ -14,13 +14,11 @@ const PLAN_DEFINITIONS = {
         runtimeTemplate: "paper-launch-default",
         features: [
             "2GB Paper Minecraft server",
-            "2424 MB container memory",
-            "2024 MB JVM target",
             "Paper server software",
+            "Guided setup after checkout",
+            "Panel access emailed when ready",
             "Fixed monthly resources",
-            "Curated supported versions",
-            "Post-payment guided setup",
-            "Best for launch-scope Minecraft hosting"
+            "Curated supported versions"
         ]
     }
 };

@@ -5,6 +5,7 @@ const express = require("express");
 const config = require("./config");
 const dbReady = require("./db/init");
 
+const apiBrowserNavigationGuard = require("./middleware/apiBrowserNavigationGuard");
 const requireSameOrigin = require("./middleware/sameOrigin");
 const securityHeaders = require("./middleware/securityHeaders");
 const stripeWebhook = require("./middleware/stripeWebhook");
@@ -33,6 +34,7 @@ app.post(
 
 // JSON AFTER
 app.use(express.json({ limit: "10kb" }));
+app.use("/api", apiBrowserNavigationGuard);
 app.use("/api", requireSameOrigin);
 
 // Static + frontend
